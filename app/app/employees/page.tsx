@@ -10,7 +10,7 @@ type EmployeeRow = {
   preferred_name: string | null
   primary_email: string | null
   job_title: string | null
-  departments: { name: string | null } | null
+  departments: { name: string | null } | { name: string | null }[] | null
 }
 
 function tServer(key: keyof typeof strings, locale: Locale) {
@@ -65,11 +65,12 @@ export default async function EmployeesPage() {
                 const fullName = r.preferred_name
                   ?? [r.legal_first_name, r.legal_last_name].filter(Boolean).join(' ')
                   ?? '—'
+                const deptName = Array.isArray(r.departments) ? r.departments[0]?.name : r.departments?.name
                 return (
                   <tr key={r.id} className="border-t border-slate-200">
                     <td className="p-3 font-semibold text-slate-900">{fullName || '—'}</td>
                     <td className="p-3 text-slate-700">{r.primary_email ?? '—'}</td>
-                    <td className="p-3 text-slate-700">{r.departments?.name ?? '—'}</td>
+                    <td className="p-3 text-slate-700">{deptName ?? '—'}</td>
                     <td className="p-3 text-slate-700">{r.job_title ?? '—'}</td>
                   </tr>
                 )

@@ -8,7 +8,7 @@ type JobRow = {
   title: string
   status: string
   opened_at: string | null
-  departments: { name: string | null } | null
+  departments: { name: string | null } | { name: string | null }[] | null
 }
 
 function tServer(key: keyof typeof strings, locale: Locale) {
@@ -83,7 +83,7 @@ export default async function JobsPage() {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-slate-200">
                   <td className="p-3 font-semibold text-slate-900">{r.title}</td>
-                  <td className="p-3 text-slate-700">{r.departments?.name ?? '—'}</td>
+                  <td className="p-3 text-slate-700">{(Array.isArray(r.departments) ? r.departments[0]?.name : r.departments?.name) ?? '—'}</td>
                   <td className="p-3">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-slate-700 text-xs font-semibold uppercase tracking-wider">
                       {r.status}
