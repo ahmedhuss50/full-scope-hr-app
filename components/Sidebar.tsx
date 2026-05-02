@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -10,6 +10,7 @@ export type SidebarCounts = {
   applications: number
   onboarding: number
   employees: number
+  certs: number
   jobs: number
 }
 
@@ -30,6 +31,7 @@ const ITEMS: Item[] = [
   { href: '/app/applications', labelKey: 'nav.applications', icon: Inbox,         countKey: 'applications' },
   { href: '/app/onboarding',  labelKey: 'nav.onboarding',   icon: ClipboardList,  countKey: 'onboarding' },
   { href: '/app/employees',   labelKey: 'nav.employees',    icon: Users,          countKey: 'employees' },
+  { href: '/app/certs',       labelKey: 'nav.certs',        icon: ShieldCheck,    countKey: 'certs' },
   { href: '/app/jobs',        labelKey: 'nav.jobs',         icon: Briefcase,      countKey: 'jobs' },
 ]
 
@@ -75,7 +77,13 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
               <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
               <span className="flex-1 truncate">{t(item.labelKey)}</span>
               {typeof count === 'number' && count > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[1.25rem] px-2 py-0.5 rounded-full bg-gray-100 text-slate-700 text-xs font-semibold">
+                <span
+                  className={`inline-flex items-center justify-center min-w-[1.25rem] px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    item.countKey === 'certs'
+                      ? 'bg-red-50 text-red-700'
+                      : 'bg-gray-100 text-slate-700'
+                  }`}
+                >
                   {count}
                 </span>
               )}

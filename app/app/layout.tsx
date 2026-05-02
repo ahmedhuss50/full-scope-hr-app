@@ -37,7 +37,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Sidebar counts — all scoped to the user's tenant.
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  const [appsCount, onboardingCount, employeesCount, jobsCount] = await Promise.all([
+  // Cert urgency: anything in employee_credentials or firm_credentials with
+  // status in ('expiring_soon','expired') is treated as urgent and surfaced
+  // as a count badge in the sidebar (Phase 3 / Block O).
+  const [appsCount, onboardingCount, employeesCount, jobsCount, empCertUrgent, firmCertUrgent] = await Promise.all([
     svc
       .from('applications')
       .select('id', { count: 'exact', head: true })
@@ -59,12 +62,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
       .eq('status', 'open'),
+    svc
+      .from('employee_credentials')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['expiring_soon', 'expired']),
+    svc
+      .from('firm_credentials')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['expiring_soon', 'expired']),
   ])
 
   const counts: SidebarCounts = {
     applications: appsCount.count ?? 0,
     onboarding:   onboardingCount.count ?? 0,
     employees:    employeesCount.count ?? 0,
+    certs:        (empCertUrgent.count ?? 0) + (firmCertUrgent.count ?? 0),
     jobs:         jobsCount.count ?? 0,
   }
 
