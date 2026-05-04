@@ -74,7 +74,7 @@ export default async function DmsHomePage() {
   const todayIso = now.toISOString().slice(0, 10)
   const in90Iso = in90.toISOString().slice(0, 10)
 
-  const [docsRes, addedThisMonthRes, sensitiveRes, expiringRes, clientsRes, recentRes] = await Promise.all([
+  const [docsRes, addedThisMonthRes, sensitiveRes, expiringRes, clientsRes, recentRes, activeWorkflowsRes, recentWorkflowsRes] = await Promise.all([
     svc
       .from('dms_documents')
       .select('id, client_id, sensitivity, uploaded_at, retention_until')
@@ -111,6 +111,21 @@ export default async function DmsHomePage() {
       .eq('tenant_id', tenantId)
       .order('occurred_at', { ascending: false })
       .limit(8),
+    svc
+      .from('dms_workflow_runs')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['in_progress', 'awaiting_signer']),
+    svc
+      .from('dms_workflow_runs')
+      .select(`
+        id, status, started_at,
+        document:dms_documents!document_id(display_name, filename),
+        client:clients!client_id(name)
+      `)
+      .eq('tenant_id', tenantId)
+      .order('started_at', { ascending: false })
+      .limit(5),
   ])
 
   const docs = (docsRes.data ?? []) as DocRow[]
@@ -127,12 +142,22 @@ export default async function DmsHomePage() {
   }
 
   const recent = (recentRes.data ?? []) as unknown as AccessLogJoin[]
+  const activeWorkflows = activeWorkflowsRes.count ?? 0
+  type RecentWorkflowRow = {
+    id: string
+    status: string
+    started_at: string
+    document: { display_name: string | null; filename: string } | { display_name: string | null; filename: string }[] | null
+    client: { name: string } | { name: string }[] | null
+  }
+  const recentWorkflows = (recentWorkflowsRes.data ?? []) as unknown as RecentWorkflowRow[]
 
   const cards = [
     { label: tServer('dms.metric.total',              locale), value: totalDocs,        tone: 'slate'  as const },
     { label: tServer('dms.metric.added_this_month',   locale), value: addedThisMonth,   tone: 'teal'   as const },
     { label: tServer('dms.metric.confidential',       locale), value: sensitiveCount,   tone: 'amber'  as const },
     { label: tServer('dms.metric.expiring_retention', locale), value: expiringCount,    tone: 'red'    as const },
+    { label: tServer('dms.metric.active_workflows',   locale), value: activeWorkflows,  tone: 'teal'   as const },
   ]
 
   return (
@@ -147,11 +172,57 @@ export default async function DmsHomePage() {
       </header>
 
       {/* Metric cards */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map((c) => (
           <MetricCard key={c.label} label={c.label} value={c.value} tone={c.tone} />
         ))}
       </section>
+
+      {/* Recent workflow activity (lightweight quick-glance — full table on /workflows) */}
+      {recentWorkflows.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm uppercase tracking-wider font-semibold text-slate-600">
+              {tServer('dms.section.recent_workflow_activity', locale)}
+            </h2>
+            <Link
+              href="/app/dms/workflows"
+              className="text-xs font-semibold text-teal-600 hover:text-teal-700"
+            >
+              {tServer('dms.nav.workflows', locale)} <ArrowRight className="inline w-3 h-3" />
+            </Link>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm divide-y divide-slate-100">
+            {recentWorkflows.map((w) => {
+              const doc = Array.isArray(w.document) ? w.document[0] : w.document
+              const client = Array.isArray(w.client) ? w.client[0] : w.client
+              const docTitle = doc?.display_name ?? doc?.filename ?? '—'
+              const statusColor =
+                w.status === 'completed' ? 'bg-green-50 text-green-700 ring-green-200' :
+                w.status === 'rejected' ? 'bg-red-50 text-red-700 ring-red-200' :
+                w.status === 'awaiting_signer' ? 'bg-blue-50 text-blue-700 ring-blue-200' :
+                'bg-amber-50 text-amber-700 ring-amber-200'
+              return (
+                <Link
+                  key={w.id}
+                  href={`/app/dms/workflows/${w.id}`}
+                  className="flex items-center justify-between gap-4 p-4 hover:bg-slate-50 transition"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-900 truncate">{docTitle}</div>
+                    <div className="text-xs text-slate-500 truncate">
+                      {client?.name ?? '—'} · {fmtDateTime(w.started_at, locale)}
+                    </div>
+                  </div>
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ring-1 ring-inset shrink-0 ${statusColor}`}>
+                    {tServer(`workflows.status.${w.status}` as StringKey, locale)}
+                  </span>
+                </Link>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Two-column body */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

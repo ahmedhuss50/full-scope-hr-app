@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -15,6 +15,8 @@ export type SidebarCounts = {
   costs: number
   /** DMS: confidential + restricted document count (badge on Home) */
   dmsSensitive: number
+  /** DMS: in-flight workflow runs (badge on Workflows nav item) */
+  dmsActiveWorkflows: number
   /** CRM: open tasks (kind='task' AND completed=false) badge on Home */
   crmOpenTasks: number
 }
@@ -45,9 +47,10 @@ const HR_ITEMS: Item[] = [
 ]
 
 const DMS_ITEMS: Item[] = [
-  { href: '/app/dms',         labelKey: 'dms.nav.home',    icon: FolderLock, countKey: 'dmsSensitive' },
-  { href: '/app/dms/clients', labelKey: 'dms.nav.clients', icon: Folders },
-  { href: '/app/dms/all',     labelKey: 'dms.nav.all',     icon: Files },
+  { href: '/app/dms',           labelKey: 'dms.nav.home',      icon: FolderLock, countKey: 'dmsSensitive' },
+  { href: '/app/dms/clients',   labelKey: 'dms.nav.clients',   icon: Folders },
+  { href: '/app/dms/all',       labelKey: 'dms.nav.all',       icon: Files },
+  { href: '/app/dms/workflows', labelKey: 'dms.nav.workflows', icon: Workflow,   countKey: 'dmsActiveWorkflows' },
 ]
 
 const CRM_ITEMS: Item[] = [

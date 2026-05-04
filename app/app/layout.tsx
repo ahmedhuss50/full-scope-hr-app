@@ -42,7 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // as a count badge in the sidebar (Phase 3 / Block O).
   // Cost urgency: count of active engagements where actual hours / budget hours > 1.0
   // (Phase 2 / Block N — flags engagements that have blown the time budget).
-  const [appsCount, onboardingCount, employeesCount, jobsCount, empCertUrgent, firmCertUrgent, engagementsForCost, dmsSensitiveCount, crmOpenTasksCount] = await Promise.all([
+  const [appsCount, onboardingCount, employeesCount, jobsCount, empCertUrgent, firmCertUrgent, engagementsForCost, dmsSensitiveCount, crmOpenTasksCount, dmsActiveWorkflowsCount] = await Promise.all([
     svc
       .from('applications')
       .select('id', { count: 'exact', head: true })
@@ -90,6 +90,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       .eq('tenant_id', tenantId)
       .eq('kind', 'task')
       .eq('completed', false),
+    svc
+      .from('dms_workflow_runs')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['in_progress', 'awaiting_signer']),
   ])
 
   // Compute over-budget count from joined time_entries (active engagements only).
@@ -103,14 +108,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }).length
 
   const counts: SidebarCounts = {
-    applications: appsCount.count ?? 0,
-    onboarding:   onboardingCount.count ?? 0,
-    employees:    employeesCount.count ?? 0,
-    certs:        (empCertUrgent.count ?? 0) + (firmCertUrgent.count ?? 0),
-    jobs:         jobsCount.count ?? 0,
-    costs:        overBudgetCount,
-    dmsSensitive: dmsSensitiveCount.count ?? 0,
-    crmOpenTasks: crmOpenTasksCount.count ?? 0,
+    applications:        appsCount.count ?? 0,
+    onboarding:          onboardingCount.count ?? 0,
+    employees:           employeesCount.count ?? 0,
+    certs:               (empCertUrgent.count ?? 0) + (firmCertUrgent.count ?? 0),
+    jobs:                jobsCount.count ?? 0,
+    costs:               overBudgetCount,
+    dmsSensitive:        dmsSensitiveCount.count ?? 0,
+    dmsActiveWorkflows:  dmsActiveWorkflowsCount.count ?? 0,
+    crmOpenTasks:        crmOpenTasksCount.count ?? 0,
   }
 
   return (
