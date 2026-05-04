@@ -3,8 +3,8 @@ import { cookies } from 'next/headers'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Full Scope HR — Hiring',
-  description: 'Bilingual AR/EN hiring and HR platform for accounting and BD firms in the GCC.',
+  title: 'Full Scope',
+  description: 'Bilingual AR/EN operating suite (HR, CRM, Accounting) for accounting and business-development firms in the GCC.',
 }
 
 /**

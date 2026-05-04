@@ -40,7 +40,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Cert urgency: anything in employee_credentials or firm_credentials with
   // status in ('expiring_soon','expired') is treated as urgent and surfaced
   // as a count badge in the sidebar (Phase 3 / Block O).
-  const [appsCount, onboardingCount, employeesCount, jobsCount, empCertUrgent, firmCertUrgent] = await Promise.all([
+  // Cost urgency: count of active engagements where actual hours / budget hours > 1.0
+  // (Phase 2 / Block N — flags engagements that have blown the time budget).
+  const [appsCount, onboardingCount, employeesCount, jobsCount, empCertUrgent, firmCertUrgent, engagementsForCost, dmsSensitiveCount, crmOpenTasksCount] = await Promise.all([
     svc
       .from('applications')
       .select('id', { count: 'exact', head: true })
@@ -72,7 +74,33 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
       .in('status', ['expiring_soon', 'expired']),
+    svc
+      .from('engagements')
+      .select('id, budget_hours, time_entries(hours)')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'active'),
+    svc
+      .from('dms_documents')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('sensitivity', ['confidential', 'restricted']),
+    svc
+      .from('crm_activities')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('kind', 'task')
+      .eq('completed', false),
   ])
+
+  // Compute over-budget count from joined time_entries (active engagements only).
+  type EngBudgetRow = { id: string; budget_hours: number | null; time_entries: { hours: number | null }[] | null }
+  const engForCost = (engagementsForCost.data ?? []) as unknown as EngBudgetRow[]
+  const overBudgetCount = engForCost.filter((e) => {
+    const budget = Number(e.budget_hours ?? 0)
+    if (!budget) return false
+    const actual = (e.time_entries ?? []).reduce((sum, te) => sum + Number(te.hours ?? 0), 0)
+    return actual / budget > 1.0
+  }).length
 
   const counts: SidebarCounts = {
     applications: appsCount.count ?? 0,
@@ -80,6 +108,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     employees:    employeesCount.count ?? 0,
     certs:        (empCertUrgent.count ?? 0) + (firmCertUrgent.count ?? 0),
     jobs:         jobsCount.count ?? 0,
+    costs:        overBudgetCount,
+    dmsSensitive: dmsSensitiveCount.count ?? 0,
+    crmOpenTasks: crmOpenTasksCount.count ?? 0,
   }
 
   return (

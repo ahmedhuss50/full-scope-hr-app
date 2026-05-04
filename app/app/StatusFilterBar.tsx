@@ -17,7 +17,7 @@ export function StatusFilterBar({ active }: { active: string }) {
       {FILTERS.map(f => (
         <Link
           key={f.value}
-          href={f.value === 'all' ? '/app/applications' : `/app/applications?status=${f.value}`}
+          href={f.value === 'all' ? '/app/hr/applications' : `/app/hr/applications?status=${f.value}`}
           className={`px-4 py-2 rounded-full text-sm font-semibold transition ${active === f.value ? 'bg-ink text-white' : 'bg-white border border-ink/10 text-ink/70 hover:bg-ink/5'}`}
         >{t(f.labelKey)}</Link>
       ))}

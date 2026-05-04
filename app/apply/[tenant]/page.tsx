@@ -63,7 +63,7 @@ export default async function ApplyPage({
           />
 
           <footer className="mt-10 text-center text-xs text-ink/40">
-            {tenant.name} · powered by Full Scope HR
+            {tenant.name} · powered by Full Scope
           </footer>
         </div>
       </main>

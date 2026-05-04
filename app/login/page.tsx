@@ -36,8 +36,8 @@ function LoginInner() {
       <div className="w-full max-w-md">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-ink text-white font-black text-sm">M</span>
-            <span className="serif text-lg font-bold">Full Scope HR</span>
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-ink text-white font-black text-sm">F</span>
+            <span className="serif text-lg font-bold">Full Scope</span>
           </div>
           <LanguageToggle />
         </div>

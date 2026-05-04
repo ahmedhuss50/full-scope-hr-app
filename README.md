@@ -1,4 +1,8 @@
-# Full Scope HR — Phase 1 Scaffold
+# Full Scope — Multi-module suite (HR module shipped, CRM + Accounting in development)
+
+> **Pivot note (2026-05):** "Full Scope HR" is now the **HR module** of a three-module suite called **Full Scope** (HR + CRM + Accounting). The HR module is feature-complete; CRM and Accounting are visible as preview pages at `/app/crm` and `/app/accounting`. App picker lives at `/app`; HR module home moved to `/app/hr`.
+
+## Phase 1 scaffold (HR module)
 
 Next.js 14 + Supabase (Postgres + Auth) + Tailwind + Resend.
 Multi-tenant via row-level security. Bilingual AR / EN by design.

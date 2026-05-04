@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation'
 
 /**
- * Legacy route — the candidate detail view moved to /app/applications/[id].
- * Preserve any `?app=...` query so deep links from older emails still work.
+ * Legacy route — the candidate detail view first moved to /app/applications/[id]
+ * (consolidating with applications) and now lives at /app/hr/applications/[id]
+ * under the multi-module suite. Preserve `?app=...` for older email deep links.
  */
 export default function LegacyCandidateRedirect({
   params, searchParams,
@@ -11,5 +12,5 @@ export default function LegacyCandidateRedirect({
   searchParams: { app?: string }
 }) {
   const qs = searchParams.app ? `?app=${searchParams.app}` : ''
-  redirect(`/app/applications/${params.id}${qs}`)
+  redirect(`/app/hr/applications/${params.id}${qs}`)
 }
