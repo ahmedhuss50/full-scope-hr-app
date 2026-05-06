@@ -5,6 +5,7 @@ import { headers } from 'next/headers'
 import { createSupabaseService } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email/resend'
 import { analyzeDocument } from '@/lib/ai/analyze'
+import { fireN8nEvent } from '@/lib/integrations/n8n'
 import { randomBytes } from 'crypto'
 
 const SignSchema = z.object({
@@ -120,6 +121,27 @@ export async function signWorkflowStep(input: { token: string; decision: 'approv
     .from('dms_workflow_signer_tokens')
     .update({ used_at: new Date().toISOString() })
     .eq('id', tokenRow.id)
+
+  // 6b. Fire n8n event on signer decision (best-effort, non-blocking).
+  try {
+    const eventName =
+      step.kind === 'final_approval' && decision === 'approve'
+        ? 'disbursement.approved'
+        : step.kind === 'internal_review' && decision === 'approve'
+          ? 'disbursement.audit_completed'
+          : decision === 'approve'
+            ? 'disbursement.checklist_completed'
+            : 'workflow.signer_rejected'
+    await fireN8nEvent(eventName, {
+      run_id: run.id,
+      run_step_id: step.id,
+      step_kind: step.kind,
+      document_id: run.document_id,
+      decision,
+    })
+  } catch (err) {
+    console.error('[signWorkflowStep] n8n event failed', err)
+  }
 
   // 7. Decide what's next
   if (decision === 'reject') {

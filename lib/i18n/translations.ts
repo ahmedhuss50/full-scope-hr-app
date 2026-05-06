@@ -1106,6 +1106,70 @@ export const strings = {
                                          ar: '{invited} عميل تمّت دعوتهم · آخر دخول {date}' },
   'app.portal_banner.cta':             { en: 'View portal',
                                          ar: 'عرض البوابة' },
+
+  // -----------------------------------------------------------------
+  // Disbursement Document Review workflow (template + tokenized upload page)
+  // -----------------------------------------------------------------
+  'disbursement.upload.title':         { en: 'Upload your disbursement documents',
+                                         ar: 'ارفع وثائق الصرف الخاصة بك' },
+  'disbursement.upload.subtitle':      { en: '{firm} has requested the following four documents to begin the disbursement review.',
+                                         ar: 'طلب {firm} المستندات الأربعة التالية لبدء مراجعة وثيقة الصرف.' },
+  'disbursement.upload.kind.contract':       { en: 'Contract',           ar: 'العقد' },
+  'disbursement.upload.kind.bill':           { en: 'Bill / Invoice',     ar: 'الفاتورة' },
+  'disbursement.upload.kind.proof_of_fund':  { en: 'Proof of Fund',      ar: 'إثبات تمويل' },
+  'disbursement.upload.kind.bank_statement': { en: 'Bank Statement',     ar: 'كشف الحساب البنكي' },
+  'disbursement.upload.choose_file':         { en: 'Choose file',        ar: 'اختر ملف' },
+  'disbursement.upload.no_file':             { en: 'No file selected',   ar: 'لم يتم اختيار ملف' },
+  'disbursement.upload.submit':              { en: 'Submit documents',   ar: 'إرسال المستندات' },
+  'disbursement.upload.uploading':           { en: 'Uploading…',         ar: 'جارٍ الرفع…' },
+  'disbursement.upload.success':             { en: 'Thank you. Your documents have been received and are now under review.',
+                                                ar: 'شكرًا لك. تم استلام مستنداتك وهي الآن قيد المراجعة.' },
+  'disbursement.upload.signing_as':          { en: 'Uploading as {name} ({email})',
+                                                ar: 'تُرفع باسم {name} ({email})' },
+  'disbursement.upload.legal_notice':        { en: 'By submitting, you confirm these documents are authentic and complete.',
+                                                ar: 'بإرسال هذه المستندات، تؤكد أنها أصلية ومكتملة.' },
+  'disbursement.upload.error_generic':       { en: 'Upload failed. Please try again.',
+                                                ar: 'فشل رفع الملفات. يرجى المحاولة مرة أخرى.' },
+
+  // Checklist (admin / auditor stages)
+  'disbursement.checklist.header':       { en: '19-Item Compliance Checklist',
+                                            ar: 'قائمة مراجعة الامتثال (١٩ بندًا)' },
+  'disbursement.checklist.subtitle':     { en: '{answered} of {total} items answered',
+                                            ar: '{answered} من {total} بنود مُجاب عنها' },
+  'disbursement.checklist.col.num':         { en: '#',                ar: 'الرقم' },
+  'disbursement.checklist.col.question':    { en: 'Item',             ar: 'البند' },
+  'disbursement.checklist.col.ai_suggested':{ en: 'AI suggested',     ar: 'اقتراح الذكاء الاصطناعي' },
+  'disbursement.checklist.col.status':      { en: 'Final status',     ar: 'الحالة النهائية' },
+  'disbursement.checklist.col.notes':       { en: 'Notes',            ar: 'ملاحظات' },
+  'disbursement.checklist.col.actions':     { en: 'Actions',          ar: 'إجراءات' },
+
+  'disbursement.checklist.status.verified':     { en: 'Verified',       ar: 'مُتحقَّق' },
+  'disbursement.checklist.status.issue':        { en: 'Issue',          ar: 'يوجد ملاحظة' },
+  'disbursement.checklist.status.not_mentioned':{ en: 'Not mentioned',  ar: 'لم يُذكر' },
+  'disbursement.checklist.status.not_attached': { en: 'Not attached',   ar: 'لم يُرفق' },
+  'disbursement.checklist.status.pending':      { en: 'Pending',        ar: 'قيد المراجعة' },
+
+  'disbursement.checklist.ai_confidence':       { en: 'AI confidence {pct}%',
+                                                   ar: 'ثقة الذكاء الاصطناعي {pct}٪' },
+  'disbursement.checklist.edit':                { en: 'Edit',                                  ar: 'تعديل' },
+  'disbursement.checklist.save':                { en: 'Save',                                  ar: 'حفظ' },
+  'disbursement.checklist.cancel':              { en: 'Cancel',                                ar: 'إلغاء' },
+  'disbursement.checklist.notes_placeholder':   { en: 'Optional note…',                        ar: 'ملاحظة (اختيارية)…' },
+  'disbursement.checklist.read_only_complete':  { en: 'This stage is complete — checklist is read-only.',
+                                                   ar: 'انتهت هذه المرحلة — القائمة للقراءة فقط.' },
+  'disbursement.checklist.pending_active':      { en: 'Stage not yet active.',
+                                                   ar: 'لم تبدأ هذه المرحلة بعد.' },
+
+  // Uploaded files section in workflow detail
+  'workflows.uploads.title':       { en: 'Uploaded documents',         ar: 'المستندات المرفوعة' },
+  'workflows.uploads.empty':       { en: 'No files uploaded yet.',     ar: 'لم يتم رفع أي ملف بعد.' },
+  'workflows.uploads.uploaded_at': { en: 'Uploaded {date}',            ar: 'رُفع في {date}' },
+  'workflows.uploads.size_bytes':  { en: '{size} bytes',               ar: '{size} بايت' },
+
+  // Audit log additions
+  'workflows.event.upload_received':     { en: 'Document uploaded',                  ar: 'تم رفع مستند' },
+  'workflows.event.checklist_progress':  { en: 'Checklist progress recorded',        ar: 'تم تسجيل تقدّم القائمة' },
+  'workflows.event.checklist_response':  { en: 'Checklist item answered',            ar: 'تم الإجابة على بند' },
 } as const
 
 export type StringKey = keyof typeof strings

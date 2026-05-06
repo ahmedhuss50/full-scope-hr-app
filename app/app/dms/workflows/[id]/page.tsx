@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { CheckCircle2, XCircle, Circle, Clock, Sparkles, ShieldAlert, ExternalLink, Mail } from 'lucide-react'
+import { CheckCircle2, XCircle, Circle, Clock, Sparkles, ShieldAlert, ExternalLink, Mail, FileText, Upload as UploadIcon } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { t as tFn, type Locale, type StringKey } from '@/lib/i18n/translations'
 import {
@@ -9,6 +9,7 @@ import {
   type WorkflowRunStatus, type WorkflowStepStatus, type WorkflowStageKind, type WorkflowSignerKind,
 } from '../_shared'
 import { CopyLinkButton } from '../CopyLinkButton'
+import { ChecklistTable, type ChecklistRow, type ChecklistStatus } from './ChecklistTable'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,7 @@ type RunRow = {
   current_step_id: string | null
   document_id: string
   client_id: string | null
+  template_id: string | null
   document: { id: string; display_name: string | null; filename: string; doc_kind: string | null } | { id: string; display_name: string | null; filename: string; doc_kind: string | null }[] | null
   client: { id: string; name: string } | { id: string; name: string }[] | null
   template: { name: string } | { name: string }[] | null
@@ -61,6 +63,7 @@ type TokenRow = {
   expires_at: string
   used_at: string | null
   view_count: number
+  token_kind?: string | null
 }
 
 type SignatureRow = {
@@ -94,6 +97,46 @@ type AuditRow = {
   details: Record<string, unknown> | null
   occurred_at: string
   actor: { full_name: string | null } | { full_name: string | null }[] | null
+}
+
+type ChecklistItemRow = {
+  id: string
+  template_id: string
+  order_index: number
+  code: string | null
+  prompt_en: string
+  prompt_ar: string
+  ai_check_capable: boolean
+}
+
+type ChecklistResponseRow = {
+  id: string
+  run_step_id: string
+  checklist_item_id: string
+  status: ChecklistStatus
+  notes: string | null
+  ai_suggested_status: ChecklistStatus | null
+  ai_suggested_notes: string | null
+  ai_confidence: number | null
+}
+
+type UploadRow = {
+  id: string
+  run_step_id: string | null
+  filename: string
+  display_name: string | null
+  upload_kind: string | null
+  storage_path: string | null
+  file_size_bytes: number | null
+  mime_type: string | null
+  uploaded_at: string
+}
+
+function fmtBytes(n: number | null | undefined): string {
+  if (n == null) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function siteUrl(): string {
@@ -133,7 +176,7 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
   const runRes = await svc
     .from('dms_workflow_runs')
     .select(`
-      id, status, started_at, completed_at, notes, current_step_id, document_id, client_id,
+      id, status, started_at, completed_at, notes, current_step_id, document_id, client_id, template_id,
       document:dms_documents!document_id(id, display_name, filename, doc_kind),
       client:clients!client_id(id, name),
       template:dms_workflow_templates!template_id(name),
@@ -200,20 +243,69 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
 
   const tokensRes = await svc
     .from('dms_workflow_signer_tokens')
-    .select('signer_id, token, expires_at, used_at, view_count')
+    .select('signer_id, token, expires_at, used_at, view_count, token_kind')
     .eq('tenant_id', tenantId)
     .in('signer_id', signerIdsForQuery)
+    .is('used_at', null)
+    .order('created_at', { ascending: false })
 
   const tokens = (tokensRes.data ?? []) as TokenRow[]
   const signaturesForRun = (signaturesRes.data ?? []) as unknown as SignatureRow[]
   const analyses = (analysesRes.data ?? []) as AnalysisRow[]
   const audits = (auditRes.data ?? []) as unknown as AuditRow[]
 
+  // Checklist items + responses + uploads (only meaningful for templates that
+  // have them; queries are cheap if no rows exist).
+  const templateId = run.template_id
+  const [itemsRes, responsesRes, uploadsRes] = await Promise.all([
+    templateId
+      ? svc
+          .from('dms_workflow_checklist_items')
+          .select('id, template_id, order_index, code, prompt_en, prompt_ar, ai_check_capable')
+          .eq('tenant_id', tenantId)
+          .eq('template_id', templateId)
+          .order('order_index', { ascending: true })
+      : Promise.resolve({ data: [] as ChecklistItemRow[] }),
+    svc
+      .from('dms_workflow_checklist_responses')
+      .select('id, run_step_id, checklist_item_id, status, notes, ai_suggested_status, ai_suggested_notes, ai_confidence')
+      .eq('tenant_id', tenantId)
+      .in('run_step_id', stepIdsForQuery),
+    svc
+      .from('dms_workflow_uploads')
+      .select('id, run_step_id, filename, display_name, upload_kind, storage_path, file_size_bytes, mime_type, uploaded_at')
+      .eq('tenant_id', tenantId)
+      .eq('run_id', params.id)
+      .order('uploaded_at', { ascending: true }),
+  ])
+
+  const checklistItems = (itemsRes.data ?? []) as ChecklistItemRow[]
+  const checklistResponses = (responsesRes.data ?? []) as ChecklistResponseRow[]
+  const uploads = (uploadsRes.data ?? []) as UploadRow[]
+
+  // Index responses by (run_step_id, checklist_item_id)
+  const responseMap = new Map<string, ChecklistResponseRow>()
+  for (const r of checklistResponses) {
+    responseMap.set(`${r.run_step_id}:${r.checklist_item_id}`, r)
+  }
+
+  // Index uploads by step
+  const uploadsByStep = new Map<string, UploadRow[]>()
+  for (const u of uploads) {
+    const key = u.run_step_id ?? 'unassigned'
+    const arr = uploadsByStep.get(key) ?? []
+    arr.push(u)
+    uploadsByStep.set(key, arr)
+  }
+
   // Index by step
   const signerByStep = new Map<string, SignerRow>()
   for (const s of signers) signerByStep.set(s.run_step_id, s)
   const tokenBySigner = new Map<string, TokenRow>()
-  for (const t of tokens) tokenBySigner.set(t.signer_id, t)
+  // Tokens are ordered created_at desc; keep only the most recent unused per signer.
+  for (const t of tokens) {
+    if (!tokenBySigner.has(t.signer_id)) tokenBySigner.set(t.signer_id, t)
+  }
   const sigByStep = new Map<string, SignatureRow>()
   for (const s of signaturesForRun) sigByStep.set(s.run_step_id, s)
   const analysisByStep = new Map<string, AnalysisRow>()
@@ -322,20 +414,26 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
                         )}
                       </div>
 
-                      {/* Active external signer link box */}
+                      {/* Active external signer/upload link box */}
                       {step.status === 'awaiting' && signer?.signer_kind === 'external' && token && (
-                        <div className="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100 flex items-start gap-3 flex-wrap">
-                          <Mail className="w-4 h-4 text-blue-700 mt-0.5 shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs text-blue-900 font-semibold">
-                              {tServer('workflows.detail.signer_link_sent', locale, { email: signer.external_email ?? '' })}
+                        (() => {
+                          const path = token.token_kind === 'upload' ? 'upload' : 'sign'
+                          const fullUrl = `${siteUrl()}/${path}/${token.token}`
+                          return (
+                            <div className="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-100 flex items-start gap-3 flex-wrap">
+                              <Mail className="w-4 h-4 text-blue-700 mt-0.5 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs text-blue-900 font-semibold">
+                                  {tServer('workflows.detail.signer_link_sent', locale, { email: signer.external_email ?? '' })}
+                                </div>
+                                <div className="mt-1 text-[11px] font-mono text-blue-800/80 break-all">
+                                  {fullUrl}
+                                </div>
+                              </div>
+                              <CopyLinkButton url={fullUrl} />
                             </div>
-                            <div className="mt-1 text-[11px] font-mono text-blue-800/80 break-all">
-                              {siteUrl()}/sign/{token.token}
-                            </div>
-                          </div>
-                          <CopyLinkButton url={`${siteUrl()}/sign/${token.token}`} />
-                        </div>
+                          )
+                        })()
                       )}
 
                       {/* Signature info for approved/rejected step */}
@@ -362,6 +460,74 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
 
                       {/* AI analysis card */}
                       {analysis && <AiAnalysisCard analysis={analysis} locale={locale} />}
+
+                      {/* Uploads section — visible on the intake step that received the files */}
+                      {(() => {
+                        const stepUploads = uploadsByStep.get(step.id) ?? []
+                        if (stepUploads.length === 0) return null
+                        return (
+                          <div className="mt-4 p-4 rounded-lg bg-white border border-slate-200">
+                            <div className="flex items-center gap-2 mb-3">
+                              <UploadIcon className="w-4 h-4 text-slate-500" />
+                              <h4 className="text-sm font-bold text-slate-900">
+                                {tServer('workflows.uploads.title', locale)}
+                              </h4>
+                              <span className="text-[11px] text-slate-500 font-mono">{stepUploads.length}</span>
+                            </div>
+                            <ul className="divide-y divide-slate-100">
+                              {stepUploads.map((u) => (
+                                <li key={u.id} className="py-2 flex items-center gap-3">
+                                  <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-slate-900 truncate">
+                                      {u.display_name ?? u.filename}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 truncate font-mono">
+                                      {u.filename}
+                                    </div>
+                                  </div>
+                                  {u.upload_kind && (
+                                    <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200">
+                                      {(() => {
+                                        const k = `disbursement.upload.kind.${u.upload_kind}` as StringKey
+                                        const lbl = tServer(k, locale)
+                                        return lbl === k ? u.upload_kind : lbl
+                                      })()}
+                                    </span>
+                                  )}
+                                  <div className="text-[11px] text-slate-500 font-mono whitespace-nowrap">
+                                    {fmtBytes(u.file_size_bytes)}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )
+                      })()}
+
+                      {/* 19-item checklist — visible on internal_review steps for templates that have items */}
+                      {step.kind === 'internal_review' && checklistItems.length > 0 && (
+                        <ChecklistTable
+                          rows={checklistItems.map((it) => {
+                            const r = responseMap.get(`${step.id}:${it.id}`) ?? null
+                            return {
+                              item_id: it.id,
+                              order_index: it.order_index,
+                              code: it.code,
+                              prompt_en: it.prompt_en,
+                              prompt_ar: it.prompt_ar,
+                              status: (r?.status ?? null) as ChecklistRow['status'],
+                              notes: r?.notes ?? null,
+                              ai_status: (r?.ai_suggested_status ?? null) as ChecklistRow['ai_status'],
+                              ai_notes: r?.ai_suggested_notes ?? null,
+                              ai_confidence: r?.ai_confidence != null ? Number(r.ai_confidence) : null,
+                            }
+                          })}
+                          runId={run.id}
+                          runStepId={step.id}
+                          editable={step.status === 'awaiting'}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
