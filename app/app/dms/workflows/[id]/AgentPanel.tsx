@@ -101,8 +101,10 @@ export function AgentPanel({ runId, stepId, totalChecklistItems }: Props) {
     (a) => a.kind === 'log_observation' && a.target_kind === 'checklist_item',
   ).length
 
-  const statusKey = (run?.status ?? 'queued') as 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-  const isRunning = pending || statusKey === 'running' || statusKey === 'queued'
+  const statusKey = (run?.status ?? 'idle') as 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  // Only show "running" when (a) request is in flight, OR (b) we have a run row that's actually queued/running.
+  // Without `!!run`, a fresh page with no run defaults to 'queued' and incorrectly shows the running state.
+  const isRunning = pending || (!!run && (statusKey === 'running' || statusKey === 'queued'))
 
   const cost = Number(run?.cost_usd ?? 0)
   const tokIn = run?.total_tokens_in ?? 0
