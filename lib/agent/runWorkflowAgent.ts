@@ -20,9 +20,72 @@
  * of confidence settings.
  */
 import { createSupabaseService } from '@/lib/supabase/server'
-import { analyzeChecklistItem, CLAUDE_MODEL } from '@/lib/ai/analyze'
-import { calcSonnet45CostUsd, isClaudeConfigured } from '@/lib/ai/claude'
+import { CLAUDE_MODEL } from '@/lib/ai/analyze'
+import { callClaude, parseClaudeJson, calcSonnet45CostUsd, isClaudeConfigured } from '@/lib/ai/claude'
 import { fireN8nEvent } from '@/lib/integrations/n8n'
+
+// Batch-analyze all 19 checklist items in ONE Claude call. Much faster + cheaper
+// than the per-item loop (well under Vercel's 60-sec function timeout).
+interface BatchSuggestion {
+  code: string
+  status: 'verified' | 'issue' | 'not_mentioned' | 'not_attached' | 'pending'
+  notes: string
+  confidence: number
+}
+
+async function batchAnalyzeAllItems(args: {
+  items: Array<{ code: string; prompt_en: string | null; prompt_ar: string | null; order_index: number }>
+  documents: Array<{ filename: string; display_name: string | null; upload_kind: string | null; file_size_bytes: number | null }>
+}): Promise<{ suggestions: BatchSuggestion[]; tokensIn: number; tokensOut: number; durationMs: number }> {
+  if (!isClaudeConfigured() || args.items.length === 0) {
+    return { suggestions: [], tokensIn: 0, tokensOut: 0, durationMs: 0 }
+  }
+
+  const docList = args.documents
+    .map((d, i) => `  ${i + 1}. ${d.display_name ?? d.filename} (${d.upload_kind ?? 'other'}, ${d.file_size_bytes ?? 0} bytes)`)
+    .join('\n')
+
+  const itemList = args.items
+    .map((it) => `${it.order_index}. [${it.code}] ${it.prompt_en ?? it.prompt_ar ?? ''}`)
+    .join('\n')
+
+  const prompt = `You are a senior accountant at a Saudi accounting firm reviewing a disbursement document.
+A real estate developer has submitted these supporting documents:
+${docList}
+
+For each of the following ${args.items.length} review checklist items, return a status, brief reasoning, and confidence (0-1).
+
+Status options:
+- "verified": item passes (you have evidence it's correct)
+- "issue": item fails or is suspicious
+- "not_mentioned": item not addressed in the documents
+- "not_attached": supporting document for this item is not attached
+
+Checklist:
+${itemList}
+
+Respond with ONLY a JSON object in this exact shape (no extra text, no markdown):
+{
+  "suggestions": [
+    { "code": "DOC_SEQUENCE", "status": "verified", "notes": "Brief reasoning in <30 words.", "confidence": 0.92 },
+    ...one entry per checklist code, in order...
+  ]
+}`
+
+  const resp = await callClaude(prompt, {
+    maxTokens: 4096,
+    temperature: 0.2,
+    systemPrompt:
+      'You are a precise compliance reviewer. Always return valid JSON only. Be conservative — when in doubt, mark items as not_mentioned with low confidence rather than fabricating verification.',
+  })
+  const parsed = parseClaudeJson<{ suggestions: BatchSuggestion[] }>(resp.text)
+  return {
+    suggestions: parsed.suggestions ?? [],
+    tokensIn: resp.inputTokens,
+    tokensOut: resp.outputTokens,
+    durationMs: resp.durationMs,
+  }
+}
 
 type AgentChecklistStatus =
   | 'verified'
@@ -178,30 +241,39 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
       existingByItem.set(r.checklist_item_id as string, r.status as AgentChecklistStatus)
     }
 
-    // 3. For each unanswered item, ask Claude.
+    // 3. Filter to items that need analysis (skip already-answered ones).
+    const itemsToAnalyze = items.filter((item) => {
+      const existing = existingByItem.get(item.id as string)
+      return !existing || existing === 'pending'
+    })
+
+    // Log skipped items for transparency.
     for (const item of items) {
-      const itemId = item.id as string
-      const code = (item.code ?? '') as string
-      const existingStatus = existingByItem.get(itemId)
-      if (existingStatus && existingStatus !== 'pending') {
+      const existing = existingByItem.get(item.id as string)
+      if (existing && existing !== 'pending') {
         await logAction({
           kind: 'analyze_checklist_item',
           status: 'skipped',
           target_kind: 'checklist_item',
-          target_id: itemId,
-          input_summary: `Item ${item.order_index} (${code})`,
-          output_summary: `Already answered: ${existingStatus} — skipping.`,
+          target_id: item.id as string,
+          input_summary: `Item ${item.order_index} (${item.code ?? ''})`,
+          output_summary: `Already answered: ${existing} — skipping.`,
         })
-        continue
       }
+    }
 
-      const startMs = Date.now()
+    // 3a. ONE batched Claude call for all unanswered items. ~5-10 sec total.
+    let suggestionsByCode = new Map<string, BatchSuggestion>()
+    if (itemsToAnalyze.length > 0) {
       try {
-        const suggestion = await analyzeChecklistItem({
-          code,
-          prompt_en: item.prompt_en ?? undefined,
-          prompt_ar: item.prompt_ar ?? undefined,
-          run_id: input.run_id,
+        const batchStart = Date.now()
+        const batch = await batchAnalyzeAllItems({
+          items: itemsToAnalyze.map((it) => ({
+            code: (it.code ?? '') as string,
+            prompt_en: (it.prompt_en ?? null) as string | null,
+            prompt_ar: (it.prompt_ar ?? null) as string | null,
+            order_index: it.order_index as number,
+          })),
           documents: uploads.map((u) => ({
             filename: u.filename as string,
             display_name: u.display_name as string | null,
@@ -209,121 +281,131 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
             file_size_bytes: u.file_size_bytes as number | null,
           })),
         })
-        const durationMs = Date.now() - startMs
-
-        // We don't get token counts from analyzeChecklistItem itself; estimate
-        // by length to keep the running counter useful for the UI.
-        const estIn = Math.ceil((item.prompt_en?.length ?? 0) / 4) + 200
-        const estOut = Math.ceil(suggestion.notes.length / 4) + 30
-        totalIn += estIn
-        totalOut += estOut
+        for (const s of batch.suggestions) suggestionsByCode.set(s.code, s)
+        totalIn += batch.tokensIn
+        totalOut += batch.tokensOut
 
         await logAction({
-          kind: 'analyze_checklist_item',
-          status: 'success',
-          target_kind: 'checklist_item',
-          target_id: itemId,
-          input_summary: `Item ${item.order_index} (${code})`,
-          output_summary: `Status=${suggestion.status} · conf=${Math.round(suggestion.confidence * 100)}%`,
-          confidence: suggestion.confidence,
-          reasoning: suggestion.notes,
-          prompt_tokens: estIn,
-          completion_tokens: estOut,
-          duration_ms: durationMs,
+          kind: 'log_observation',
+          input_summary: `Batched Claude call for ${itemsToAnalyze.length} items`,
+          output_summary: `Returned ${batch.suggestions.length} suggestions in ${batch.durationMs}ms (${batch.tokensIn} in / ${batch.tokensOut} out)`,
+          duration_ms: batch.durationMs,
+          prompt_tokens: batch.tokensIn,
+          completion_tokens: batch.tokensOut,
         })
-
-        if (suggestion.status === 'issue') flagged += 1
-        else if (suggestion.confidence < threshold) flagged += 1
-
-        if (suggestion.confidence >= threshold && suggestion.status !== 'pending') {
-          // Auto-fill the response (upsert pattern matches checklist-actions.ts).
-          const { data: existingRow } = await svc
-            .from('dms_workflow_checklist_responses')
-            .select('id')
-            .eq('tenant_id', tenantId)
-            .eq('run_step_id', input.step_id)
-            .eq('checklist_item_id', itemId)
-            .maybeSingle()
-
-          if (existingRow) {
-            await svc
-              .from('dms_workflow_checklist_responses')
-              .update({
-                status: suggestion.status,
-                notes: suggestion.notes,
-                ai_suggested_status: suggestion.status,
-                ai_suggested_notes: suggestion.notes,
-                ai_confidence: suggestion.confidence,
-                responded_by: input.user_id,
-                responded_at: new Date().toISOString(),
-              })
-              .eq('id', existingRow.id)
-          } else {
-            await svc.from('dms_workflow_checklist_responses').insert({
-              tenant_id: tenantId,
-              run_step_id: input.step_id,
-              checklist_item_id: itemId,
-              status: suggestion.status,
-              notes: suggestion.notes,
-              ai_suggested_status: suggestion.status,
-              ai_suggested_notes: suggestion.notes,
-              ai_confidence: suggestion.confidence,
-              responded_by: input.user_id,
-              responded_at: new Date().toISOString(),
-            })
-          }
-
-          await logAction({
-            kind: 'fill_checklist_response',
-            target_kind: 'checklist_item',
-            target_id: itemId,
-            input_summary: `Item ${item.order_index} (${code})`,
-            output_summary: `Auto-filled with status=${suggestion.status} (conf ${Math.round(suggestion.confidence * 100)}% ≥ ${Math.round(threshold * 100)}%)`,
-            confidence: suggestion.confidence,
-          })
-          filled += 1
-
-          fireN8nEvent('agent.item_filled', {
-            agent_run_id: agentRunId,
-            run_id: input.run_id,
-            step_id: input.step_id,
-            checklist_item_id: itemId,
-            status: suggestion.status,
-            confidence: suggestion.confidence,
-          }).catch(() => {})
-        } else {
-          await logAction({
-            kind: 'log_observation',
-            target_kind: 'checklist_item',
-            target_id: itemId,
-            input_summary: `Item ${item.order_index} (${code})`,
-            output_summary: `Confidence ${Math.round(suggestion.confidence * 100)}% < ${Math.round(threshold * 100)}% threshold — flagged for human review.`,
-            confidence: suggestion.confidence,
-          })
-        }
-
-        // Update running cost / tokens on the agent_run.
-        await svc
-          .from('dms_workflow_agent_runs')
-          .update({
-            total_tokens_in: totalIn,
-            total_tokens_out: totalOut,
-            cost_usd: calcSonnet45CostUsd(totalIn, totalOut),
-          })
-          .eq('id', agentRunId)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         await logAction({
-          kind: 'analyze_checklist_item',
+          kind: 'log_observation',
           status: 'failure',
+          input_summary: 'Batched Claude call',
+          output_summary: `Claude call failed: ${msg.slice(0, 240)}. Falling back to mock suggestions per item.`,
+        })
+        // suggestionsByCode stays empty — per-item handling below treats as no suggestion
+      }
+    }
+
+    // 3b. Process each item — write response if confidence high enough.
+    for (const item of itemsToAnalyze) {
+      const itemId = item.id as string
+      const code = (item.code ?? '') as string
+      const suggestion = suggestionsByCode.get(code)
+
+      // If Claude didn't return this code (failure or empty), fall back to a "needs review" placeholder.
+      const status = suggestion?.status ?? 'not_mentioned'
+      const notes = suggestion?.notes ?? 'AI could not analyze this item — flagged for human review.'
+      const confidence = suggestion?.confidence ?? 0.3
+
+      await logAction({
+        kind: 'analyze_checklist_item',
+        status: 'success',
+        target_kind: 'checklist_item',
+        target_id: itemId,
+        input_summary: `Item ${item.order_index} (${code})`,
+        output_summary: `Status=${status} · conf=${Math.round(confidence * 100)}%`,
+        confidence,
+        reasoning: notes,
+      })
+
+      if (status === 'issue') flagged += 1
+      else if (confidence < threshold) flagged += 1
+
+      if (confidence >= threshold && status !== 'pending') {
+        const { data: existingRow } = await svc
+          .from('dms_workflow_checklist_responses')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .eq('run_step_id', input.step_id)
+          .eq('checklist_item_id', itemId)
+          .maybeSingle()
+
+        if (existingRow) {
+          await svc
+            .from('dms_workflow_checklist_responses')
+            .update({
+              status,
+              notes,
+              ai_suggested_status: status,
+              ai_suggested_notes: notes,
+              ai_confidence: confidence,
+              responded_by: input.user_id,
+              responded_at: new Date().toISOString(),
+            })
+            .eq('id', existingRow.id)
+        } else {
+          await svc.from('dms_workflow_checklist_responses').insert({
+            tenant_id: tenantId,
+            run_step_id: input.step_id,
+            checklist_item_id: itemId,
+            status,
+            notes,
+            ai_suggested_status: status,
+            ai_suggested_notes: notes,
+            ai_confidence: confidence,
+            responded_by: input.user_id,
+            responded_at: new Date().toISOString(),
+          })
+        }
+
+        await logAction({
+          kind: 'fill_checklist_response',
           target_kind: 'checklist_item',
           target_id: itemId,
           input_summary: `Item ${item.order_index} (${code})`,
-          output_summary: `Claude call failed: ${msg.slice(0, 240)}`,
+          output_summary: `Auto-filled with status=${status} (conf ${Math.round(confidence * 100)}% ≥ ${Math.round(threshold * 100)}%)`,
+          confidence,
         })
-        // continue with the next item
+        filled += 1
+
+        fireN8nEvent('agent.item_filled', {
+          agent_run_id: agentRunId,
+          run_id: input.run_id,
+          step_id: input.step_id,
+          checklist_item_id: itemId,
+          status,
+          confidence,
+        }).catch(() => {})
+      } else {
+        await logAction({
+          kind: 'log_observation',
+          target_kind: 'checklist_item',
+          target_id: itemId,
+          input_summary: `Item ${item.order_index} (${code})`,
+          output_summary: `Confidence ${Math.round(confidence * 100)}% < ${Math.round(threshold * 100)}% threshold — flagged for human review.`,
+          confidence,
+        })
       }
     }
+
+    // Update running cost / tokens on the agent_run (single update at end of batch).
+    await svc
+      .from('dms_workflow_agent_runs')
+      .update({
+        total_tokens_in: totalIn,
+        total_tokens_out: totalOut,
+        cost_usd: calcSonnet45CostUsd(totalIn, totalOut),
+      })
+      .eq('id', agentRunId)
 
     // 4. Decide whether to auto-advance.
     let advanced = false
