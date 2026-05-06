@@ -1220,6 +1220,36 @@ export const strings = {
 
   'agent.recent_runs':                 { en: 'Recent agent runs',
                                           ar: 'تشغيلات الوكيل الأخيرة' },
+
+  // -----------------------------------------------------------------
+  // Process diagram (workflow detail page top visual) + collapsible
+  // section headers for the redesigned workflow detail layout.
+  // -----------------------------------------------------------------
+  'process.percent_complete':          { en: '{pct}% complete · {done} of {total} stages',
+                                          ar: '{pct}٪ مكتمل · {done} من {total} مراحل' },
+  'process.in_progress':               { en: 'in progress',
+                                          ar: 'قيد التنفيذ' },
+  'process.pending':                   { en: 'pending',
+                                          ar: 'بالانتظار' },
+  'process.done':                      { en: 'done',
+                                          ar: 'منجز' },
+  'process.rejected':                  { en: 'rejected',
+                                          ar: 'مرفوضة' },
+  'process.signer.you':                { en: 'You',
+                                          ar: 'أنت' },
+  'process.no_signer':                 { en: '—',
+                                          ar: '—' },
+
+  'workflow.section.agent':            { en: 'AI Agent',
+                                          ar: 'وكيل الذكاء الاصطناعي' },
+  'workflow.section.checklist':        { en: 'Active checklist',
+                                          ar: 'قائمة المراجعة النشطة' },
+  'workflow.section.uploads':          { en: 'Uploaded documents',
+                                          ar: 'المستندات المرفوعة' },
+  'workflow.section.history':          { en: 'Detailed stage history',
+                                          ar: 'سجلّ المراحل التفصيلي' },
+  'workflow.section.activity':         { en: 'Activity timeline',
+                                          ar: 'سجلّ النشاط' },
 } as const
 
 export type StringKey = keyof typeof strings

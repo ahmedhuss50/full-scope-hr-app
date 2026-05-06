@@ -1,6 +1,10 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { CheckCircle2, XCircle, Circle, Clock, Sparkles, ShieldAlert, ExternalLink, Mail, FileText, Upload as UploadIcon } from 'lucide-react'
+import {
+  CheckCircle2, XCircle, Circle, Clock, Sparkles, ShieldAlert, ExternalLink, Mail,
+  FileText, Upload as UploadIcon, ChevronDown, Bot, ListChecks, History, Activity,
+  ArrowLeft,
+} from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { t as tFn, type Locale, type StringKey } from '@/lib/i18n/translations'
 import {
@@ -11,6 +15,7 @@ import {
 import { CopyLinkButton } from '../CopyLinkButton'
 import { ChecklistTable, type ChecklistRow, type ChecklistStatus } from './ChecklistTable'
 import { AgentPanel } from './AgentPanel'
+import { ProcessDiagram, type Stage as ProcessStage } from './ProcessDiagram'
 
 export const dynamic = 'force-dynamic'
 // Agent run can take 30+ seconds (Claude latency × 19 items). Vercel Hobby
@@ -171,13 +176,14 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
   const svc = createSupabaseService()
   const { data: profile } = await svc
     .from('users')
-    .select('tenant_id, locale')
+    .select('tenant_id, locale, full_name')
     .eq('email', user.email!)
     .maybeSingle()
   if (!profile) return null
 
   const tenantId = profile.tenant_id as string
   const locale = ((profile.locale as Locale) ?? 'ar')
+  const currentUserName = (profile.full_name as string | null) ?? null
 
   const runRes = await svc
     .from('dms_workflow_runs')
@@ -332,55 +338,183 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
   const runTemplate = pickOne(run.template)
   const runInitiator = pickOne(run.initiator)
 
+  // Build the simplified Stage[] feeding the ProcessDiagram. We use the
+  // human-readable stage label (e.g., "Internal review") rather than the raw
+  // step.name so the top diagram reads consistently across templates.
+  const diagramStages: ProcessStage[] = steps.map((s) => {
+    const signer = signerByStep.get(s.id)
+    let signerName: string | null = null
+    if (signer) {
+      if (signer.signer_kind === 'external') {
+        signerName = signer.external_name ?? signer.external_email ?? null
+      } else {
+        signerName = pickOne(signer.internal_user)?.full_name ?? null
+      }
+    }
+    return {
+      order_index: s.order_index,
+      name: stageLabel(s.kind, locale),
+      status: s.status,
+      signer_name: signerName,
+      signer_kind: signer?.signer_kind ?? null,
+      activated_at: s.activated_at,
+      completed_at: s.completed_at,
+      is_active: s.status === 'awaiting',
+    }
+  })
+
+  // Default-open rules for the collapsible sections.
+  const agentDefaultOpen = showAgentPanel
+  const checklistDefaultOpen = !!activeInternalStep
+  const uploadsDefaultOpen = uploads.length > 0
+  const totalUploads = uploads.length
+
   return (
     <div className="space-y-6">
-      {/* Breadcrumb */}
-      <nav className="text-xs text-slate-500 flex items-center gap-1.5">
-        <Link href="/app/dms" className="hover:text-slate-700">{tServer('dms.crumb.dms', locale)}</Link>
-        <span className="text-slate-300">/</span>
-        <Link href="/app/dms/workflows" className="hover:text-slate-700">{tServer('workflows.title', locale)}</Link>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-700 font-semibold truncate max-w-[40ch]">
-          {runDoc?.display_name ?? runDoc?.filename ?? '—'}
-        </span>
-      </nav>
-
-      <header className="space-y-2">
+      {/* Compact page header — back link + title + status chip */}
+      <div className="space-y-3">
+        <Link
+          href="/app/dms/workflows"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700"
+        >
+          <ArrowLeft className="w-3.5 h-3.5 rtl:rotate-180" />
+          {tServer('workflows.title', locale)}
+        </Link>
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
+          <h1 className="serif font-black text-xl sm:text-2xl tracking-tight text-slate-900">
             {runDoc?.display_name ?? runDoc?.filename ?? '—'}
           </h1>
           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusChipClasses(run.status)}`}>
             {statusLabel(run.status, locale)}
           </span>
         </div>
-        <p className="text-sm text-slate-500">
-          {runClient?.name ?? '—'}
-          <span className="text-slate-300 mx-2">·</span>
-          {runTemplate?.name ?? '—'}
-          <span className="text-slate-300 mx-2">·</span>
-          {fmtDateTime(run.started_at, locale)}
-          {runInitiator?.full_name && (
-            <>
-              <span className="text-slate-300 mx-2">·</span>
-              {tServer('workflows.detail.initiated_by', locale, { name: runInitiator.full_name })}
-            </>
-          )}
-        </p>
-      </header>
+      </div>
 
-      {/* AI Agent panel — disbursement template only, when an internal review step is active */}
+      {/* Top: at-a-glance horizontal process diagram */}
+      <ProcessDiagram
+        stages={diagramStages}
+        locale={locale}
+        currentUserName={currentUserName}
+      />
+
+      {/* Document name + initiator — single dim line below the diagram */}
+      <p className="text-xs text-slate-500 truncate">
+        {runClient?.name ?? '—'}
+        <span className="text-slate-300 mx-2">·</span>
+        {runTemplate?.name ?? '—'}
+        <span className="text-slate-300 mx-2">·</span>
+        {fmtDateTime(run.started_at, locale)}
+        {runInitiator?.full_name && (
+          <>
+            <span className="text-slate-300 mx-2">·</span>
+            {tServer('workflows.detail.initiated_by', locale, { name: runInitiator.full_name })}
+          </>
+        )}
+      </p>
+
+      {/* ============== Collapsible sections (single column) ============== */}
+
+      {/* AI Agent — only when applicable */}
       {showAgentPanel && activeInternalStep && (
-        <AgentPanel
-          runId={run.id}
-          stepId={activeInternalStep.id}
-          totalChecklistItems={checklistItems.length}
-        />
+        <CollapsibleSection
+          title={tServer('workflow.section.agent', locale)}
+          icon={<Bot className="w-5 h-5 text-teal-600" />}
+          defaultOpen={agentDefaultOpen}
+        >
+          <AgentPanelEmbed
+            runId={run.id}
+            stepId={activeInternalStep.id}
+            totalChecklistItems={checklistItems.length}
+          />
+        </CollapsibleSection>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline (2/3) */}
-        <div className="lg:col-span-2 space-y-4">
+      {/* Active checklist — only render when there's an active internal_review step
+          (the table is bound to a specific run_step_id and represents work-in-progress). */}
+      {activeInternalStep && checklistItems.length > 0 && (() => {
+        const stepId = activeInternalStep.id
+        const stepStatus = activeInternalStep.status
+        const answered = checklistItems.reduce((acc, it) => {
+          const r = responseMap.get(`${stepId}:${it.id}`)
+          return acc + (r && r.status && r.status !== 'pending' ? 1 : 0)
+        }, 0)
+        return (
+          <CollapsibleSection
+            title={tServer('workflow.section.checklist', locale)}
+            icon={<ListChecks className="w-5 h-5 text-teal-600" />}
+            count={`${answered}/${checklistItems.length}`}
+            defaultOpen={checklistDefaultOpen}
+          >
+            <ChecklistTable
+              rows={checklistItems.map((it) => {
+                const r = responseMap.get(`${stepId}:${it.id}`) ?? null
+                return {
+                  item_id: it.id,
+                  order_index: it.order_index,
+                  code: it.code,
+                  prompt_en: it.prompt_en,
+                  prompt_ar: it.prompt_ar,
+                  status: (r?.status ?? null) as ChecklistRow['status'],
+                  notes: r?.notes ?? null,
+                  ai_status: (r?.ai_suggested_status ?? null) as ChecklistRow['ai_status'],
+                  ai_notes: r?.ai_suggested_notes ?? null,
+                  ai_confidence: r?.ai_confidence != null ? Number(r.ai_confidence) : null,
+                }
+              })}
+              runId={run.id}
+              runStepId={stepId}
+              editable={stepStatus === 'awaiting'}
+            />
+          </CollapsibleSection>
+        )
+      })()}
+
+      {/* Uploaded documents (run-wide) */}
+      {totalUploads > 0 && (
+        <CollapsibleSection
+          title={tServer('workflow.section.uploads', locale)}
+          icon={<UploadIcon className="w-5 h-5 text-teal-600" />}
+          count={String(totalUploads)}
+          defaultOpen={uploadsDefaultOpen}
+        >
+          <ul className="divide-y divide-slate-100">
+            {uploads.map((u) => (
+              <li key={u.id} className="py-2 flex items-center gap-3">
+                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-slate-900 truncate">
+                    {u.display_name ?? u.filename}
+                  </div>
+                  <div className="text-[11px] text-slate-500 truncate font-mono">
+                    {u.filename}
+                  </div>
+                </div>
+                {u.upload_kind && (
+                  <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200">
+                    {(() => {
+                      const k = `disbursement.upload.kind.${u.upload_kind}` as StringKey
+                      const lbl = tServer(k, locale)
+                      return lbl === k ? u.upload_kind : lbl
+                    })()}
+                  </span>
+                )}
+                <div className="text-[11px] text-slate-500 font-mono whitespace-nowrap">
+                  {fmtBytes(u.file_size_bytes)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </CollapsibleSection>
+      )}
+
+      {/* Detailed stage history — the previous big pipeline cards live here, demoted */}
+      <CollapsibleSection
+        title={tServer('workflow.section.history', locale)}
+        icon={<History className="w-5 h-5 text-teal-600" />}
+        count={String(steps.length)}
+        defaultOpen={false}
+      >
+        <div className="space-y-4">
           {steps.map((step, idx) => {
             const signer = signerByStep.get(step.id)
             const token = signer ? tokenBySigner.get(signer.id) : null
@@ -484,7 +618,7 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
                       {/* AI analysis card */}
                       {analysis && <AiAnalysisCard analysis={analysis} locale={locale} />}
 
-                      {/* Uploads section — visible on the intake step that received the files */}
+                      {/* Per-step uploads — kept here for context within the demoted stage history */}
                       {(() => {
                         const stepUploads = uploadsByStep.get(step.id) ?? []
                         if (stepUploads.length === 0) return null
@@ -528,8 +662,9 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
                         )
                       })()}
 
-                      {/* 19-item checklist — visible on internal_review steps for templates that have items */}
-                      {step.kind === 'internal_review' && checklistItems.length > 0 && (
+                      {/* Read-only checklist on completed internal_review steps (the
+                          editable copy lives in the "Active checklist" section above). */}
+                      {step.kind === 'internal_review' && checklistItems.length > 0 && step.status !== 'awaiting' && (
                         <ChecklistTable
                           rows={checklistItems.map((it) => {
                             const r = responseMap.get(`${step.id}:${it.id}`) ?? null
@@ -548,7 +683,7 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
                           })}
                           runId={run.id}
                           runStepId={step.id}
-                          editable={step.status === 'awaiting'}
+                          editable={false}
                         />
                       )}
                     </div>
@@ -558,63 +693,99 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
             )
           })}
         </div>
+      </CollapsibleSection>
 
-        {/* Activity timeline + Document (1/3) */}
-        <aside className="lg:col-span-1 space-y-6">
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-            <div className="px-4 py-3 border-b border-slate-100">
-              <h3 className="text-xs uppercase tracking-wider font-semibold text-slate-600">
-                {tServer('workflows.detail.activity_timeline', locale)}
-              </h3>
-            </div>
-            <ol className="divide-y divide-slate-100">
-              {audits.length === 0 ? (
-                <li className="px-4 py-6 text-sm text-slate-500">
-                  {tServer('workflows.detail.empty_timeline', locale)}
+      {/* Activity timeline — closed by default */}
+      <CollapsibleSection
+        title={tServer('workflow.section.activity', locale)}
+        icon={<Activity className="w-5 h-5 text-teal-600" />}
+        count={String(audits.length)}
+        defaultOpen={false}
+      >
+        <ol className="divide-y divide-slate-100">
+          {audits.length === 0 ? (
+            <li className="py-3 text-sm text-slate-500">
+              {tServer('workflows.detail.empty_timeline', locale)}
+            </li>
+          ) : (
+            audits.map((e) => {
+              const { who, what } = describeAuditEvent(e, locale)
+              return (
+                <li key={e.id} className="py-3 text-sm">
+                  <div className="text-slate-700">
+                    <span className="font-semibold text-slate-900">{who}</span>
+                    <span className="text-slate-500"> — {what}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">{fmtDateTime(e.occurred_at, locale)}</div>
                 </li>
-              ) : (
-                audits.map((e) => {
-                  const { who, what } = describeAuditEvent(e, locale)
-                  return (
-                    <li key={e.id} className="px-4 py-3 text-sm">
-                      <div className="text-slate-700">
-                        <span className="font-semibold text-slate-900">{who}</span>
-                        <span className="text-slate-500"> — {what}</span>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5">{fmtDateTime(e.occurred_at, locale)}</div>
-                    </li>
-                  )
-                })
-              )}
-            </ol>
-          </section>
-
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-            <div className="px-4 py-3 border-b border-slate-100">
-              <h3 className="text-xs uppercase tracking-wider font-semibold text-slate-600">
-                {tServer('workflows.detail.document', locale)}
-              </h3>
-            </div>
-            <div className="p-4 space-y-2">
-              <div className="font-semibold text-slate-900">{runDoc?.display_name ?? runDoc?.filename ?? '—'}</div>
-              {runDoc?.filename && runDoc.display_name && (
-                <div className="text-xs text-slate-500 truncate font-mono">{runDoc.filename}</div>
-              )}
-              {run.client_id && (
-                <Link
-                  href={`/app/dms/clients/${run.client_id}`}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 hover:text-teal-700 mt-2"
-                >
-                  {tServer('workflows.detail.view_document', locale)}
-                  <ExternalLink className="w-3 h-3" />
-                </Link>
-              )}
-            </div>
-          </section>
-        </aside>
-      </div>
+              )
+            })
+          )}
+        </ol>
+        {run.client_id && (
+          <div className="mt-4 pt-3 border-t border-slate-100">
+            <Link
+              href={`/app/dms/clients/${run.client_id}`}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 hover:text-teal-700"
+            >
+              {tServer('workflows.detail.view_document', locale)}
+              <ExternalLink className="w-3 h-3" />
+            </Link>
+          </div>
+        )}
+      </CollapsibleSection>
     </div>
   )
+}
+
+/* ----------------------------------------------------------------- */
+/* Local presentational helpers                                       */
+/* ----------------------------------------------------------------- */
+
+/**
+ * CollapsibleSection — native <details> wrapper used to demote secondary
+ * content. Server-component-friendly (no JS required to expand/collapse).
+ */
+function CollapsibleSection({
+  title,
+  icon,
+  count,
+  defaultOpen,
+  children,
+}: {
+  title: string
+  icon: React.ReactNode
+  count?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <details
+      className="group bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden"
+      {...(defaultOpen ? { open: true } : {})}
+    >
+      <summary className="px-5 py-4 cursor-pointer flex items-center gap-3 hover:bg-slate-50 list-none [&::-webkit-details-marker]:hidden">
+        {icon}
+        <span className="font-semibold text-slate-900">{title}</span>
+        {count != null && (
+          <span className="text-xs text-slate-500 font-mono">{count}</span>
+        )}
+        <ChevronDown className="ms-auto w-4 h-4 text-slate-400 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="px-5 py-4 border-t border-slate-100">{children}</div>
+    </details>
+  )
+}
+
+/**
+ * AgentPanelEmbed — client AgentPanel renders its own card chrome by default.
+ * Inside our collapsible wrapper we want it to inherit the wrapper's chrome
+ * instead of stacking another card. We achieve this by simply rendering the
+ * existing component; visual nesting remains acceptable and refactoring the
+ * client component is out of scope.
+ */
+function AgentPanelEmbed(props: { runId: string; stepId: string; totalChecklistItems: number }) {
+  return <AgentPanel {...props} />
 }
 
 function StepCircle({ step }: { step: StepRow }) {
