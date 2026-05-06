@@ -1170,6 +1170,56 @@ export const strings = {
   'workflows.event.upload_received':     { en: 'Document uploaded',                  ar: 'تم رفع مستند' },
   'workflows.event.checklist_progress':  { en: 'Checklist progress recorded',        ar: 'تم تسجيل تقدّم القائمة' },
   'workflows.event.checklist_response':  { en: 'Checklist item answered',            ar: 'تم الإجابة على بند' },
+  'workflows.event.agent_approved_step': { en: 'AI agent auto-approved stage',       ar: 'تم اعتماد المرحلة آليًا بواسطة الوكيل' },
+
+  // -----------------------------------------------------------------
+  // AI Agent panel (Disbursement workflow)
+  // -----------------------------------------------------------------
+  'agent.title':                       { en: 'AI Agent',
+                                          ar: 'الوكيل الذكي' },
+  'agent.subtitle':                    { en: 'Automate the 19-item checklist with Claude.',
+                                          ar: 'يقوم الذكاء الاصطناعي بأتمتة قائمة المراجعة المكوّنة من ١٩ بندًا.' },
+
+  'agent.settings.threshold':          { en: 'Confidence threshold',
+                                          ar: 'حد الثقة' },
+  'agent.settings.auto_advance':       { en: 'Auto-advance stage when complete',
+                                          ar: 'تقدّم المرحلة تلقائيًا عند الاكتمال' },
+
+  'agent.actions.run':                 { en: 'Run AI Agent on this stage',
+                                          ar: 'تشغيل الوكيل الذكي على هذه المرحلة' },
+  'agent.actions.running':             { en: 'Agent running…',
+                                          ar: 'جارٍ تشغيل الوكيل…' },
+  'agent.actions.cancel':              { en: 'Cancel',
+                                          ar: 'إلغاء' },
+
+  'agent.status.queued':               { en: 'Queued',     ar: 'في الانتظار' },
+  'agent.status.running':              { en: 'Running',    ar: 'قيد التشغيل' },
+  'agent.status.completed':            { en: 'Completed',  ar: 'مكتمل' },
+  'agent.status.failed':               { en: 'Failed',     ar: 'فشل' },
+  'agent.status.cancelled':            { en: 'Cancelled',  ar: 'ملغى' },
+
+  'agent.progress.analyzed':           { en: 'Analyzed {x}/{total} items',
+                                          ar: 'تم تحليل {x}/{total} بندًا' },
+  'agent.progress.filled':             { en: '{y} filled',
+                                          ar: '{y} مُعبَّأ' },
+  'agent.progress.flagged':            { en: '{z} flagged for review',
+                                          ar: '{z} بحاجة لمراجعة' },
+
+  'agent.cost.tokens_in':              { en: 'in {n}',     ar: 'وارد {n}' },
+  'agent.cost.tokens_out':             { en: 'out {n}',    ar: 'صادر {n}' },
+  'agent.cost.usd':                    { en: '${v}',       ar: '{v}$' },
+
+  'agent.action.analyze':              { en: 'Analyze checklist item',
+                                          ar: 'تحليل بند من القائمة' },
+  'agent.action.fill':                 { en: 'Fill checklist response',
+                                          ar: 'تعبئة إجابة بند' },
+  'agent.action.advance':              { en: 'Advance stage',
+                                          ar: 'تقدّم المرحلة' },
+  'agent.action.observation':          { en: 'Observation',
+                                          ar: 'ملاحظة' },
+
+  'agent.recent_runs':                 { en: 'Recent agent runs',
+                                          ar: 'تشغيلات الوكيل الأخيرة' },
 } as const
 
 export type StringKey = keyof typeof strings

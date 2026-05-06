@@ -10,8 +10,14 @@ import {
 } from '../_shared'
 import { CopyLinkButton } from '../CopyLinkButton'
 import { ChecklistTable, type ChecklistRow, type ChecklistStatus } from './ChecklistTable'
+import { AgentPanel } from './AgentPanel'
 
 export const dynamic = 'force-dynamic'
+// Agent run can take 30+ seconds (Claude latency × 19 items). Vercel Hobby
+// caps server actions at 10s by default; pin this segment higher.
+export const maxDuration = 60
+
+const DISBURSEMENT_TEMPLATE_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
 
 function tServer(key: StringKey, locale: Locale, vars?: Record<string, string | number>) {
   return tFn(key, locale, vars)
@@ -283,6 +289,14 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
   const checklistResponses = (responsesRes.data ?? []) as ChecklistResponseRow[]
   const uploads = (uploadsRes.data ?? []) as UploadRow[]
 
+  // Agent panel is visible only for the Disbursement Document Review template,
+  // and only attached to the currently-active internal_review step.
+  const isDisbursement = templateId === DISBURSEMENT_TEMPLATE_ID
+  const activeInternalStep = steps.find(
+    (s) => s.status === 'awaiting' && s.kind === 'internal_review',
+  )
+  const showAgentPanel = isDisbursement && Boolean(activeInternalStep)
+
   // Index responses by (run_step_id, checklist_item_id)
   const responseMap = new Map<string, ChecklistResponseRow>()
   for (const r of checklistResponses) {
@@ -354,6 +368,15 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
           )}
         </p>
       </header>
+
+      {/* AI Agent panel — disbursement template only, when an internal review step is active */}
+      {showAgentPanel && activeInternalStep && (
+        <AgentPanel
+          runId={run.id}
+          stepId={activeInternalStep.id}
+          totalChecklistItems={checklistItems.length}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Pipeline (2/3) */}

@@ -1,15 +1,15 @@
 /**
- * Mock AI document-analysis stub for the DMS workflow demo.
+ * AI document-analysis layer.
  *
- * Returns realistic-looking analysis based on (doc_kind, stage_kind).
- * Future: replace with a real Claude API call. The shape of `AiAnalysisResult`
- * matches the `dms_workflow_ai_analyses` row contract (summary / key_points /
- * risk_flags / recommendation / confidence / model / raw_output) so the swap
- * is a one-function change.
+ * Two paths:
+ *   1. Real Claude — invoked when `ANTHROPIC_API_KEY` is set.
+ *   2. Mock        — fallback for local dev / when the key is missing.
  *
- * Plug-in point for the real Claude call: see the `// REAL_API:` block at the
- * bottom of `analyzeDocument`.
+ * Function signatures (`analyzeDocument`, `analyzeChecklistItem`) are
+ * unchanged so all existing call sites work untouched. The `model` field
+ * on the result tells you which path executed.
  */
+import { callClaude, parseClaudeJson, isClaudeConfigured, DEFAULT_CLAUDE_MODEL } from './claude'
 
 export interface AiAnalysisInput {
   document_name: string
@@ -215,33 +215,80 @@ function fallback(input: AiAnalysisInput): AiAnalysisResult {
   }
 }
 
+const DOC_SYSTEM_PROMPT =
+  "You are a senior accountant at a Saudi accounting firm reviewing disbursement documents. " +
+  'You evaluate compliance against a 19-point checklist. Respond with JSON only. Be concise. ' +
+  'Use the document metadata provided. If a question cannot be answered from metadata alone, ' +
+  "return status='not_mentioned' with low confidence."
+
+interface ClaudeDocAnalysisJson {
+  summary: string
+  key_points?: string[]
+  risk_flags?: string[]
+  recommendation?: string
+  confidence?: number
+}
+
+function buildDocPrompt(input: AiAnalysisInput): string {
+  return [
+    'Document metadata:',
+    `- name: ${input.document_name}`,
+    `- doc_kind: ${input.doc_kind ?? 'unknown'}`,
+    `- stage: ${input.stage_kind}`,
+    input.client_name ? `- client: ${input.client_name}` : null,
+    input.prompt ? `\nStage prompt:\n${input.prompt}` : null,
+    '',
+    'Return JSON with keys: summary (string), key_points (array of strings),',
+    'risk_flags (array of short snake_case codes), recommendation (string),',
+    'confidence (number between 0 and 1).',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+async function analyzeDocumentWithClaude(input: AiAnalysisInput): Promise<AiAnalysisResult> {
+  const resp = await callClaude(buildDocPrompt(input), {
+    systemPrompt: DOC_SYSTEM_PROMPT,
+    temperature: 0.2,
+    maxTokens: 800,
+  })
+  const parsed = parseClaudeJson<ClaudeDocAnalysisJson>(resp.text)
+  return {
+    summary: parsed.summary ?? 'No summary returned.',
+    key_points: Array.isArray(parsed.key_points) ? parsed.key_points : [],
+    risk_flags: Array.isArray(parsed.risk_flags) ? parsed.risk_flags : [],
+    recommendation: parsed.recommendation ?? '',
+    confidence:
+      typeof parsed.confidence === 'number' && parsed.confidence >= 0 && parsed.confidence <= 1
+        ? parsed.confidence
+        : 0.7,
+    model: resp.model,
+    raw_output: {
+      input_tokens: resp.inputTokens,
+      output_tokens: resp.outputTokens,
+      duration_ms: resp.durationMs,
+    },
+  }
+}
+
 /**
  * Generate a realistic-looking analysis for a document at a given workflow
- * stage. Mock-only for the demo; real Claude integration deferred to S30.
+ * stage. Real Claude when ANTHROPIC_API_KEY is set; mock fallback otherwise.
  */
 export async function analyzeDocument(input: AiAnalysisInput): Promise<AiAnalysisResult> {
+  if (isClaudeConfigured()) {
+    try {
+      return await analyzeDocumentWithClaude(input)
+    } catch (err) {
+      console.error('[analyzeDocument] Claude call failed, falling back to mock', err)
+    }
+  } else {
+    console.warn('[analyzeDocument] ANTHROPIC_API_KEY missing — using mock analysis.')
+  }
+
   const key = `${input.doc_kind ?? 'other'}:${input.stage_kind}`
   const branch = branches[key]
   if (branch) return branch(input)
-
-  // REAL_API: replace the fallback below with a real Claude call.
-  //
-  // const resp = await fetch('https://api.anthropic.com/v1/messages', {
-  //   method: 'POST',
-  //   headers: {
-  //     'x-api-key': process.env.ANTHROPIC_API_KEY!,
-  //     'anthropic-version': '2023-06-01',
-  //     'content-type': 'application/json',
-  //   },
-  //   body: JSON.stringify({
-  //     model: 'claude-sonnet-4-5',
-  //     max_tokens: 1024,
-  //     system: 'You are an experienced KSA accounting-firm reviewer. Return strict JSON.',
-  //     messages: [{ role: 'user', content: buildPrompt(input) }],
-  //   }),
-  // })
-  // return parseClaudeResponse(await resp.json())
-
   return fallback(input)
 }
 
@@ -268,8 +315,19 @@ export interface AnalyzeChecklistItemInput {
   code: string
   /** English prompt — used as fallback if no `code` match. */
   prompt_en?: string
+  /** Arabic prompt — included in the model context when present. */
+  prompt_ar?: string
   /** Optional snippet of document text the model would have seen. */
   document_excerpt?: string
+  /** Run id — used as the cache partition so per-run answers remain stable. */
+  run_id?: string
+  /** Lightweight metadata describing what was uploaded for this run. */
+  documents?: Array<{
+    filename: string
+    display_name?: string | null
+    upload_kind?: string | null
+    file_size_bytes?: number | null
+  }>
 }
 
 /**
@@ -302,19 +360,108 @@ const CHECKLIST_SUGGESTIONS: Record<string, ChecklistItemSuggestion> = {
   AUTHORIZED_PAYMENT:  { status: 'pending',       notes: 'Authorized signatories listed; manual verification of authority required.', confidence: 0.45, model: 'mock' },
 }
 
+// Process-local cache: per (run_id, item_code) we only ask Claude once.
+// Survives only the lifetime of the Node process — fine for a single
+// agent run; for true persistence we'd serialize into a Supabase column.
+const CHECKLIST_CACHE = new Map<string, ChecklistItemSuggestion>()
+
+interface ClaudeChecklistJson {
+  status?: ChecklistItemStatus
+  reasoning?: string
+  notes?: string
+  confidence?: number
+}
+
+const CHECKLIST_SYSTEM_PROMPT =
+  "You are a senior accountant at a Saudi accounting firm reviewing disbursement documents. " +
+  'You evaluate compliance against a 19-point checklist. Respond with JSON only. Be concise. ' +
+  'Use the document metadata provided. If a question cannot be answered from metadata alone, ' +
+  "return status='not_mentioned' with low confidence."
+
+function buildChecklistPrompt(input: AnalyzeChecklistItemInput): string {
+  const docs = (input.documents ?? [])
+    .map(
+      (d) =>
+        `  - ${d.display_name ?? d.filename} (filename=${d.filename}, kind=${d.upload_kind ?? 'unknown'})`,
+    )
+    .join('\n')
+  return [
+    `Checklist item code: ${input.code}`,
+    input.prompt_en ? `Question (EN): ${input.prompt_en}` : null,
+    input.prompt_ar ? `Question (AR): ${input.prompt_ar}` : null,
+    '',
+    'Documents available in this disbursement bundle:',
+    docs || '  (no documents attached)',
+    '',
+    "Return JSON with these exact keys:",
+    "  status: one of 'verified' | 'issue' | 'not_mentioned' | 'not_attached' | 'pending'",
+    "  reasoning: short explanation (max 2 sentences) of how you reached this decision",
+    "  confidence: number between 0 and 1",
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+async function analyzeChecklistItemWithClaude(
+  input: AnalyzeChecklistItemInput,
+): Promise<ChecklistItemSuggestion> {
+  const resp = await callClaude(buildChecklistPrompt(input), {
+    systemPrompt: CHECKLIST_SYSTEM_PROMPT,
+    temperature: 0.2,
+    maxTokens: 350,
+  })
+  const parsed = parseClaudeJson<ClaudeChecklistJson>(resp.text)
+  const validStatuses: ChecklistItemStatus[] = [
+    'verified', 'issue', 'not_mentioned', 'not_attached', 'pending',
+  ]
+  const status: ChecklistItemStatus = validStatuses.includes(parsed.status as ChecklistItemStatus)
+    ? (parsed.status as ChecklistItemStatus)
+    : 'pending'
+  return {
+    status,
+    notes: parsed.reasoning ?? parsed.notes ?? '',
+    confidence:
+      typeof parsed.confidence === 'number' && parsed.confidence >= 0 && parsed.confidence <= 1
+        ? parsed.confidence
+        : 0.5,
+    model: resp.model,
+  }
+}
+
 /**
  * Generate an AI suggestion for a single checklist item.
- * Used at stage activation to pre-fill the admin's responses.
+ * Real Claude when ANTHROPIC_API_KEY is set; mock fallback otherwise.
+ * Cached per (run_id, item_code) within the process to avoid duplicate work.
  */
 export async function analyzeChecklistItem(
   input: AnalyzeChecklistItemInput,
 ): Promise<ChecklistItemSuggestion> {
+  const cacheKey = `${input.run_id ?? 'no-run'}:${input.code}`
+  const cached = CHECKLIST_CACHE.get(cacheKey)
+  if (cached) return cached
+
+  if (isClaudeConfigured()) {
+    try {
+      const live = await analyzeChecklistItemWithClaude(input)
+      CHECKLIST_CACHE.set(cacheKey, live)
+      return live
+    } catch (err) {
+      console.error('[analyzeChecklistItem] Claude call failed, falling back to mock', err)
+    }
+  } else {
+    console.warn('[analyzeChecklistItem] ANTHROPIC_API_KEY missing — using mock suggestion.')
+  }
+
   const hit = CHECKLIST_SUGGESTIONS[input.code]
-  if (hit) return hit
-  return {
+  const result: ChecklistItemSuggestion = hit ?? {
     status: 'pending',
     notes: 'AI could not auto-evaluate this item; please answer manually.',
     confidence: 0.3,
     model: 'mock',
   }
+  CHECKLIST_CACHE.set(cacheKey, result)
+  return result
 }
+
+/** Surface the default Claude model for callers that need it for logging. */
+export const CLAUDE_MODEL = DEFAULT_CLAUDE_MODEL

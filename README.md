@@ -189,3 +189,11 @@ The scaffold in this directory advances these task-list items:
 - **G4** (audit log) — writing to `audit_log` on key events
 
 Everything else (Phase 2 interview AI, Phase 3 docs/onboarding/payroll) is untouched by this scaffold.
+
+### Pivot block — Disbursement Workflow + AI Agent
+
+- [x] **S36** Agent schema (`027_agent_schema.sql` — `dms_workflow_agent_runs` + `dms_workflow_agent_actions` + enums).
+- [x] **S37** Real Claude API integration (`lib/ai/claude.ts` — Anthropic SDK wrapper with `callClaude` + `parseClaudeJson` + cost helper; `lib/ai/analyze.ts` switches between real Claude and mock based on `ANTHROPIC_API_KEY`).
+- [x] **S38** Agent runner (`lib/agent/runWorkflowAgent.ts` — orchestrates per-item Claude calls, auto-fills above threshold, optionally auto-advances stage, never bypasses an `issue` flag).
+- [x] **S39** Agent UI (`AgentPanel.tsx` + `agent-actions.ts` server actions — threshold slider, auto-advance toggle, live polling of agent_actions, recent runs list).
+- [x] **S40** n8n event firing for agent lifecycle (`agent.started`, `agent.item_filled`, `agent.stage_advanced`, `agent.completed`, `agent.failed`).

@@ -66,6 +66,40 @@ tenant that wants its own sending domain, swap to a per-tenant lookup:
    the env var.
 3. Verify each tenant's domain in Resend's dashboard before activating.
 
+## ANTHROPIC_API_KEY — AI agent (Claude)
+
+The Disbursement Workflow ships with an AI Agent that calls Anthropic's
+Claude API to pre-fill the 19-item compliance checklist and (optionally)
+auto-advance the stage. Without a key the app falls back to canned mock
+responses, so dev does not break — but the demo needs a real key.
+
+1. Create a key at [https://console.anthropic.com](https://console.anthropic.com) →
+   **Settings → API Keys → Create Key**. Note the key (it is shown once).
+
+2. **Locally** — add to `.env.local`:
+
+   ```bash
+   ANTHROPIC_API_KEY=sk-ant-api03-...
+   ```
+
+   Restart `next dev` so the new env is picked up.
+
+3. **In Vercel** — Project Settings → **Environment Variables**:
+   - Name: `ANTHROPIC_API_KEY`
+   - Value: the key from step 1
+   - Environments: Production + Preview + Development
+   - Save, then redeploy (or trigger a new deployment) so the env is
+     baked into the runtime.
+
+4. The agent run loops through 19 checklist items in series and can take
+   ~30 seconds. The relevant page sets `export const maxDuration = 60` on
+   the workflow detail route to extend the Vercel function timeout above
+   the default 10 s. If you ever bump the loop count, raise this to match.
+
+5. Cost: Claude Sonnet 4.5 is currently $3 / MTok input + $15 / MTok output;
+   a single 19-item run typically costs **10–30 cents**. The agent records
+   the per-run cost in `dms_workflow_agent_runs.cost_usd` for transparency.
+
 ## Adding new transactional templates
 
 Templates live in `lib/email/templates/`. Each exports a `render*` function
