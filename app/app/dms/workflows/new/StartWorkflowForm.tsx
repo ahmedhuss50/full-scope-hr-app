@@ -29,10 +29,10 @@ export function StartWorkflowForm({
   defaultTemplateId: string
 }) {
   const router = useRouter()
-  const t = (key: keyof typeof strings, vars?: Record<string, string | number>) => {
-    const raw = strings[key]?.[locale] ?? strings[key]?.en ?? String(key)
+  const t = (key: keyof typeof strings, vars?: Record<string, string | number>): string => {
+    const raw: string = strings[key]?.[locale] ?? strings[key]?.en ?? String(key)
     if (!vars) return raw
-    return Object.entries(vars).reduce(
+    return Object.entries(vars).reduce<string>(
       (acc, [k, val]) => acc.replace(new RegExp(`\\{${k}\\}`, 'g'), String(val)),
       raw,
     )
