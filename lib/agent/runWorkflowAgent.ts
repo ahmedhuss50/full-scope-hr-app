@@ -21,8 +21,18 @@
  */
 import { createSupabaseService } from '@/lib/supabase/server'
 import { CLAUDE_MODEL } from '@/lib/ai/analyze'
-import { callClaude, parseClaudeJson, calcSonnet45CostUsd, isClaudeConfigured } from '@/lib/ai/claude'
+import {
+  callClaude,
+  callClaudeWithDocuments,
+  parseClaudeJson,
+  calcSonnet45CostUsd,
+  isClaudeConfigured,
+  type DocumentAttachment,
+} from '@/lib/ai/claude'
 import { fireN8nEvent } from '@/lib/integrations/n8n'
+
+// Storage bucket where developer uploads land (see app/upload/[token]/actions.ts).
+const STORAGE_BUCKET = 'Document submission'
 
 // Batch-analyze all 19 checklist items in ONE Claude call. Much faster + cheaper
 // than the per-item loop (well under Vercel's 60-sec function timeout).
@@ -31,11 +41,15 @@ interface BatchSuggestion {
   status: 'verified' | 'issue' | 'not_mentioned' | 'not_attached' | 'pending'
   notes: string
   confidence: number
+  /** Exact phrase/value from the document supporting the verdict, if any. */
+  evidence?: string
 }
 
 async function batchAnalyzeAllItems(args: {
   items: Array<{ code: string; prompt_en: string | null; prompt_ar: string | null; order_index: number }>
   documents: Array<{ filename: string; display_name: string | null; upload_kind: string | null; file_size_bytes: number | null }>
+  /** Optional PDF byte buffers; when present the agent will actually READ them. */
+  attachments?: DocumentAttachment[]
 }): Promise<{ suggestions: BatchSuggestion[]; tokensIn: number; tokensOut: number; durationMs: number }> {
   if (!isClaudeConfigured() || args.items.length === 0) {
     return { suggestions: [], tokensIn: 0, tokensOut: 0, durationMs: 0 }
@@ -49,11 +63,23 @@ async function batchAnalyzeAllItems(args: {
     .map((it) => `${it.order_index}. [${it.code}] ${it.prompt_en ?? it.prompt_ar ?? ''}`)
     .join('\n')
 
+  const hasAttachments = (args.attachments?.length ?? 0) > 0
+
+  const attachmentBlurb = hasAttachments
+    ? `Attached are the developer's uploaded documents (PDF). Read them carefully — quote the exact text or numbers that prove (or disprove) each checklist item.`
+    : `Only document metadata is available — no PDF bytes were attached. Be conservative: prefer "not_mentioned" over fabrication.`
+
   const prompt = `You are a senior accountant at a Saudi accounting firm reviewing a disbursement document.
 A real estate developer has submitted these supporting documents:
 ${docList}
 
-For each of the following ${args.items.length} review checklist items, return a status, brief reasoning, and confidence (0-1).
+${attachmentBlurb}
+
+For each of the following ${args.items.length} review checklist items, return:
+- status: "verified" | "issue" | "not_mentioned" | "not_attached"
+- notes:  brief reasoning (<40 words). When status="verified", quote the specific text/number from the document.
+- confidence: number between 0 and 1
+- evidence: the exact phrase/value from the document that proves the verdict, or "" if not available
 
 Status options:
 - "verified": item passes (you have evidence it's correct)
@@ -67,17 +93,28 @@ ${itemList}
 Respond with ONLY a JSON object in this exact shape (no extra text, no markdown):
 {
   "suggestions": [
-    { "code": "DOC_SEQUENCE", "status": "verified", "notes": "Brief reasoning in <30 words.", "confidence": 0.92 },
+    { "code": "DOC_SEQUENCE", "status": "verified", "notes": "Document sequence number is ST0026.", "evidence": "رقم الوثيقة: ST0026", "confidence": 0.95 },
     ...one entry per checklist code, in order...
   ]
 }`
 
-  const resp = await callClaude(prompt, {
-    maxTokens: 4096,
-    temperature: 0.2,
-    systemPrompt:
-      'You are a precise compliance reviewer. Always return valid JSON only. Be conservative — when in doubt, mark items as not_mentioned with low confidence rather than fabricating verification.',
-  })
+  const systemPrompt =
+    'You are a precise compliance reviewer. Always return valid JSON only. ' +
+    'When a PDF is attached, ground every verdict in the actual document text — quote it in the "evidence" field. ' +
+    'Be conservative: when in doubt, mark items as not_mentioned with low confidence rather than fabricating verification.'
+
+  const resp = hasAttachments
+    ? await callClaudeWithDocuments(prompt, args.attachments!, {
+        maxTokens: 4096,
+        temperature: 0.2,
+        systemPrompt,
+      })
+    : await callClaude(prompt, {
+        maxTokens: 4096,
+        temperature: 0.2,
+        systemPrompt,
+      })
+
   const parsed = parseClaudeJson<{ suggestions: BatchSuggestion[] }>(resp.text)
   return {
     suggestions: parsed.suggestions ?? [],
@@ -85,6 +122,56 @@ Respond with ONLY a JSON object in this exact shape (no extra text, no markdown)
     tokensOut: resp.outputTokens,
     durationMs: resp.durationMs,
   }
+}
+
+/**
+ * Fetch each upload's PDF bytes from Supabase Storage. Failures are tolerated
+ * and logged — when ALL fail we fall back to metadata-only analysis.
+ */
+async function fetchUploadAttachments(
+  svc: ReturnType<typeof createSupabaseService>,
+  uploads: Array<{
+    id: string
+    filename: string
+    display_name: string | null
+    upload_kind: string | null
+    storage_path: string | null
+    storage_bucket: string | null
+    mime_type: string | null
+  }>,
+  logFailure: (filename: string, reason: string) => Promise<void>,
+  logSuccess: (filename: string, bytes: number) => Promise<void>,
+): Promise<DocumentAttachment[]> {
+  const out: DocumentAttachment[] = []
+  for (const u of uploads) {
+    const filename = u.display_name ?? u.filename
+    if (!u.storage_path) {
+      await logFailure(filename, 'storage_path is null — file was never uploaded to storage')
+      continue
+    }
+    const bucket = u.storage_bucket ?? STORAGE_BUCKET
+    try {
+      const { data, error } = await svc.storage.from(bucket).download(u.storage_path)
+      if (error || !data) {
+        await logFailure(filename, error?.message ?? 'empty download response')
+        continue
+      }
+      const arrayBuf = await data.arrayBuffer()
+      const buf = Buffer.from(arrayBuf)
+      // PDFs only — silently skip non-PDFs (Claude only supports PDFs + images here).
+      const mime = u.mime_type ?? 'application/pdf'
+      if (!mime.includes('pdf')) {
+        await logFailure(filename, `unsupported mime_type ${mime} — only PDFs are sent to Claude`)
+        continue
+      }
+      await logSuccess(filename, buf.length)
+      out.push({ data: buf, filename, mediaType: 'application/pdf' })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await logFailure(filename, msg)
+    }
+  }
+  return out
 }
 
 type AgentChecklistStatus =
@@ -218,7 +305,7 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
         .eq('run_step_id', input.step_id),
       svc
         .from('dms_workflow_uploads')
-        .select('id, filename, display_name, upload_kind, file_size_bytes')
+        .select('id, filename, display_name, upload_kind, file_size_bytes, storage_path, storage_bucket, mime_type')
         .eq('tenant_id', tenantId)
         .eq('run_id', input.run_id)
         .order('uploaded_at', { ascending: true }),
@@ -235,6 +322,57 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
       input_summary: `Loaded ${items.length} checklist items + ${uploads.length} uploaded documents`,
       output_summary: uploads.map((u) => u.display_name ?? u.filename).join(', '),
     })
+
+    // 2b. Attempt to download each upload's PDF bytes so Claude can READ them.
+    //     When storage_path is null (seed data) or the file is missing we fall
+    //     back to metadata-only analysis.
+    let attachments: DocumentAttachment[] = []
+    if (isClaudeConfigured() && uploads.length > 0) {
+      attachments = await fetchUploadAttachments(
+        svc,
+        uploads.map((u) => ({
+          id: u.id as string,
+          filename: u.filename as string,
+          display_name: (u.display_name ?? null) as string | null,
+          upload_kind: (u.upload_kind ?? null) as string | null,
+          storage_path: (u.storage_path ?? null) as string | null,
+          storage_bucket: (u.storage_bucket ?? null) as string | null,
+          mime_type: (u.mime_type ?? null) as string | null,
+        })),
+        async (filename, reason) => {
+          await logAction({
+            kind: 'read_document',
+            status: 'failure',
+            target_kind: 'upload',
+            input_summary: `Download: ${filename}`,
+            output_summary: `File not in storage — analyzing metadata only. (${reason.slice(0, 200)})`,
+          })
+        },
+        async (filename, bytes) => {
+          await logAction({
+            kind: 'read_document',
+            status: 'success',
+            target_kind: 'upload',
+            input_summary: `Download: ${filename}`,
+            output_summary: `Loaded ${bytes} bytes from storage; will send to Claude as PDF attachment.`,
+          })
+        },
+      )
+
+      if (attachments.length === 0 && uploads.length > 0) {
+        await logAction({
+          kind: 'log_observation',
+          status: 'skipped',
+          output_summary:
+            'No PDFs could be loaded from storage for this run. Falling back to filename-only analysis.',
+        })
+      } else if (attachments.length > 0) {
+        await logAction({
+          kind: 'log_observation',
+          output_summary: `Attached ${attachments.length} of ${uploads.length} PDFs to the Claude call.`,
+        })
+      }
+    }
 
     const existingByItem = new Map<string, AgentChecklistStatus>()
     for (const r of existing) {
@@ -280,6 +418,7 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
             upload_kind: u.upload_kind as string | null,
             file_size_bytes: u.file_size_bytes as number | null,
           })),
+          attachments: attachments.length > 0 ? attachments : undefined,
         })
         for (const s of batch.suggestions) suggestionsByCode.set(s.code, s)
         totalIn += batch.tokensIn
@@ -313,7 +452,15 @@ export async function runDisbursementAgent(input: RunAgentInput): Promise<RunAge
 
       // If Claude didn't return this code (failure or empty), fall back to a "needs review" placeholder.
       const status = suggestion?.status ?? 'not_mentioned'
-      const notes = suggestion?.notes ?? 'AI could not analyze this item — flagged for human review.'
+      const baseReasoning =
+        suggestion?.notes ?? 'AI could not analyze this item — flagged for human review.'
+      const evidence = (suggestion?.evidence ?? '').trim()
+      // Combine reasoning + evidence in the notes column so the ChecklistTable
+      // UI can render the evidence block. Format is stable: a blank line then
+      // "Evidence: <quote>". The UI parses on this prefix.
+      const notes = evidence
+        ? `${baseReasoning}\n\nEvidence: ${evidence}`
+        : baseReasoning
       const confidence = suggestion?.confidence ?? 0.3
 
       await logAction({

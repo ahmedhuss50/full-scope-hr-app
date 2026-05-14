@@ -599,6 +599,44 @@ export const strings = {
   'workflows.start_coming':                 { en: 'Create flow available in next session',
                                               ar: 'إنشاء التدفقات سيتوفّر في الجلسة القادمة' },
 
+  // Start-workflow form (firm-staff facing — /app/dms/workflows/new)
+  'workflows.start.title':                  { en: 'Start a new disbursement workflow',
+                                              ar: 'بدء تدفق صرف مستندات جديد' },
+  'workflows.start.subtitle':               { en: 'Generates a tokenized upload link to send to the developer. They will upload contract, bill, proof of fund, and bank statement. The workflow advances automatically.',
+                                              ar: 'يُنشئ رابط رفع مُؤمَّنًا برمز يُرسل إلى المطوّر، ليرفع العقد والفاتورة وإثبات التمويل وكشف الحساب البنكي. يتقدّم التدفق تلقائيًا بعد الرفع.' },
+  'workflows.start.field.client':           { en: 'Client',                ar: 'العميل' },
+  'workflows.start.field.template':         { en: 'Workflow template',     ar: 'قالب التدفق' },
+  'workflows.start.field.title':            { en: 'Document title / reference',
+                                              ar: 'عنوان المستند / المرجع' },
+  'workflows.start.field.developer_name':   { en: 'Developer name',        ar: 'اسم المطوّر' },
+  'workflows.start.field.developer_email':  { en: 'Developer email',       ar: 'البريد الإلكتروني للمطوّر' },
+  'workflows.start.field.expires_days':     { en: 'Token expires in (days)',
+                                              ar: 'مدة صلاحية الرابط (أيام)' },
+  'workflows.start.field.notify':           { en: 'Notify developer by email',
+                                              ar: 'إشعار المطوّر عبر البريد الإلكتروني' },
+  'workflows.start.field.notes':            { en: 'Notes (optional)',      ar: 'ملاحظات (اختياري)' },
+  'workflows.start.submit':                 { en: 'Create workflow + generate upload link',
+                                              ar: 'إنشاء التدفق وتوليد رابط الرفع' },
+  'workflows.start.submitting':             { en: 'Creating…',             ar: 'جارٍ الإنشاء…' },
+  'workflows.start.error.required':         { en: 'Please fill in all required fields.',
+                                              ar: 'يرجى تعبئة جميع الحقول المطلوبة.' },
+  'workflows.start.error.create_failed':    { en: 'Could not create workflow. Please try again.',
+                                              ar: 'تعذّر إنشاء التدفق. يرجى المحاولة مرة أخرى.' },
+
+  // After-create banner shown on /app/dms/workflows/[id]?created=1
+  'workflows.created.banner_title':         { en: 'Workflow created.',
+                                              ar: 'تم إنشاء التدفق.' },
+  'workflows.created.banner_body':          { en: 'Send this upload link to the developer:',
+                                              ar: 'أرسل رابط الرفع التالي إلى المطوّر:' },
+  'workflows.created.copy_link':            { en: 'Copy link',
+                                              ar: 'نسخ الرابط' },
+  'workflows.created.email_sent':           { en: 'Email sent to the developer.',
+                                              ar: 'تم إرسال بريد إلكتروني إلى المطوّر.' },
+  'workflows.created.email_failed':         { en: 'Email could not be sent — share the link manually.',
+                                              ar: 'تعذّر إرسال البريد الإلكتروني — يرجى مشاركة الرابط يدويًا.' },
+  'workflows.created.dismiss':              { en: 'Dismiss',
+                                              ar: 'إغلاق' },
+
   'workflows.metric.in_progress':           { en: 'In progress',
                                               ar: 'قيد التنفيذ' },
   'workflows.metric.completed':             { en: 'Completed (last 30 days)',
@@ -1160,6 +1198,12 @@ export const strings = {
   'disbursement.checklist.pending_active':      { en: 'Stage not yet active.',
                                                    ar: 'لم تبدأ هذه المرحلة بعد.' },
 
+  // Evidence block — quote from the actual PDF the AI agent read
+  'disbursement.checklist.evidence.title':      { en: 'Evidence from document',
+                                                   ar: 'دليل من الوثيقة' },
+  'disbursement.checklist.evidence.none':       { en: 'No specific evidence cited',
+                                                   ar: 'لا يوجد دليل محدد' },
+
   // Uploaded files section in workflow detail
   'workflows.uploads.title':       { en: 'Uploaded documents',         ar: 'المستندات المرفوعة' },
   'workflows.uploads.empty':       { en: 'No files uploaded yet.',     ar: 'لم يتم رفع أي ملف بعد.' },
@@ -1217,6 +1261,12 @@ export const strings = {
                                           ar: 'تقدّم المرحلة' },
   'agent.action.observation':          { en: 'Observation',
                                           ar: 'ملاحظة' },
+
+  // Agent activity log — fine-grained actions surfaced in the timeline
+  'agent.activity.read_pdf':           { en: 'Read PDF: {filename}',
+                                          ar: 'قراءة الملف: {filename}' },
+  'agent.activity.pdf_download_failed':{ en: 'Could not load PDF: {filename}',
+                                          ar: 'تعذّر تحميل الملف: {filename}' },
 
   'agent.recent_runs':                 { en: 'Recent agent runs',
                                           ar: 'تشغيلات الوكيل الأخيرة' },

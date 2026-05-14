@@ -179,8 +179,10 @@ function ChecklistRowView({
             placeholder={t('disbursement.checklist.notes_placeholder')}
             className="w-full text-[11px] rounded border border-slate-300 px-2 py-1 bg-white"
           />
+        ) : row.notes ? (
+          <NotesWithEvidence notes={row.notes} isRtl={isRtl} />
         ) : (
-          row.notes ? <span className="whitespace-pre-wrap">{row.notes}</span> : <span className="text-slate-400">—</span>
+          <span className="text-slate-400">—</span>
         )}
       </td>
       {editable && (
@@ -223,6 +225,49 @@ function ChecklistRowView({
         </td>
       )}
     </tr>
+  )
+}
+
+/**
+ * Render the notes cell. If the notes string contains an "Evidence:" suffix
+ * (the format the AI agent writes — see runWorkflowAgent.ts) we split into:
+ *   - The reasoning (plain text)
+ *   - A quoted evidence block styled like a blockquote
+ */
+function NotesWithEvidence({ notes, isRtl }: { notes: string; isRtl: boolean }) {
+  // Use a hook here is unnecessary; just plain split.
+  // Match the literal divider we write: "\n\nEvidence: ..." (case-insensitive).
+  const idx = notes.search(/\n\nEvidence:\s*/i)
+  if (idx === -1) {
+    return <span className="whitespace-pre-wrap">{notes}</span>
+  }
+  const reasoning = notes.slice(0, idx).trim()
+  const evidence = notes.replace(/^[\s\S]*?\n\nEvidence:\s*/i, '').trim()
+
+  return (
+    <div className="space-y-1.5">
+      {reasoning && <div className="whitespace-pre-wrap">{reasoning}</div>}
+      {evidence && (
+        <EvidenceBlock evidence={evidence} isRtl={isRtl} />
+      )}
+    </div>
+  )
+}
+
+function EvidenceBlock({ evidence, isRtl }: { evidence: string; isRtl: boolean }) {
+  const { t } = useLocale()
+  return (
+    <div className="border-l-4 border-teal-300 pl-3 bg-slate-50 rounded-r py-1">
+      <div className="text-[9px] uppercase tracking-wider text-teal-700 font-semibold">
+        {t('disbursement.checklist.evidence.title')}
+      </div>
+      <div
+        className="text-[11px] italic text-slate-700 font-mono whitespace-pre-wrap"
+        dir={/[؀-ۿ]/.test(evidence) ? 'rtl' : isRtl ? 'rtl' : 'ltr'}
+      >
+        “{evidence}”
+      </div>
+    </div>
   )
 }
 

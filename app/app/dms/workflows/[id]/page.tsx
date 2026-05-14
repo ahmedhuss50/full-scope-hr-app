@@ -16,6 +16,7 @@ import { CopyLinkButton } from '../CopyLinkButton'
 import { ChecklistTable, type ChecklistRow, type ChecklistStatus } from './ChecklistTable'
 import { AgentPanel } from './AgentPanel'
 import { ProcessDiagram, type Stage as ProcessStage } from './ProcessDiagram'
+import { CreatedBanner } from './CreatedBanner'
 
 export const dynamic = 'force-dynamic'
 // Agent run can take 30+ seconds (Claude latency × 19 items). Vercel Hobby
@@ -168,7 +169,13 @@ function describeAuditEvent(e: AuditRow, locale: Locale): { who: string; what: s
   return { who, what: what === `workflows.event.${e.action}` ? e.action : what }
 }
 
-export default async function WorkflowDetailPage({ params }: { params: { id: string } }) {
+export default async function WorkflowDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string }
+  searchParams?: { created?: string }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
@@ -369,8 +376,44 @@ export default async function WorkflowDetailPage({ params }: { params: { id: str
   const uploadsDefaultOpen = uploads.length > 0
   const totalUploads = uploads.length
 
+  // ----- After-create banner data ---------------------------------------
+  // When ?created=1 is present, look up the upload token for the active
+  // step's external signer (most recent unused). Also derive whether the
+  // creation email was sent (from the audit log).
+  let bannerUploadUrl: string | null = null
+  let bannerEmailStatus: 'sent' | 'failed' | 'unknown' | null = null
+  const showCreatedBanner = searchParams?.created === '1'
+  if (showCreatedBanner) {
+    // Find the active external step + its token.
+    const activeExternalStep = steps.find(
+      (s) => s.status === 'awaiting' && s.signer_kind === 'external',
+    )
+    if (activeExternalStep) {
+      const externalSigner = signerByStep.get(activeExternalStep.id)
+      const externalToken = externalSigner ? tokenBySigner.get(externalSigner.id) : null
+      if (externalToken) {
+        const path = externalToken.token_kind === 'upload' ? 'upload' : 'sign'
+        bannerUploadUrl = `${siteUrl()}/${path}/${externalToken.token}`
+      }
+    }
+    // Email status — read the most recent email_sent / email_failed event.
+    for (const a of audits) {
+      if (a.action === 'email_sent') { bannerEmailStatus = 'sent'; break }
+      if (a.action === 'email_failed') { bannerEmailStatus = 'failed'; break }
+    }
+  }
+
   return (
     <div className="space-y-6">
+      {/* After-create success banner */}
+      {showCreatedBanner && (
+        <CreatedBanner
+          runId={run.id}
+          uploadUrl={bannerUploadUrl}
+          emailStatus={bannerEmailStatus}
+        />
+      )}
+
       {/* Compact page header — back link + title + status chip */}
       <div className="space-y-3">
         <Link

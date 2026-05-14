@@ -143,14 +143,12 @@ export default async function WorkflowsListPage() {
             {tServer('workflows.subtitle', locale)}
           </p>
         </div>
-        <a
-          href="#"
-          title={tServer('workflows.start_coming', locale)}
-          aria-disabled="true"
-          className="inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition cursor-not-allowed opacity-90"
+        <Link
+          href="/app/dms/workflows/new"
+          className="inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition"
         >
           + {tServer('workflows.start_button', locale)}
-        </a>
+        </Link>
       </header>
 
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
