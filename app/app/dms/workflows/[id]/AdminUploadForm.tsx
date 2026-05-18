@@ -1,12 +1,11 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Upload, FileText, CheckCircle2 } from 'lucide-react'
-import { useLocale } from '@/lib/i18n/LocaleContext'
-import { requestUploadUrls, registerUploads } from './actions'
+import { t as tFn, type Locale } from '@/lib/i18n/translations'
+import { requestAdminUploadUrls, registerAdminUploads } from './admin-upload-actions'
 
 type UploadKind = 'contract' | 'bill' | 'proof_of_fund' | 'bank_statement'
-
 const KINDS: UploadKind[] = ['contract', 'bill', 'proof_of_fund', 'bank_statement']
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25 MB
@@ -24,34 +23,36 @@ const ALLOWED_MIME_TYPES = new Set<string>([
 ])
 
 /**
- * Direct-to-Storage upload form. The Vercel Hobby tier caps server-action
- * bodies at 4.5 MB, so the file bytes MUST NOT pass through a server action.
- *
- * Flow:
- *   1. Server action `requestUploadUrls` validates the token + mints a signed
- *      Supabase Storage upload URL per file (tiny JSON request).
- *   2. Browser PUTs each file straight to the signed URL — bypassing Vercel
- *      entirely. Limit is the Supabase bucket cap (25 MB per file).
- *   3. Server action `registerUploads` records the metadata rows + advances
- *      the workflow (tiny JSON request).
+ * Internal-staff version of the developer upload form. Uses the same
+ * direct-to-Supabase-Storage flow as the public token form to dodge Vercel's
+ * 4.5 MB server-action body limit:
+ *   1. requestAdminUploadUrls (auth-gated) -> N signed PUT URLs
+ *   2. Browser PUTs each file directly to Storage
+ *   3. registerAdminUploads (auth-gated) -> records metadata + advances step
  */
-export function UploadForm({ token }: { token: string }) {
-  const { t } = useLocale()
+export function AdminUploadForm({
+  stepId,
+  locale,
+}: {
+  stepId: string
+  locale: Locale
+}) {
   const router = useRouter()
   const [files, setFiles] = useState<Partial<Record<UploadKind, File>>>({})
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState<{ n: number; m: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
   function onPick(kind: UploadKind, e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
     if (f.size > MAX_FILE_SIZE) {
-      setError(t('disbursement.upload.too_large', { max: MAX_FILE_SIZE_MB }))
+      setError(tFn('disbursement.upload.too_large', locale, { max: MAX_FILE_SIZE_MB }))
       return
     }
     if (f.type && !ALLOWED_MIME_TYPES.has(f.type)) {
-      setError(t('disbursement.upload.unsupported'))
+      setError(tFn('disbursement.upload.unsupported', locale))
       return
     }
     setError(null)
@@ -66,15 +67,15 @@ export function UploadForm({ token }: { token: string }) {
       (s): s is { kind: UploadKind; file: File } => Boolean(s.file),
     )
     if (slots.length === 0) {
-      setError(t('disbursement.upload.error_generic'))
+      setError(tFn('disbursement.upload.error_generic', locale))
       return
     }
 
     setSubmitting(true)
     try {
-      // 1. Ask the server for one signed upload URL per file.
-      const urlsResp = await requestUploadUrls({
-        token,
+      // 1. Mint signed upload URLs.
+      const urlsResp = await requestAdminUploadUrls({
+        step_id: stepId,
         slots: slots.map((s) => ({
           kind: s.kind,
           filename: s.file.name,
@@ -83,15 +84,11 @@ export function UploadForm({ token }: { token: string }) {
         })),
       })
       if (!urlsResp.ok || !urlsResp.uploads) {
-        if (urlsResp.redirectTo) {
-          router.push(urlsResp.redirectTo)
-          return
-        }
-        setError(urlsResp.error ?? t('disbursement.upload.error_generic'))
+        setError(urlsResp.error ?? tFn('disbursement.upload.error_generic', locale))
         return
       }
 
-      // 2. PUT each file directly to Supabase Storage via its signed URL.
+      // 2. PUT each file directly to Supabase Storage.
       const total = urlsResp.uploads.length
       let done = 0
       for (const u of urlsResp.uploads) {
@@ -108,15 +105,15 @@ export function UploadForm({ token }: { token: string }) {
           },
         })
         if (!putRes.ok) {
-          setError(`${t('disbursement.upload.error_generic')} (${u.kind}: HTTP ${putRes.status})`)
+          setError(`${tFn('disbursement.upload.error_generic', locale)} (${u.kind}: HTTP ${putRes.status})`)
           return
         }
         done += 1
       }
 
-      // 3. Register the uploads (metadata only).
-      const regResp = await registerUploads({
-        token,
+      // 3. Register metadata.
+      const regResp = await registerAdminUploads({
+        step_id: stepId,
         uploads: urlsResp.uploads.map((u) => {
           const file = slots.find((s) => s.kind === u.kind)!.file
           return {
@@ -130,36 +127,34 @@ export function UploadForm({ token }: { token: string }) {
         }),
       })
       if (!regResp.ok) {
-        if (regResp.redirectTo) {
-          router.push(regResp.redirectTo)
-          return
-        }
-        setError(regResp.error ?? t('disbursement.upload.error_generic'))
+        setError(regResp.error ?? tFn('disbursement.upload.error_generic', locale))
         return
       }
 
-      router.push(regResp.redirectTo ?? `/upload/${token}/done`)
+      setFiles({})
+      if (formRef.current) formRef.current.reset()
+      router.refresh()
     } catch (err) {
-      console.error('[upload] direct-to-Storage failed', err)
-      setError(err instanceof Error ? err.message : t('disbursement.upload.error_generic'))
+      console.error('[admin-upload] direct-to-Storage failed', err)
+      setError(err instanceof Error ? err.message : tFn('disbursement.upload.error_generic', locale))
     } finally {
       setSubmitting(false)
       setProgress(null)
     }
   }
 
-  const allFour = KINDS.every((k) => Boolean(files[k]))
+  const anyFile = KINDS.some((k) => Boolean(files[k]))
 
-  let buttonLabel = t('disbursement.upload.submit')
+  let buttonLabel = tFn('step.admin_upload.submit', locale)
   if (submitting) {
     buttonLabel =
       progress && progress.m > 0
-        ? t('disbursement.upload.uploading_n_of_m', { n: progress.n, m: progress.m })
-        : t('disbursement.upload.uploading')
+        ? tFn('disbursement.upload.uploading_n_of_m', locale, { n: progress.n, m: progress.m })
+        : tFn('disbursement.upload.uploading', locale)
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form ref={formRef} onSubmit={onSubmit} className="space-y-4">
       <div className="space-y-3">
         {KINDS.map((kind) => (
           <UploadSlot
@@ -167,24 +162,20 @@ export function UploadForm({ token }: { token: string }) {
             kind={kind}
             file={files[kind] ?? null}
             onPick={(e) => onPick(kind, e)}
-            label={t(`disbursement.upload.kind.${kind}`)}
-            chooseFileLabel={t('disbursement.upload.choose_file')}
-            noFileLabel={t('disbursement.upload.no_file')}
+            label={tFn(`disbursement.upload.kind.${kind}`, locale)}
+            chooseFileLabel={tFn('disbursement.upload.choose_file', locale)}
+            noFileLabel={tFn('disbursement.upload.no_file', locale)}
           />
         ))}
       </div>
 
-      {error && (
-        <div className="text-xs text-red-600" role="alert">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-xs text-red-600">{error}</div>}
 
-      <div className="pt-2">
+      <div className="pt-1 flex justify-end">
         <button
           type="submit"
-          disabled={submitting || !allFour}
-          className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-teal-600 text-white text-base font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={submitting || !anyFile}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Upload className="w-4 h-4" />
           {buttonLabel}
@@ -209,13 +200,13 @@ function UploadSlot({
   chooseFileLabel: string
   noFileLabel: string
 }) {
-  const inputId = `file_${kind}_input`
+  const inputId = `admin_file_${kind}_input`
   return (
     <div
-      className={`p-4 rounded-xl border ${file ? 'border-green-200 bg-green-50/30' : 'border-slate-200 bg-white'} flex items-center gap-3`}
+      className={`p-3 rounded-lg border ${file ? 'border-green-200 bg-green-50/30' : 'border-slate-200 bg-white'} flex items-center gap-3`}
     >
       <div
-        className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+        className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
           file ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
         }`}
       >
@@ -229,7 +220,7 @@ function UploadSlot({
       </div>
       <label
         htmlFor={inputId}
-        className="cursor-pointer inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+        className="cursor-pointer inline-flex items-center px-3 py-1.5 rounded-md border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
       >
         {chooseFileLabel}
       </label>

@@ -1160,6 +1160,12 @@ export const strings = {
   'disbursement.upload.no_file':             { en: 'No file selected',   ar: 'لم يتم اختيار ملف' },
   'disbursement.upload.submit':              { en: 'Submit documents',   ar: 'إرسال المستندات' },
   'disbursement.upload.uploading':           { en: 'Uploading…',         ar: 'جارٍ الرفع…' },
+  'disbursement.upload.uploading_n_of_m':    { en: 'Uploading {n} of {m}…',
+                                                ar: 'جارٍ رفع {n} من {m}…' },
+  'disbursement.upload.too_large':           { en: 'File too large (max {max} MB)',
+                                                ar: 'حجم الملف كبير (الحد الأقصى {max} ميجابايت)' },
+  'disbursement.upload.unsupported':         { en: 'Unsupported file type',
+                                                ar: 'نوع الملف غير مدعوم' },
   'disbursement.upload.success':             { en: 'Thank you. Your documents have been received and are now under review.',
                                                 ar: 'شكرًا لك. تم استلام مستنداتك وهي الآن قيد المراجعة.' },
   'disbursement.upload.signing_as':          { en: 'Uploading as {name} ({email})',
@@ -1300,6 +1306,34 @@ export const strings = {
                                           ar: 'سجلّ المراحل التفصيلي' },
   'workflow.section.activity':         { en: 'Activity timeline',
                                           ar: 'سجلّ النشاط' },
+
+  // Internal-staff approve / reject buttons on the workflow detail page.
+  'step.actions.approve':              { en: 'Approve and advance',
+                                          ar: 'موافقة وتقديم' },
+  'step.actions.reject':               { en: 'Reject',
+                                          ar: 'رفض' },
+  'step.actions.cancel':               { en: 'Cancel',
+                                          ar: 'إلغاء' },
+  'step.actions.confirm_reject':       { en: 'Confirm rejection',
+                                          ar: 'تأكيد الرفض' },
+  'step.actions.reject_reason':        { en: 'Reason for rejection',
+                                          ar: 'سبب الرفض' },
+  'step.actions.reason_required':      { en: 'Please provide a reason',
+                                          ar: 'الرجاء كتابة سبب الرفض' },
+  'step.actions.ready_to_advance':     { en: 'Ready to advance the workflow?',
+                                          ar: 'جاهز للموافقة على المرحلة؟' },
+  'step.actions.advancing':            { en: 'Advancing...',
+                                          ar: 'جاري التقديم...' },
+  'step.actions.error_generic':        { en: 'Could not advance the workflow. Please try again.',
+                                          ar: 'تعذّر تقديم المرحلة. يرجى المحاولة مرة أخرى.' },
+
+  // Admin manual upload (firm staff drops files in on behalf of the developer).
+  'step.admin_upload.title':           { en: 'Or upload on behalf of developer',
+                                          ar: 'أو ارفع نيابة عن المطوّر' },
+  'step.admin_upload.subtitle':        { en: 'Use this when the developer hasn\'t opened their upload link.',
+                                          ar: 'استخدم هذا الخيار عندما لم يفتح المطوّر رابط الرفع الخاص به.' },
+  'step.admin_upload.submit':          { en: 'Upload + advance',
+                                          ar: 'رفع وتقديم' },
 } as const
 
 export type StringKey = keyof typeof strings

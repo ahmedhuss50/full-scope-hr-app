@@ -17,6 +17,8 @@ import { ChecklistTable, type ChecklistRow, type ChecklistStatus } from './Check
 import { AgentPanel } from './AgentPanel'
 import { ProcessDiagram, type Stage as ProcessStage } from './ProcessDiagram'
 import { CreatedBanner } from './CreatedBanner'
+import { StepActionButtons } from './StepActionButtons'
+import { AdminUploadForm } from './AdminUploadForm'
 
 export const dynamic = 'force-dynamic'
 // Agent run can take 30+ seconds (Claude latency × 19 items). Vercel Hobby
@@ -477,6 +479,9 @@ export default async function WorkflowDetailPage({
       {activeInternalStep && checklistItems.length > 0 && (() => {
         const stepId = activeInternalStep.id
         const stepStatus = activeInternalStep.status
+        const stepSigner = signerByStep.get(stepId)
+        const showInternalActions =
+          stepStatus === 'awaiting' && stepSigner?.signer_kind === 'internal_user'
         const answered = checklistItems.reduce((acc, it) => {
           const r = responseMap.get(`${stepId}:${it.id}`)
           return acc + (r && r.status && r.status !== 'pending' ? 1 : 0)
@@ -508,6 +513,32 @@ export default async function WorkflowDetailPage({
               runStepId={stepId}
               editable={stepStatus === 'awaiting'}
             />
+            {showInternalActions && <StepActionButtons stepId={stepId} locale={locale} />}
+          </CollapsibleSection>
+        )
+      })()}
+
+      {/* Admin manual upload — visible only when the active step is the
+          developer-upload (intake / external) step. Lets firm staff drop
+          documents in on behalf of a developer who hasn't used the link. */}
+      {(() => {
+        const adminUploadStep = steps.find(
+          (s) =>
+            s.status === 'awaiting' &&
+            s.kind === 'intake' &&
+            s.signer_kind === 'external',
+        )
+        if (!adminUploadStep) return null
+        return (
+          <CollapsibleSection
+            title={tServer('step.admin_upload.title', locale)}
+            icon={<UploadIcon className="w-5 h-5 text-teal-600" />}
+            defaultOpen={false}
+          >
+            <p className="text-xs text-slate-500 mb-3">
+              {tServer('step.admin_upload.subtitle', locale)}
+            </p>
+            <AdminUploadForm stepId={adminUploadStep.id} locale={locale} />
           </CollapsibleSection>
         )
       })()}
@@ -704,6 +735,17 @@ export default async function WorkflowDetailPage({
                           </div>
                         )
                       })()}
+
+                      {/* Internal Approve / Reject buttons — render on the active
+                          internal_review or final_approval step assigned to a
+                          firm user. Mirrors the buttons in the "Active
+                          checklist" section above so the action is reachable
+                          from either place. */}
+                      {step.status === 'awaiting' &&
+                        signer?.signer_kind === 'internal_user' &&
+                        (step.kind === 'internal_review' || step.kind === 'final_approval') && (
+                          <StepActionButtons stepId={step.id} locale={locale} />
+                        )}
 
                       {/* Read-only checklist on completed internal_review steps (the
                           editable copy lives in the "Active checklist" section above). */}
