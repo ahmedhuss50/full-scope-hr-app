@@ -1720,6 +1720,71 @@ export const strings = {
                                          ar: 'حالة الطلب الحالية لا تسمح بهذا الإجراء.' },
   'dsb.error.send_back_reason_required': { en: 'Reason is required when sending back.',
                                            ar: 'السبب مطلوب عند الإعادة.' },
+
+  // -----------------------------------------------------------------
+  // Disbursements admin (Full Scope staff: manage clients + projects)
+  // -----------------------------------------------------------------
+  'dsb.nav.admin':                     { en: 'Admin',                ar: 'إدارة' },
+
+  'dsb.admin.title':                   { en: 'Disbursements admin',  ar: 'إدارة الصرفيات' },
+  'dsb.admin.subtitle':                { en: 'Manage clients and projects.',
+                                         ar: 'إدارة العملاء والمشاريع.' },
+  'dsb.admin.back_to_inbox':           { en: 'Back to inbox',        ar: 'صندوق الصرفيات' },
+
+  'dsb.admin.clients.heading':         { en: 'Clients',              ar: 'العملاء' },
+  'dsb.admin.clients.new':             { en: '+ New client',         ar: '+ عميل جديد' },
+  'dsb.admin.clients.has_login':       { en: 'Has login',            ar: 'لديه حساب' },
+  'dsb.admin.clients.no_login':        { en: 'No login',             ar: 'بدون حساب' },
+  'dsb.admin.clients.empty':           { en: 'No clients yet.',      ar: 'لا يوجد عملاء بعد.' },
+
+  'dsb.admin.projects.heading':        { en: 'Projects',             ar: 'المشاريع' },
+  'dsb.admin.projects.new':            { en: '+ New project',        ar: '+ مشروع جديد' },
+  'dsb.admin.projects.assigned_to':    { en: 'Assigned to',          ar: 'الموظف المسؤول' },
+  'dsb.admin.projects.cases_count':    { en: '{n} cases',            ar: '{n} سند' },
+  'dsb.admin.projects.empty':          { en: 'No projects yet.',     ar: 'لا توجد مشاريع بعد.' },
+
+  'dsb.client.new.title':              { en: 'New client',           ar: 'عميل جديد' },
+  'dsb.client.field.company_name':     { en: 'Company name',         ar: 'اسم الشركة' },
+  'dsb.client.field.contact_name':     { en: 'Contact person',       ar: 'جهة الاتصال' },
+  'dsb.client.field.contact_email':    { en: 'Email',                ar: 'البريد الإلكتروني' },
+  'dsb.client.field.notes':            { en: 'Notes',                ar: 'ملاحظات' },
+  'dsb.client.field.send_invite':      { en: 'Send login invite to client',
+                                         ar: 'إنشاء حساب دخول للعميل' },
+  'dsb.client.submit':                 { en: 'Create client',        ar: 'إنشاء العميل' },
+  'dsb.client.submitting':             { en: 'Creating…',            ar: 'جارٍ الإنشاء…' },
+  'dsb.client.invite_link_label':      { en: 'Invite link (copy & share):',
+                                         ar: 'رابط الدعوة (انسخه وأرسله):' },
+
+  'dsb.project.new.title':             { en: 'New project',          ar: 'مشروع جديد' },
+  'dsb.project.field.code':            { en: 'Project code',         ar: 'رمز المشروع' },
+  'dsb.project.field.name_ar':         { en: 'Project name',         ar: 'اسم المشروع' },
+  'dsb.project.field.assigned':        { en: 'Assigned employee',    ar: 'الموظف المسؤول' },
+  'dsb.project.field.notes':           { en: 'Notes',                ar: 'ملاحظات' },
+  'dsb.project.submit':                { en: 'Create project',       ar: 'إنشاء المشروع' },
+  'dsb.project.submitting':            { en: 'Creating…',            ar: 'جارٍ الإنشاء…' },
+
+  'dsb.case.new_staff.title':          { en: 'New disbursement case',
+                                         ar: 'سند صرف جديد' },
+  'dsb.case.new_staff.subtitle':       { en: 'Upload on behalf of a developer.',
+                                         ar: 'رفع نيابة عن المطور.' },
+  'dsb.case.field.developer':          { en: 'Client / developer',   ar: 'العميل / المطور' },
+  'dsb.case.field.project':            { en: 'Project',              ar: 'المشروع' },
+  'dsb.case.field.voucher_number':     { en: 'Voucher number',       ar: 'رقم سند الصرف' },
+  'dsb.case.field.voucher_date':       { en: 'Voucher date',         ar: 'تاريخ سند الصرف' },
+  'dsb.case.field.amount':             { en: 'Amount (SAR)',         ar: 'المبلغ بالريال السعودي' },
+  'dsb.case.field.notes':              { en: 'Notes',                ar: 'ملاحظات' },
+  'dsb.case.field.file':               { en: 'Combined PDF',         ar: 'الملف الموحّد' },
+  'dsb.case.submit':                   { en: 'Submit',               ar: 'إرسال' },
+  'dsb.case.submitting':               { en: 'Submitting…',          ar: 'جارٍ الإرسال…' },
+  'dsb.case.uploading':                { en: 'Uploading {pct}%',     ar: 'جاري الرفع {pct}%' },
+
+  'dsb.inbox.new_case':                { en: '+ New case',           ar: '+ سند صرف جديد' },
+  'dsb.inbox.admin_link':              { en: 'Admin',                ar: 'إدارة' },
+
+  'dsb.errors.required':               { en: 'This field is required',
+                                         ar: 'هذا الحقل مطلوب' },
+  'dsb.errors.create_failed':          { en: 'Could not create',     ar: 'تعذّر الإنشاء' },
+  'dsb.errors.upload_failed':          { en: 'Upload failed',        ar: 'فشل الرفع' },
 } as const
 
 export type StringKey = keyof typeof strings

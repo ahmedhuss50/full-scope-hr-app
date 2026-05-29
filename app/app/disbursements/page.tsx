@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FileText, ArrowRight } from 'lucide-react'
+import { FileText, ArrowRight, Plus, Settings } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -169,15 +169,37 @@ export default async function DisbursementsInboxPage({
     { key: 'sent_back', label: 'المُعادة إلى المطوّر', count: sentBackCount },
   ]
 
+  const canManage = dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
-      <header className="space-y-2">
-        <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
-          <FileText className="w-4 h-4" aria-hidden="true" />
-          الصرف
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+            <FileText className="w-4 h-4" aria-hidden="true" />
+            الصرف
+          </div>
+          <h1 className="serif font-black text-3xl tracking-tight text-slate-900">طلبات الصرف</h1>
+          <p className="text-sm text-slate-600">مراجعة طلبات الصرف الواردة من المطوّرين واتخاذ القرار.</p>
         </div>
-        <h1 className="serif font-black text-3xl tracking-tight text-slate-900">طلبات الصرف</h1>
-        <p className="text-sm text-slate-600">مراجعة طلبات الصرف الواردة من المطوّرين واتخاذ القرار.</p>
+        {canManage && (
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/app/disbursements/new"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition"
+            >
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              سند صرف جديد
+            </Link>
+            <Link
+              href="/app/disbursements/admin"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition"
+            >
+              <Settings className="w-4 h-4" aria-hidden="true" />
+              إدارة
+            </Link>
+          </div>
+        )}
       </header>
 
       <div className="border-b border-slate-200">

@@ -76,6 +76,7 @@ const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements?tab=mine',      labelKey: 'dsb.nav.inbox',  icon: Inbox },
   { href: '/app/disbursements?tab=active',    labelKey: 'dsb.nav.active', icon: ScrollText },
   { href: '/app/disbursements?tab=signed',    labelKey: 'dsb.nav.signed', icon: FileText },
+  { href: '/app/disbursements/admin',         labelKey: 'dsb.nav.admin',  icon: Settings },
 ]
 
 function isActive(pathname: string, href: string) {
@@ -118,7 +119,7 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
 
   // Silence unused-vars TS warnings for icons still referenced by hidden
   // ESCROW_ITEMS placeholders (kept for future revival).
-  void Landmark; void ShoppingBag; void Wallet; void Settings
+  void Landmark; void ShoppingBag; void Wallet
 
   const moduleLabel: Record<typeof currentModule, StringKey> = {
     hr:         'app.module.hr.title',
