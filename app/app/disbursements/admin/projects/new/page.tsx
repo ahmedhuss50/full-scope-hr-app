@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { NewProjectForm, type EmployeeOption } from './NewProjectForm'
+import { NewProjectForm, type DeveloperOption, type EmployeeOption } from './NewProjectForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,11 @@ function suggestNextCode(existingCodes: string[]): string {
   return `DSB-${String(max + 1).padStart(3, '0')}`
 }
 
-export default async function NewProjectPage() {
+export default async function NewProjectPage({
+  searchParams,
+}: {
+  searchParams?: { client?: string }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -56,6 +60,23 @@ export default async function NewProjectPage() {
   const employees: EmployeeOption[] = ((empRows ?? []) as { id: string; full_name: string | null }[])
     .map((r) => ({ id: r.id, full_name: r.full_name ?? '—' }))
 
+  // List clients (developers) for this tenant — required dropdown on the form.
+  const { data: devRows } = await svc
+    .from('dsb_developers')
+    .select('id, company_name_ar')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active')
+    .order('company_name_ar', { ascending: true })
+  const developers: DeveloperOption[] = ((devRows ?? []) as { id: string; company_name_ar: string }[])
+    .map((d) => ({ id: d.id, company_name_ar: d.company_name_ar }))
+
+  // Optional pre-selected client from the query string (e.g. linked from
+  // /admin/clients/[id]?). Only honour it if it matches a developer we just
+  // fetched, so we don't trust unverified IDs.
+  const clientParam = searchParams?.client ?? null
+  const defaultDeveloperId =
+    clientParam && developers.some((d) => d.id === clientParam) ? clientParam : null
+
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
       <header className="space-y-2">
@@ -69,7 +90,12 @@ export default async function NewProjectPage() {
         <p className="text-sm text-slate-600">أنشئ مشروعًا جديدًا واختر الموظف المسؤول عن طلبات صرفه.</p>
       </header>
 
-      <NewProjectForm suggestedCode={suggested} employees={employees} />
+      <NewProjectForm
+        suggestedCode={suggested}
+        employees={employees}
+        developers={developers}
+        defaultDeveloperId={defaultDeveloperId}
+      />
     </div>
   )
 }

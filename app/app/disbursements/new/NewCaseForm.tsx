@@ -13,7 +13,7 @@ import {
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 
 export type DeveloperOption = { id: string; company_name_ar: string }
-export type ProjectOption = { id: string; code: string; name_ar: string }
+export type ProjectOption = { id: string; code: string; name_ar: string; developer_id: string | null }
 
 export function NewCaseForm({
   developers,
@@ -26,7 +26,38 @@ export function NewCaseForm({
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
   const [developerId, setDeveloperId] = useState<string>(developers[0]?.id ?? '')
-  const [projectId, setProjectId] = useState<string>(projects[0]?.id ?? '')
+
+  // Projects shown for the currently selected client: those tied to this
+  // developer + any untied legacy projects (developer_id is null).
+  const filteredProjects = useMemo(() => {
+    if (!developerId) return projects
+    return projects.filter(
+      (p) => p.developer_id === developerId || p.developer_id === null
+    )
+  }, [developerId, projects])
+
+  const [projectId, setProjectId] = useState<string>(
+    filteredProjects[0]?.id ?? projects[0]?.id ?? ''
+  )
+
+  // If the picked developer changes and the currently selected project no
+  // longer fits the filter, snap to the first valid one (or clear).
+  function onDeveloperChange(newId: string) {
+    setDeveloperId(newId)
+    const stillValid = newId
+      ? projects.some(
+          (p) =>
+            p.id === projectId &&
+            (p.developer_id === newId || p.developer_id === null)
+        )
+      : true
+    if (!stillValid) {
+      const nextProjects = newId
+        ? projects.filter((p) => p.developer_id === newId || p.developer_id === null)
+        : projects
+      setProjectId(nextProjects[0]?.id ?? '')
+    }
+  }
   const [voucherNumber, setVoucherNumber] = useState('')
   const [voucherDate, setVoucherDate] = useState(today)
   const [amountSar, setAmountSar] = useState('')
@@ -167,7 +198,7 @@ export function NewCaseForm({
             required
             className={inputCls}
             value={developerId}
-            onChange={(e) => setDeveloperId(e.target.value)}
+            onChange={(e) => onDeveloperChange(e.target.value)}
           >
             <option value="">—</option>
             {developers.map((d) => (
@@ -185,7 +216,7 @@ export function NewCaseForm({
             onChange={(e) => setProjectId(e.target.value)}
           >
             <option value="">—</option>
-            {projects.map((p) => (
+            {filteredProjects.map((p) => (
               <option key={p.id} value={p.id}>{p.code} — {p.name_ar}</option>
             ))}
           </select>

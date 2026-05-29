@@ -161,34 +161,40 @@ export default async function DisbursementsAdminPage({
                 const pill = statusPill(c.status)
                 const hasLogin = !!c.user_id
                 return (
-                  <li key={c.id} className="px-5 py-3 hover:bg-slate-50 transition">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-900 truncate">
-                          {c.company_name_ar}
+                  <li key={c.id}>
+                    <Link
+                      href={`/app/disbursements/admin/clients/${c.id}`}
+                      className="block px-5 py-3 hover:bg-slate-50 transition"
+                    >
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-slate-900 truncate">
+                            {c.company_name_ar}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5 truncate">
+                            {c.contact_name ? `${c.contact_name} · ` : ''}
+                            {c.contact_email ?? '—'}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5 truncate">
-                          {c.contact_name ? `${c.contact_name} · ` : ''}
-                          {c.contact_email ?? '—'}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${
+                              hasLogin
+                                ? 'bg-teal-50 text-teal-700 ring-teal-200'
+                                : 'bg-slate-100 text-slate-500 ring-slate-200'
+                            }`}
+                          >
+                            {hasLogin ? 'لديه حساب' : 'بدون حساب'}
+                          </span>
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pill.cls}`}
+                          >
+                            {pill.label}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5 text-slate-400 rotate-180" aria-hidden="true" />
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${
-                            hasLogin
-                              ? 'bg-teal-50 text-teal-700 ring-teal-200'
-                              : 'bg-slate-100 text-slate-500 ring-slate-200'
-                          }`}
-                        >
-                          {hasLogin ? 'لديه حساب' : 'بدون حساب'}
-                        </span>
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pill.cls}`}
-                        >
-                          {pill.label}
-                        </span>
-                      </div>
-                    </div>
+                    </Link>
                   </li>
                 )
               })}

@@ -5,18 +5,24 @@ import { useRouter } from 'next/navigation'
 import { createProject } from './actions'
 
 export type EmployeeOption = { id: string; full_name: string }
+export type DeveloperOption = { id: string; company_name_ar: string }
 
 export function NewProjectForm({
   suggestedCode,
   employees,
+  developers,
+  defaultDeveloperId,
 }: {
   suggestedCode: string
   employees: EmployeeOption[]
+  developers: DeveloperOption[]
+  defaultDeveloperId?: string | null
 }) {
   const router = useRouter()
 
   const [code, setCode] = useState(suggestedCode)
   const [nameAr, setNameAr] = useState('')
+  const [developerId, setDeveloperId] = useState<string>(defaultDeveloperId ?? '')
   const [assignedId, setAssignedId] = useState<string>('')
   const [notes, setNotes] = useState('')
 
@@ -27,7 +33,7 @@ export function NewProjectForm({
     e.preventDefault()
     setError(null)
 
-    if (!code.trim() || !nameAr.trim()) {
+    if (!code.trim() || !nameAr.trim() || !developerId) {
       setError('الرجاء تعبئة جميع الحقول المطلوبة.')
       return
     }
@@ -37,6 +43,7 @@ export function NewProjectForm({
       const res = await createProject({
         code: code.trim(),
         name_ar: nameAr.trim(),
+        developer_id: developerId,
         assigned_employee_id: assignedId || null,
         notes: notes.trim() || null,
       })
@@ -65,6 +72,22 @@ export function NewProjectForm({
           {error}
         </div>
       )}
+
+      <div>
+        <label className={labelCls} htmlFor="developer_id">العميل *</label>
+        <select
+          id="developer_id"
+          required
+          className={inputCls}
+          value={developerId}
+          onChange={(e) => setDeveloperId(e.target.value)}
+        >
+          <option value="">— اختر العميل —</option>
+          {developers.map((d) => (
+            <option key={d.id} value={d.id}>{d.company_name_ar}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>

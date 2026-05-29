@@ -36,12 +36,13 @@ export default async function StaffNewCasePage() {
 
   const { data: projectsRaw } = await svc
     .from('dsb_projects')
-    .select('id, code, name_ar')
+    .select('id, code, name_ar, developer_id')
     .eq('tenant_id', tenantId)
     .eq('status', 'active')
     .order('code', { ascending: true })
-  const projects: ProjectOption[] = ((projectsRaw ?? []) as { id: string; code: string; name_ar: string }[])
-    .map((p) => ({ id: p.id, code: p.code, name_ar: p.name_ar }))
+  const projects: ProjectOption[] = (
+    (projectsRaw ?? []) as { id: string; code: string; name_ar: string; developer_id: string | null }[]
+  ).map((p) => ({ id: p.id, code: p.code, name_ar: p.name_ar, developer_id: p.developer_id }))
 
   const noClients = developers.length === 0
   const noProjects = projects.length === 0

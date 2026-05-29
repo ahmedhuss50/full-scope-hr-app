@@ -33,6 +33,7 @@ async function resolveStaff(): Promise<
 export interface CreateProjectInput {
   code: string
   name_ar: string
+  developer_id: string
   assigned_employee_id?: string | null
   notes?: string | null
 }
@@ -47,13 +48,25 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
 
   const code = input.code?.trim() ?? ''
   const nameAr = input.name_ar?.trim() ?? ''
+  const developerId = input.developer_id?.trim() ?? ''
   const assignedId = input.assigned_employee_id?.trim() || null
   const notes = input.notes?.trim() || null
 
   if (!code) return { ok: false, error: 'رمز المشروع مطلوب.' }
   if (!nameAr) return { ok: false, error: 'اسم المشروع مطلوب.' }
+  if (!developerId) return { ok: false, error: 'العميل مطلوب.' }
 
   const svc = createSupabaseService()
+
+  // Verify the developer exists and belongs to this tenant.
+  const { data: dev } = await svc
+    .from('dsb_developers')
+    .select('id, tenant_id')
+    .eq('id', developerId)
+    .maybeSingle()
+  if (!dev || dev.tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'العميل المختار غير صحيح.' }
+  }
 
   // If an assigned employee is provided, verify they belong to this tenant.
   if (assignedId) {
@@ -73,6 +86,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
       tenant_id: caller.tenantId,
       code,
       name_ar: nameAr,
+      developer_id: developerId,
       assigned_employee_id: assignedId,
       notes,
       status: 'active',
