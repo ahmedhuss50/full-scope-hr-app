@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Users, Briefcase, Calculator, FolderLock, ArrowRight, Globe } from 'lucide-react'
+import { Users, Briefcase, FolderLock, ArrowRight, Globe, FileText } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { strings, t as tFn, type Locale, type StringKey } from '@/lib/i18n/translations'
 
@@ -28,19 +28,28 @@ export default async function AppPickerPage() {
   const svc = createSupabaseService()
   const { data: profile } = await svc
     .from('users')
-    .select('tenant_id, full_name, locale, tenants(name)')
+    .select('id, tenant_id, full_name, locale, dsb_role, tenants(name)')
     .eq('email', user.email!)
     .maybeSingle()
   if (!profile) return null
 
   const tenantId = profile.tenant_id as string
+  const userId = profile.id as string
   const locale = ((profile.locale as Locale) ?? 'ar')
   const tenant = Array.isArray(profile.tenants) ? profile.tenants[0] : profile.tenants
   const tenantName = (tenant?.name as string) ?? '—'
   const fullName = (profile.full_name as string | null) ?? user.email ?? ''
+  const dsbRole = (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | null) ?? null
 
-  // Live stats for the HR + DMS + CRM tiles + Portal banner.
-  const [employeesRes, jobsRes, empCertsRes, firmCertsRes, pendingAppsRes, dmsDocsRes, dmsClientsRes, crmDealsRes, portalInvitesRes, portalLastLoginRes] = await Promise.all([
+  // Live stats for the HR + DMS + CRM + Disbursements tiles + Portal banner.
+  // Disbursements inbox status depends on the caller's dsb_role.
+  const dsbInboxStatus =
+    dsbRole === 'employee'   ? 'with_employee'   :
+    dsbRole === 'supervisor' ? 'with_supervisor' :
+    dsbRole === 'owner'      ? 'with_owner'      :
+    null
+
+  const [employeesRes, jobsRes, empCertsRes, firmCertsRes, pendingAppsRes, dmsDocsRes, dmsClientsRes, crmDealsRes, portalInvitesRes, portalLastLoginRes, dsbInboxRes, dsbActiveRes, dsbSignedRes] = await Promise.all([
     svc
       .from('employees')
       .select('id', { count: 'exact', head: true })
@@ -92,6 +101,30 @@ export default async function AppPickerPage() {
       .order('occurred_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // Disbursements inbox count — scoped to caller's role.
+    dsbInboxStatus
+      ? (dsbRole === 'employee'
+          ? svc
+              .from('dsb_cases')
+              .select('id, project:dsb_projects!dsb_cases_project_id_fkey(assigned_employee_id)')
+              .eq('tenant_id', tenantId)
+              .eq('status', dsbInboxStatus)
+          : svc
+              .from('dsb_cases')
+              .select('id', { count: 'exact', head: true })
+              .eq('tenant_id', tenantId)
+              .eq('status', dsbInboxStatus))
+      : Promise.resolve({ data: null, count: 0, error: null } as { data: unknown; count: number | null; error: unknown }),
+    svc
+      .from('dsb_cases')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['with_employee', 'with_supervisor', 'with_owner']),
+    svc
+      .from('dsb_cases')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('status', 'signed'),
   ])
 
   const employees = employeesRes.count ?? 0
@@ -120,6 +153,21 @@ export default async function AppPickerPage() {
       return `${crmPipelineValue.toLocaleString()} SAR`
     }
   })()
+
+  // Disbursements tile stats
+  type DsbInboxProjectRow = { id: string; project: { assigned_employee_id: string | null } | { assigned_employee_id: string | null }[] | null }
+  let dsbInboxCount = 0
+  if (dsbRole === 'employee') {
+    const rows = ((dsbInboxRes as { data: DsbInboxProjectRow[] | null }).data ?? [])
+    dsbInboxCount = rows.filter((r) => {
+      const p = Array.isArray(r.project) ? r.project[0] : r.project
+      return p?.assigned_employee_id === userId
+    }).length
+  } else {
+    dsbInboxCount = (dsbInboxRes as { count: number | null }).count ?? 0
+  }
+  const dsbActiveCount = (dsbActiveRes as { count: number | null }).count ?? 0
+  const dsbSignedCount = (dsbSignedRes as { count: number | null }).count ?? 0
 
   // Client Portal banner — surface invited count + most recent client login.
   const portalInvitedCount = portalInvitesRes.count ?? 0
@@ -249,30 +297,34 @@ export default async function AppPickerPage() {
           </div>
         </Link>
 
-        {/* Accounting tile — preview */}
+        {/* Disbursements (الصرف) tile — active. Replaces the previous Escrow Control tile. */}
         <Link
-          href="/app/accounting"
-          className="group block bg-white border border-slate-200 rounded-xl p-6 shadow-sm hover:shadow-md hover:border-amber-300 transition"
+          href="/app/disbursements?tab=mine"
+          className="group block bg-white border border-slate-200 rounded-xl p-6 shadow-sm hover:shadow-md hover:border-teal-300 transition"
         >
           <div className="flex items-start justify-between mb-4">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-amber-50">
-              <Calculator className="w-6 h-6 text-amber-600" aria-hidden="true" />
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-teal-50">
+              <FileText className="w-6 h-6 text-teal-600" aria-hidden="true" />
             </div>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">
-              {tServer('app.module.status.preview', locale)}
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700 ring-1 ring-inset ring-green-200">
+              {tServer('app.module.status.active', locale)}
             </span>
           </div>
           <h2 className="serif font-bold text-xl text-slate-900 mb-1.5">
-            {tServer('app.module.accounting.title', locale)}
+            {tServer('app.module.dsb.title', locale)}
           </h2>
           <p className="text-sm text-slate-600 leading-relaxed mb-4">
-            {tServer('app.module.accounting.description', locale)}
+            {tServer('app.module.dsb.description', locale)}
           </p>
           <div className="text-xs text-slate-500 font-mono mb-4 min-h-[1.25rem]">
-            {tServer('app.module.accounting.coming', locale)}
+            {tServer('app.module.dsb.stats', locale, {
+              inbox: dsbInboxCount,
+              active: dsbActiveCount,
+              signed: dsbSignedCount,
+            })}
           </div>
-          <div className="inline-flex items-center text-sm font-semibold text-amber-600 group-hover:text-amber-700">
-            {tServer('app.module.accounting.title', locale)}
+          <div className="inline-flex items-center text-sm font-semibold text-teal-600 group-hover:text-teal-700">
+            {tServer('app.module.dsb.title', locale)}
             <ArrowRight className="w-4 h-4 ms-1.5 transition group-hover:translate-x-0.5" aria-hidden="true" />
           </div>
         </Link>

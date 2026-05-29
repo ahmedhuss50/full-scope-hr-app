@@ -1,0 +1,539 @@
+{
+  "name": "Voucher Audit — Phase 2 (PDF + Arabic)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voucher-audit-v2",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300],
+      "webhookId": "voucher-audit-v2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "voucher_id", "value": "={{ $json.body.voucher_id }}", "type": "string" },
+            { "id": "a2", "name": "tenant_id",  "value": "={{ $json.body.tenant_id }}",  "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-set-ids",
+      "name": "Extract IDs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.voucher_id }}" },
+            { "name": "select", "value": "id,voucher_number,voucher_date,total_sar,expense_nature,status,notes,tenant_id,project_id,beneficiary_supplier_id,source_escrow_account_id,signed_by_authorized_signer_id,submitted_by_external_email,project:escrow_projects!escrow_vouchers_project_id_fkey(id,code,name_en,name_ar,developer_id,developer:escrow_developers!escrow_projects_developer_id_fkey(id,name_en,name_ar)),beneficiary:escrow_suppliers!escrow_vouchers_beneficiary_supplier_id_fkey(id,name_en,name_ar,status,bank_account_number,iban),account:escrow_accounts!escrow_vouchers_source_escrow_account_id_fkey(id,account_type,current_balance_sar,bank_name,iban),signer:escrow_authorized_signers!escrow_vouchers_signed_by_authorized_signer_id_fkey(id,name,title,signing_limit_sar,status),uploads:escrow_voucher_uploads(id,declared_kind,classified_kind,filename,storage_path,storage_bucket,file_size_bytes,mime_type),allocations:escrow_voucher_invoice_allocations(id,allocated_amount_sar,invoice:escrow_invoices(id,invoice_number,invoice_date,total_sar,status,issued_to_developer_id,supplier_id))" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-voucher",
+      "name": "Fetch Voucher + Uploads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Unwrap Supabase array, then EMIT ONE n8n ITEM PER UPLOAD ROW.\n// n8n will auto-fan-out subsequent nodes (Get Signed URL, Download PDF, Claude,\n// Save Classification) across these items. Each item carries the voucher/tenant\n// scope plus the single upload's storage details.\nconst arr = $input.first().json;\nif (!Array.isArray(arr) || arr.length === 0) {\n  throw new Error('Voucher not found');\n}\nconst v = arr[0];\nconst uploads = Array.isArray(v.uploads) ? v.uploads : [];\nif (uploads.length === 0) {\n  throw new Error('Voucher has no uploads to classify');\n}\n\nreturn uploads.map((u) => ({\n  json: {\n    voucher_id: v.id,\n    tenant_id:  v.tenant_id,\n    project_id: v.project_id,\n    voucher:    v,\n    upload: {\n      id:             u.id,\n      storage_path:   u.storage_path,\n      storage_bucket: u.storage_bucket || 'Document submission',\n      filename:       u.filename,\n      declared_kind:  u.declared_kind || null,\n      mime_type:      u.mime_type || 'application/pdf'\n    }\n  }\n}));"
+      },
+      "id": "node-unwrap-uploads",
+      "name": "Unwrap + Emit Upload Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/sign/{{ $json.upload.storage_bucket }}/{{ $json.upload.storage_path }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ expiresIn: 600 }) }}",
+        "options": {}
+      },
+      "id": "node-sign-url",
+      "name": "Get Signed URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1{{ $json.signedURL }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "node-download-pdf",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Anthropic /v1/messages body for ONE PDF.\n// The PDF lands in $binary.data after the Download step (responseFormat: file).\n// n8n stores binaries with a base64 'data' field already — we pass that\n// straight into the document.source.data block.\nconst item = $input.first();\nconst bin = item.binary && item.binary.data;\nif (!bin || !bin.data) {\n  throw new Error('No binary PDF on this item');\n}\nconst base64 = bin.data; // already base64 per n8n convention\n\n// Carry forward the upload context from the Unwrap node via the item's json,\n// which n8n preserves across HTTP nodes when responseFormat=file is used.\nconst ctx = $node['Unwrap + Emit Upload Items'].json;\n// In a fan-out, $node['Unwrap + Emit Upload Items'].json is the FIRST item's\n// json only — so we must rely on $json carried by the request chain. Since\n// the Download node's json is the signed-URL response, we instead re-read\n// the upload context from the current item's json (Get Signed URL preserves\n// the input json fields alongside signedURL on a 4.2 HTTP node when no\n// JSON body replaces them — but to be safe we pull from $items() of the\n// Unwrap node at the same pairedItem index).\nconst pairedIndex = item.pairedItem && typeof item.pairedItem === 'object'\n  ? (Array.isArray(item.pairedItem) ? item.pairedItem[0]?.item : item.pairedItem.item)\n  : (typeof item.pairedItem === 'number' ? item.pairedItem : 0);\nconst allUnwrapped = $items('Unwrap + Emit Upload Items');\nconst src = allUnwrapped[pairedIndex || 0] && allUnwrapped[pairedIndex || 0].json;\nif (!src) {\n  throw new Error('Could not resolve upload context for paired item ' + pairedIndex);\n}\n\nconst userText = 'Classify this document and extract its key fields. The document is in Arabic. Return JSON only — no prose, no markdown, no code fences. Use the exact JSON shape described in the system prompt. Field NAMES must be in English; field VALUES that come from the document should be preserved in Arabic where appropriate (e.g., supplier_name_ar, description_ar, items_received_ar). Numeric values must be parsed to numbers. Dates use ISO format YYYY-MM-DD when determinable.';\n\nconst system = 'You are a document-extraction agent for Saudi real-estate escrow auditing. The document attached is in Arabic. Classify it into ONE of these categories:\\n  voucher | invoice | completion_certificate | contractor_extract | signed_approval | receipt_confirmation | supplier_contract | supplier_ledger | bank_statement | other | unknown\\n\\nReturn ONLY this JSON object — no prose, no markdown, no code fences:\\n{\\n  \"classified_kind\": <one of the categories above>,\\n  \"classification_confidence\": <number 0..1>,\\n  \"summary_en\": <one short English sentence describing what the document is>,\\n  \"summary_ar\": <one short Arabic sentence describing what the document is>,\\n  \"extracted_fields\": { ...type-specific fields per the schema below... }\\n}\\n\\nExtracted-field schemas by classified_kind:\\n\\n* invoice → { invoice_number, invoice_date, supplier_name_ar, supplier_name_en, total_sar, vat_sar, issued_to (developer name as it appears), line_items: [ { description_ar, description_en, unit, qty, unit_price, line_total } ] }\\n* voucher → { voucher_number, voucher_date, total_sar, beneficiary_name, expense_nature_hint, signed_by }\\n* completion_certificate → { certificate_number, issued_date, completion_pct, issued_by_name, contract_referenced }\\n* contractor_extract → { extract_number, extract_date, claimed_completion_pct, project_referenced, total_claimed_sar }\\n* signed_approval → { signer_name, signer_title, date_signed, approval_subject }\\n* receipt_confirmation → { receipt_date, items_received_ar, confirmed_by_name }\\n* supplier_contract → { contract_number, contract_date, supplier, total_value_sar }\\n* supplier_ledger → { ledger_period, entries: [ { date, invoice_number, debit, credit, balance } ] }\\n* bank_statement → { period_start, period_end, account_number, total_credits, total_debits }\\n* other | unknown → {} (summary fields above are sufficient)\\n\\nWhen a field is not present in the document, set it to null rather than guessing. Be conservative with classification_confidence: only use values above 0.9 when the document is unambiguous (clear header, standard format).';\n\nconst claude_body = {\n  model: 'claude-sonnet-4-5-20250929',\n  max_tokens: 4000,\n  system,\n  messages: [\n    {\n      role: 'user',\n      content: [\n        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },\n        { type: 'text', text: userText }\n      ]\n    }\n  ]\n};\n\nreturn [{\n  json: {\n    voucher_id: src.voucher_id,\n    tenant_id:  src.tenant_id,\n    project_id: src.project_id,\n    upload:     src.upload,\n    claude_body\n  }\n}];"
+      },
+      "id": "node-build-claude-msg",
+      "name": "Build Claude Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type",      "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.claude_body) }}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "node-claude-classify",
+      "name": "Claude — Classify + Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's per-PDF JSON. Mirror Phase 1's robust JSON extractor.\nconst item = $input.first();\nconst claudeResp = item.json;\nconst text = (claudeResp.content && claudeResp.content[0] && claudeResp.content[0].text) || '';\nconst tokensIn  = claudeResp.usage?.input_tokens  ?? 0;\nconst tokensOut = claudeResp.usage?.output_tokens ?? 0;\n\nfunction extractJSON(s) {\n  const stripped = s.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(stripped); } catch (e) {}\n  const first = stripped.indexOf('{');\n  const last  = stripped.lastIndexOf('}');\n  if (first >= 0 && last > first) {\n    try { return JSON.parse(stripped.slice(first, last + 1)); } catch (e) {}\n  }\n  throw new Error('Claude returned non-JSON: ' + s.slice(0, 200));\n}\n\nconst parsed = extractJSON(text);\n\n// Recover upload context via pairedItem → Build Claude Message node.\nconst pairedIndex = item.pairedItem && typeof item.pairedItem === 'object'\n  ? (Array.isArray(item.pairedItem) ? item.pairedItem[0]?.item : item.pairedItem.item)\n  : (typeof item.pairedItem === 'number' ? item.pairedItem : 0);\nconst built = $items('Build Claude Message');\nconst src = built[pairedIndex || 0] && built[pairedIndex || 0].json;\nif (!src) {\n  throw new Error('Could not resolve build-msg context for paired item ' + pairedIndex);\n}\n\nconst allowed = ['voucher','invoice','completion_certificate','contractor_extract','signed_approval','receipt_confirmation','supplier_contract','supplier_ledger','bank_statement','other','unknown'];\nconst kind = allowed.includes(parsed.classified_kind) ? parsed.classified_kind : 'unknown';\n\nreturn [{\n  json: {\n    voucher_id: src.voucher_id,\n    tenant_id:  src.tenant_id,\n    project_id: src.project_id,\n    upload_id:  src.upload.id,\n    filename:   src.upload.filename,\n    declared_kind: src.upload.declared_kind,\n    classified_kind: kind,\n    classification_confidence: typeof parsed.classification_confidence === 'number' ? parsed.classification_confidence : null,\n    summary_en: parsed.summary_en || '',\n    summary_ar: parsed.summary_ar || '',\n    extracted_fields: parsed.extracted_fields || {},\n    tokens_in:  tokensIn,\n    tokens_out: tokensOut\n  }\n}];"
+      },
+      "id": "node-parse-per-pdf",
+      "name": "Parse Claude per-PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_uploads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.upload_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ classified_kind: $json.classified_kind, classification_confidence: $json.classification_confidence, extracted_summary: ($json.summary_en || '') + ' | ' + ($json.summary_ar || ''), extracted_text: JSON.stringify($json.extracted_fields || {}), notes: 'Phase 2 auto-extract' }) }}",
+        "options": {}
+      },
+      "id": "node-save-classification",
+      "name": "Save Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AGGREGATION STRATEGY\n// --------------------\n// The fan-out from \"Unwrap + Emit Upload Items\" produces one execution branch\n// per upload. n8n re-executes every downstream node once per item. To collect\n// ALL parallel iterations into a single row, this node uses $items('Parse\n// Claude per-PDF') which returns the FULL array of upload-level results in\n// one shot — n8n only fires this node after all upstream items have settled.\n// We do NOT need a Merge node: $items() naturally serialises the fan-out.\n//\n// Bucketing: we split per-upload extractions by classified_kind so the audit\n// prompt below can reference them by name (voucher, invoice_extracts, etc.).\n\nconst per = $items('Parse Claude per-PDF').map(i => i.json);\nif (!per.length) {\n  throw new Error('No per-upload extractions to aggregate');\n}\n\nconst voucher_extracted    = per.find(x => x.classified_kind === 'voucher') || null;\nconst invoice_extracts     = per.filter(x => x.classified_kind === 'invoice');\nconst cert_extracts        = per.filter(x => x.classified_kind === 'completion_certificate');\nconst extract_extracts     = per.filter(x => x.classified_kind === 'contractor_extract');\nconst approval_extracts    = per.filter(x => x.classified_kind === 'signed_approval');\nconst receipt_extracts     = per.filter(x => x.classified_kind === 'receipt_confirmation');\nconst contract_extracts    = per.filter(x => x.classified_kind === 'supplier_contract');\nconst ledger_extracts      = per.filter(x => x.classified_kind === 'supplier_ledger');\nconst bank_statement_extracts = per.filter(x => x.classified_kind === 'bank_statement');\nconst other_extracts       = per.filter(x => x.classified_kind === 'other' || x.classified_kind === 'unknown');\n\nconst scope = $items('Unwrap + Emit Upload Items')[0]?.json || {};\n\nconst extractions = per.map(x => ({\n  upload_id: x.upload_id,\n  filename:  x.filename,\n  classified_kind: x.classified_kind,\n  classification_confidence: x.classification_confidence,\n  summary_en: x.summary_en,\n  summary_ar: x.summary_ar,\n  extracted_fields: x.extracted_fields\n}));\n\nconst total_tokens_in  = per.reduce((s, x) => s + (x.tokens_in  || 0), 0);\nconst total_tokens_out = per.reduce((s, x) => s + (x.tokens_out || 0), 0);\n\nreturn [{\n  json: {\n    voucher_id: scope.voucher_id,\n    tenant_id:  scope.tenant_id,\n    project_id: scope.project_id,\n    voucher:    scope.voucher,\n    extractions,\n    voucher_extracted,\n    invoice_extracts,\n    cert_extracts,\n    extract_extracts,\n    approval_extracts,\n    receipt_extracts,\n    contract_extracts,\n    ledger_extracts,\n    bank_statement_extracts,\n    other_extracts,\n    extraction_tokens_in:  total_tokens_in,\n    extraction_tokens_out: total_tokens_out\n  }\n}];"
+      },
+      "id": "node-aggregate",
+      "name": "Aggregate Per-Upload Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_contracts",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $json.project_id }}" },
+            { "name": "select",     "value": "id,contract_number,contract_date,total_value_sar,expense_nature,supplier_id,supplier:escrow_suppliers(id,name_en,name_ar),line_items:escrow_contract_line_items(id,order_index,item_description,unit_of_measure,agreed_unit_price_sar,quantity_estimated)" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-contracts",
+      "name": "Fetch Contracts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 180]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_completion_certificates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $node['Aggregate Per-Upload Results'].json.project_id }}" },
+            { "name": "select",     "value": "id,certificate_number,issued_date,completion_pct,contract_id,issued_by_name" },
+            { "name": "order",      "value": "issued_date.desc" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-certs",
+      "name": "Fetch Completion Certificates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $node['Aggregate Per-Upload Results'].json.project_id }}" },
+            { "name": "select",     "value": "id,voucher_number,voucher_date,total_sar,status" },
+            { "name": "order",      "value": "voucher_date.desc" },
+            { "name": "limit",      "value": "20" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-prior",
+      "name": "Fetch Prior Vouchers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge aggregated extractions + master data into one audit context object.\nconst agg = $node['Aggregate Per-Upload Results'].json;\nconst contracts = $node['Fetch Contracts'].json || [];\nconst certs     = $node['Fetch Completion Certificates'].json || [];\nconst prior     = $node['Fetch Prior Vouchers'].json || [];\n\nreturn [{\n  json: {\n    voucher_id: agg.voucher_id,\n    tenant_id:  agg.tenant_id,\n    project_id: agg.project_id,\n    voucher:    agg.voucher,\n    contracts,\n    completion_certificates: certs,\n    prior_vouchers: prior,\n    extracted: {\n      extractions:               agg.extractions,\n      voucher_extracted:         agg.voucher_extracted,\n      invoice_extracts:          agg.invoice_extracts,\n      cert_extracts:             agg.cert_extracts,\n      extract_extracts:          agg.extract_extracts,\n      approval_extracts:         agg.approval_extracts,\n      receipt_extracts:          agg.receipt_extracts,\n      contract_extracts:         agg.contract_extracts,\n      ledger_extracts:           agg.ledger_extracts,\n      bank_statement_extracts:   agg.bank_statement_extracts,\n      other_extracts:            agg.other_extracts\n    },\n    extraction_tokens_in:  agg.extraction_tokens_in,\n    extraction_tokens_out: agg.extraction_tokens_out\n  }\n}];"
+      },
+      "id": "node-build-context",
+      "name": "Build Audit Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ tenant_id: $json.tenant_id, voucher_id: $json.voucher_id, status: 'running', model: 'claude-sonnet-4-5-20250929', started_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "node-create-run",
+      "name": "Create Agent Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3080, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $node['Build Audit Context'].json.voucher_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'agent_running' }) }}",
+        "options": {}
+      },
+      "id": "node-status-running",
+      "name": "Voucher → agent_running",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3300, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type",      "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-4-5-20250929',\n  max_tokens: 4000,\n  system: 'You are a Saudi real-estate escrow trustee auditor. You audit payment vouchers (وثائق صرف) against contracts, invoices, completion certificates, and escrow rules. The source documents were OCR-extracted from Arabic PDFs in a prior step; their structured fields appear under context.extracted (voucher_extracted, invoice_extracts, cert_extracts, extract_extracts, approval_extracts, receipt_extracts, contract_extracts, ledger_extracts, bank_statement_extracts, other_extracts). Field values may be in Arabic — treat them as authoritative document evidence. Return ONLY a single JSON object — no prose, no markdown, no code fences. The JSON must match this exact shape:\\n{\\n  \"overall_verdict\": \"approved\" | \"rejected\" | \"needs_review\",\\n  \"summary\": \"one short paragraph explaining the verdict\",\\n  \"checks\": [ { \"rule_code\": string, \"rule_title_en\": string, \"rule_title_ar\": string, \"severity\": \"blocking\" | \"warning\" | \"info\", \"status\": \"pass\" | \"fail\" | \"warn\" | \"needs_info\" | \"skipped\", \"reasoning\": string, \"evidence_quote\": string, \"expected_value\": string, \"actual_value\": string, \"ai_confidence\": number } ]\\n}\\nRun ALL 13 rules below in order. Because extracted document fields are now available in context.extracted, rules that previously required PDF content (RULE_03 price match, RULE_04 receipt confirmation, RULE_08 completion vs extract, RULE_12 supplier ledger) MUST attempt pass/fail using the extracted fields rather than defaulting to needs_info. Only fall back to needs_info when the required document is missing or its classification_confidence is below 0.6. evidence_quote should cite Arabic or English text from extracted_fields where possible.\\n\\nRules:\\nRULE_01_DOC_SEQUENCE — voucher_number must follow the project sequence; flag gaps/duplicates against prior_vouchers.\\nRULE_02_DATE_PROXIMITY — voucher_date must be within ~14 days of today; older vouchers warn.\\nRULE_03_PRICE_MATCH — invoice line prices (extracted.invoice_extracts[*].extracted_fields.line_items[*].unit_price) must match contract line items (contracts.line_items.agreed_unit_price_sar). Pass/fail per match; flag mismatched line.\\nRULE_04_RECEIPT_CONFIRMATION — materials need a storekeeper confirmation; services need a department approval. Use extracted.receipt_extracts and extracted.approval_extracts to evidence this. If neither exists for a construction voucher, fail with reasoning.\\nRULE_05_ACCOUNT_TYPE_MATCH — voucher.expense_nature must equal voucher.account.account_type (construction → construction escrow; admin/marketing/security → non_construction).\\nRULE_06_ACCOUNT_SUFFICIENCY — voucher.total_sar must be ≤ voucher.account.current_balance_sar.\\nRULE_07_BENEFICIARY_DETAIL — voucher.beneficiary supplier name + bank account must match the master record (already joined). Cross-check against extracted.invoice_extracts[*].extracted_fields.supplier_name_ar / supplier_name_en.\\nRULE_08_COMPLETION_VS_EXTRACT — if voucher relates to construction work, compare extracted.extract_extracts[*].extracted_fields.claimed_completion_pct against latest completion_certificates.completion_pct AND extracted.cert_extracts[*].extracted_fields.completion_pct. Fail if the contractor extract claims materially more than the certified completion.\\nRULE_09_NO_DUPLICATE_PAYMENT — voucher.allocations[].invoice.total_sar minus prior allocations must be ≥ allocation amount. Sum of allocations against any invoice may not exceed invoice.total_sar.\\nRULE_10_DEVELOPER_NAME_ON_INVOICE — voucher.allocations[].invoice.issued_to_developer_id must equal voucher.project.developer_id. ALSO cross-check extracted.invoice_extracts[*].extracted_fields.issued_to against voucher.project.developer.name_ar / name_en.\\nRULE_11_AUTHORIZED_SIGNER — voucher.signer must exist, status=\"active\", and signing_limit_sar ≥ voucher.total_sar. Cross-check against extracted.approval_extracts[*].extracted_fields.signer_name.\\nRULE_12_SUPPLIER_LEDGER — invoice should appear in developer\\'s supplier ledger. Use extracted.ledger_extracts[*].extracted_fields.entries[*].invoice_number to verify the voucher\\'s invoices are present in the ledger. If no ledger extract is available, mark needs_info.\\nRULE_13_VOUCHER_TOTAL_EQ_INVOICES — voucher.total_sar must equal sum(voucher.allocations[].allocated_amount_sar). If no allocations exist, mark needs_info.',\n  messages: [\n    {\n      role: 'user',\n      content: 'Audit this voucher. Return JSON only.\\n\\nVOUCHER + CONTEXT (includes extracted Arabic document fields under context.extracted):\\n' + JSON.stringify($json, null, 2)\n    }\n  ]\n}) }}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "node-claude-audit",
+      "name": "Claude — Run 13 Audit Rules",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3520, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's audit JSON, prep batch insert for agent_checks, compute verdict counts.\nconst claudeResp = $input.first().json;\nconst text = (claudeResp.content && claudeResp.content[0] && claudeResp.content[0].text) || '';\nconst tokensIn  = claudeResp.usage?.input_tokens  ?? 0;\nconst tokensOut = claudeResp.usage?.output_tokens ?? 0;\n\nfunction extractJSON(s) {\n  const stripped = s.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(stripped); } catch (e) {}\n  const first = stripped.indexOf('{');\n  const last  = stripped.lastIndexOf('}');\n  if (first >= 0 && last > first) {\n    try { return JSON.parse(stripped.slice(first, last + 1)); } catch (e) {}\n  }\n  throw new Error('Claude returned non-JSON: ' + s.slice(0, 200));\n}\n\nconst parsed = extractJSON(text);\nconst checks = Array.isArray(parsed.checks) ? parsed.checks : [];\nlet pass = 0, fail = 0, warn = 0;\nfor (const c of checks) {\n  if (c.status === 'pass') pass++;\n  else if (c.status === 'fail') fail++;\n  else if (c.status === 'warn' || c.status === 'needs_info') warn++;\n}\n\nconst ctx = $node['Build Audit Context'].json;\nconst run = $node['Create Agent Run'].json[0];\n\nconst checkRows = checks.map((c, i) => ({\n  tenant_id: ctx.tenant_id,\n  agent_run_id: run.id,\n  voucher_id: ctx.voucher_id,\n  order_index: i + 1,\n  rule_code:     c.rule_code     ?? `RULE_${String(i+1).padStart(2,'0')}_UNKNOWN`,\n  rule_title_en: c.rule_title_en ?? c.rule_code ?? `Rule ${i+1}`,\n  rule_title_ar: c.rule_title_ar ?? null,\n  severity:      c.severity      ?? 'blocking',\n  status:        c.status        ?? 'needs_info',\n  evidence_quote:  c.evidence_quote  ?? null,\n  expected_value:  c.expected_value  ?? null,\n  actual_value:    c.actual_value    ?? null,\n  ai_confidence:   typeof c.ai_confidence === 'number' ? c.ai_confidence : null,\n  reasoning:       c.reasoning ?? null,\n}));\n\nreturn [{\n  json: {\n    voucher_id: ctx.voucher_id,\n    tenant_id:  ctx.tenant_id,\n    project_id: ctx.project_id,\n    agent_run_id: run.id,\n    overall_verdict: parsed.overall_verdict || 'needs_review',\n    summary: parsed.summary || '',\n    pass_count: pass,\n    fail_count: fail,\n    warn_count: warn,\n    tokens_in:  tokensIn  + (ctx.extraction_tokens_in  || 0),\n    tokens_out: tokensOut + (ctx.extraction_tokens_out || 0),\n    check_rows: checkRows,\n    submitted_by_external_email: ctx.voucher?.submitted_by_external_email ?? null,\n  }\n}];"
+      },
+      "id": "node-parse",
+      "name": "Parse Claude + Build Inserts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3740, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_checks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.check_rows) }}",
+        "options": {}
+      },
+      "id": "node-insert-checks",
+      "name": "Insert Agent Checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3960, 220]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_runs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $node['Parse Claude + Build Inserts'].json.agent_run_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), pass_count: $node['Parse Claude + Build Inserts'].json.pass_count, fail_count: $node['Parse Claude + Build Inserts'].json.fail_count, warn_count: $node['Parse Claude + Build Inserts'].json.warn_count, total_tokens_in: $node['Parse Claude + Build Inserts'].json.tokens_in, total_tokens_out: $node['Parse Claude + Build Inserts'].json.tokens_out, summary: $node['Parse Claude + Build Inserts'].json.summary }) }}",
+        "options": {}
+      },
+      "id": "node-finalize-run",
+      "name": "Finalize Agent Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4180, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map overall_verdict → voucher.status.\nconst v = $node['Parse Claude + Build Inserts'].json.overall_verdict;\nlet status = 'needs_review';\nif (v === 'approved') status = 'needs_review';   // even on AI pass, a human still approves\nelse if (v === 'rejected') status = 'rejected';\nelse status = 'needs_review';\nreturn [{ json: { ...$json, next_voucher_status: status } }];"
+      },
+      "id": "node-decide-status",
+      "name": "Decide Voucher Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3960, 380]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.voucher_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.next_voucher_status }) }}",
+        "options": {}
+      },
+      "id": "node-update-voucher",
+      "name": "Update Voucher Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4180, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  from: 'Full Scope <notifications@fullscope.sa>',\n  to: [$env.TRUSTEE_NOTIFY_EMAIL || 'support@elevatemybusiness.co'],\n  subject: '[Phase 2] Voucher audit complete — ' + ($node['Parse Claude + Build Inserts'].json.overall_verdict.toUpperCase()),\n  html: '<h2>Voucher audit complete (Phase 2 — PDF + Arabic)</h2><p><strong>Verdict:</strong> ' + $node['Parse Claude + Build Inserts'].json.overall_verdict + '</p><p><strong>Pass:</strong> ' + $node['Parse Claude + Build Inserts'].json.pass_count + ' · <strong>Fail:</strong> ' + $node['Parse Claude + Build Inserts'].json.fail_count + ' · <strong>Warn/Needs info:</strong> ' + $node['Parse Claude + Build Inserts'].json.warn_count + '</p><p>' + $node['Parse Claude + Build Inserts'].json.summary + '</p><p><a href=\"https://app.fullscope.sa/app/escrow/' + $node['Parse Claude + Build Inserts'].json.project_id + '/vouchers/' + $node['Parse Claude + Build Inserts'].json.voucher_id + '\">Open voucher in Full Scope →</a></p>'\n}) }}",
+        "options": {}
+      },
+      "id": "node-notify",
+      "name": "Notify Trustee (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4400, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, phase: 2, voucher_id: $node['Parse Claude + Build Inserts'].json.voucher_id, verdict: $node['Parse Claude + Build Inserts'].json.overall_verdict, pass: $node['Parse Claude + Build Inserts'].json.pass_count, fail: $node['Parse Claude + Build Inserts'].json.fail_count, warn: $node['Parse Claude + Build Inserts'].json.warn_count } }];"
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4620, 380]
+    }
+  ],
+  "connections": {
+    "Webhook":                       { "main": [[{ "node": "Extract IDs",                  "type": "main", "index": 0 }]] },
+    "Extract IDs":                   { "main": [[{ "node": "Fetch Voucher + Uploads",     "type": "main", "index": 0 }]] },
+    "Fetch Voucher + Uploads":       { "main": [[{ "node": "Unwrap + Emit Upload Items",  "type": "main", "index": 0 }]] },
+    "Unwrap + Emit Upload Items":    { "main": [[{ "node": "Get Signed URL",              "type": "main", "index": 0 }]] },
+    "Get Signed URL":                { "main": [[{ "node": "Download PDF",                "type": "main", "index": 0 }]] },
+    "Download PDF":                  { "main": [[{ "node": "Build Claude Message",        "type": "main", "index": 0 }]] },
+    "Build Claude Message":          { "main": [[{ "node": "Claude — Classify + Extract","type": "main", "index": 0 }]] },
+    "Claude — Classify + Extract":  { "main": [[{ "node": "Parse Claude per-PDF",        "type": "main", "index": 0 }]] },
+    "Parse Claude per-PDF":          { "main": [[{ "node": "Save Classification",        "type": "main", "index": 0 }]] },
+    "Save Classification":           { "main": [[{ "node": "Aggregate Per-Upload Results","type": "main", "index": 0 }]] },
+    "Aggregate Per-Upload Results":  {
+      "main": [[
+        { "node": "Fetch Contracts",               "type": "main", "index": 0 },
+        { "node": "Fetch Completion Certificates", "type": "main", "index": 0 },
+        { "node": "Fetch Prior Vouchers",          "type": "main", "index": 0 }
+      ]]
+    },
+    "Fetch Contracts":               { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Fetch Completion Certificates": { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Fetch Prior Vouchers":          { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Build Audit Context":           { "main": [[{ "node": "Create Agent Run",            "type": "main", "index": 0 }]] },
+    "Create Agent Run":              { "main": [[{ "node": "Voucher → agent_running",     "type": "main", "index": 0 }]] },
+    "Voucher → agent_running":       { "main": [[{ "node": "Claude — Run 13 Audit Rules","type": "main", "index": 0 }]] },
+    "Claude — Run 13 Audit Rules":  { "main": [[{ "node": "Parse Claude + Build Inserts","type": "main", "index": 0 }]] },
+    "Parse Claude + Build Inserts":  {
+      "main": [[
+        { "node": "Insert Agent Checks", "type": "main", "index": 0 },
+        { "node": "Decide Voucher Status","type": "main", "index": 0 }
+      ]]
+    },
+    "Insert Agent Checks":           { "main": [[{ "node": "Finalize Agent Run",          "type": "main", "index": 0 }]] },
+    "Decide Voucher Status":         { "main": [[{ "node": "Update Voucher Status",       "type": "main", "index": 0 }]] },
+    "Update Voucher Status":         { "main": [[{ "node": "Notify Trustee (Resend)",     "type": "main", "index": 0 }]] },
+    "Notify Trustee (Resend)":       { "main": [[{ "node": "Respond to Webhook",          "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "versionId": "",
+  "meta": { "templateCredsSetupCompleted": false },
+  "id": "voucher-audit-phase2",
+  "tags": []
+}

@@ -1,0 +1,407 @@
+{
+  "name": "Voucher Audit — Phase 1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voucher-audit",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300],
+      "webhookId": "voucher-audit"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "voucher_id", "value": "={{ $json.body.voucher_id }}", "type": "string" },
+            { "id": "a2", "name": "tenant_id",  "value": "={{ $json.body.tenant_id }}",  "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-set-ids",
+      "name": "Extract IDs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.voucher_id }}" },
+            { "name": "select", "value": "id,voucher_number,voucher_date,total_sar,expense_nature,status,notes,tenant_id,project_id,beneficiary_supplier_id,source_escrow_account_id,signed_by_authorized_signer_id,submitted_by_external_email,project:escrow_projects!escrow_vouchers_project_id_fkey(id,code,name_en,name_ar,developer_id,developer:escrow_developers!escrow_projects_developer_id_fkey(id,name_en,name_ar)),beneficiary:escrow_suppliers!escrow_vouchers_beneficiary_supplier_id_fkey(id,name_en,name_ar,status,bank_account_number,iban),account:escrow_accounts!escrow_vouchers_source_escrow_account_id_fkey(id,account_type,current_balance_sar,bank_name,iban),signer:escrow_authorized_signers!escrow_vouchers_signed_by_authorized_signer_id_fkey(id,name,title,signing_limit_sar,status),uploads:escrow_voucher_uploads(id,declared_kind,classified_kind,filename,storage_path,storage_bucket,file_size_bytes,mime_type),allocations:escrow_voucher_invoice_allocations(id,allocated_amount_sar,invoice:escrow_invoices(id,invoice_number,invoice_date,total_sar,status,issued_to_developer_id,supplier_id))" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-voucher",
+      "name": "Fetch Voucher + Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the voucher object out of the Supabase response (array) and stash on a clean shape.\nconst arr = $input.first().json;\nif (!Array.isArray(arr) || arr.length === 0) {\n  throw new Error('Voucher not found');\n}\nconst v = arr[0];\nreturn [{ json: { voucher: v, tenant_id: v.tenant_id, voucher_id: v.id, project_id: v.project_id } }];"
+      },
+      "id": "node-unwrap-voucher",
+      "name": "Unwrap Voucher",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_contracts",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $json.project_id }}" },
+            { "name": "select",     "value": "id,contract_number,contract_date,total_value_sar,expense_nature,supplier_id,supplier:escrow_suppliers(id,name_en,name_ar),line_items:escrow_contract_line_items(id,order_index,item_description,unit_of_measure,agreed_unit_price_sar,quantity_estimated)" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-contracts",
+      "name": "Fetch Contracts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_completion_certificates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $node['Unwrap Voucher'].json.project_id }}" },
+            { "name": "select",     "value": "id,certificate_number,issued_date,completion_pct,contract_id,issued_by_name" },
+            { "name": "order",      "value": "issued_date.desc" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-certs",
+      "name": "Fetch Completion Certificates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "project_id", "value": "=eq.{{ $node['Unwrap Voucher'].json.project_id }}" },
+            { "name": "select",     "value": "id,voucher_number,voucher_date,total_sar,status" },
+            { "name": "order",      "value": "voucher_date.desc" },
+            { "name": "limit",      "value": "20" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-prior",
+      "name": "Fetch Prior Vouchers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine the parallel context fetches into a single payload for Claude.\nconst voucherWrap = $node['Unwrap Voucher'].json;\nconst contracts = $node['Fetch Contracts'].json || [];\nconst certs     = $node['Fetch Completion Certificates'].json || [];\nconst prior     = $node['Fetch Prior Vouchers'].json || [];\n\nreturn [{\n  json: {\n    voucher_id: voucherWrap.voucher_id,\n    tenant_id:  voucherWrap.tenant_id,\n    project_id: voucherWrap.project_id,\n    voucher:    voucherWrap.voucher,\n    contracts,\n    completion_certificates: certs,\n    prior_vouchers: prior,\n  }\n}];"
+      },
+      "id": "node-build-context",
+      "name": "Build Audit Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ tenant_id: $json.tenant_id, voucher_id: $json.voucher_id, status: 'running', model: 'claude-sonnet-4-5-20250929', started_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "node-create-run",
+      "name": "Create Agent Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 320]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $node['Build Audit Context'].json.voucher_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'agent_running' }) }}",
+        "options": {}
+      },
+      "id": "node-status-running",
+      "name": "Voucher → agent_running",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type",      "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-4-5-20250929',\n  max_tokens: 4000,\n  system: 'You are a Saudi real-estate escrow trustee auditor. You audit payment vouchers (وثائق صرف) against contracts, invoices, completion certificates, and escrow rules. Return ONLY a single JSON object — no prose, no markdown, no code fences. The JSON must match this exact shape:\\n{\\n  \"overall_verdict\": \"approved\" | \"rejected\" | \"needs_review\",\\n  \"summary\": \"one short paragraph explaining the verdict\",\\n  \"checks\": [ { \"rule_code\": string, \"rule_title_en\": string, \"rule_title_ar\": string, \"severity\": \"blocking\" | \"warning\" | \"info\", \"status\": \"pass\" | \"fail\" | \"warn\" | \"needs_info\" | \"skipped\", \"reasoning\": string, \"evidence_quote\": string, \"expected_value\": string, \"actual_value\": string, \"ai_confidence\": number } ]\\n}\\nRun ALL 13 rules below in order. If a check needs PDF content you cannot see, set status=\"needs_info\" with a reasoning explaining what document would resolve it.\\n\\nRules:\\nRULE_01_DOC_SEQUENCE — voucher_number must follow the project sequence; flag gaps/duplicates against prior_vouchers.\\nRULE_02_DATE_PROXIMITY — voucher_date must be within ~14 days of today; older vouchers warn.\\nRULE_03_PRICE_MATCH — invoice line prices must match contract line items (compare against contracts.line_items.agreed_unit_price_sar).\\nRULE_04_RECEIPT_CONFIRMATION — materials need a storekeeper confirmation; services need a department approval. PDFs would prove this.\\nRULE_05_ACCOUNT_TYPE_MATCH — voucher.expense_nature must equal voucher.account.account_type (construction → construction escrow; admin/marketing/security → non_construction).\\nRULE_06_ACCOUNT_SUFFICIENCY — voucher.total_sar must be ≤ voucher.account.current_balance_sar.\\nRULE_07_BENEFICIARY_DETAIL — voucher.beneficiary supplier name + bank account must match the master record (already joined).\\nRULE_08_COMPLETION_VS_EXTRACT — if voucher relates to construction work, contractor extract claim must align with latest completion_certificates.completion_pct.\\nRULE_09_NO_DUPLICATE_PAYMENT — voucher.allocations[].invoice.total_sar minus prior allocations must be ≥ allocation amount. Sum of allocations against any invoice may not exceed invoice.total_sar.\\nRULE_10_DEVELOPER_NAME_ON_INVOICE — voucher.allocations[].invoice.issued_to_developer_id must equal voucher.project.developer_id.\\nRULE_11_AUTHORIZED_SIGNER — voucher.signer must exist, status=\"active\", and signing_limit_sar ≥ voucher.total_sar.\\nRULE_12_SUPPLIER_LEDGER — invoice should appear in developer\\'s supplier ledger. If no ledger data is in context, mark needs_info.\\nRULE_13_VOUCHER_TOTAL_EQ_INVOICES — voucher.total_sar must equal sum(voucher.allocations[].allocated_amount_sar). If no allocations exist, mark needs_info.',\n  messages: [\n    {\n      role: 'user',\n      content: 'Audit this voucher. Return JSON only.\\n\\nVOUCHER + CONTEXT:\\n' + JSON.stringify($json, null, 2)\n    }\n  ]\n}) }}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "node-claude-audit",
+      "name": "Claude — Run All 13 Checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's JSON response, prep batch insert for agent_checks, and compute verdict counts.\nconst claudeResp = $input.first().json;\nconst text = (claudeResp.content && claudeResp.content[0] && claudeResp.content[0].text) || '';\nconst tokensIn  = claudeResp.usage?.input_tokens  ?? 0;\nconst tokensOut = claudeResp.usage?.output_tokens ?? 0;\n\nfunction extractJSON(s) {\n  const stripped = s.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(stripped); } catch (e) {}\n  const first = stripped.indexOf('{');\n  const last  = stripped.lastIndexOf('}');\n  if (first >= 0 && last > first) {\n    try { return JSON.parse(stripped.slice(first, last + 1)); } catch (e) {}\n  }\n  throw new Error('Claude returned non-JSON: ' + s.slice(0, 200));\n}\n\nconst parsed = extractJSON(text);\nconst checks = Array.isArray(parsed.checks) ? parsed.checks : [];\nlet pass = 0, fail = 0, warn = 0;\nfor (const c of checks) {\n  if (c.status === 'pass') pass++;\n  else if (c.status === 'fail') fail++;\n  else if (c.status === 'warn' || c.status === 'needs_info') warn++;\n}\n\nconst ctx = $node['Build Audit Context'].json;\nconst run = $node['Create Agent Run'].json[0];\n\nconst checkRows = checks.map((c, i) => ({\n  tenant_id: ctx.tenant_id,\n  agent_run_id: run.id,\n  voucher_id: ctx.voucher_id,\n  order_index: i + 1,\n  rule_code:     c.rule_code     ?? `RULE_${String(i+1).padStart(2,'0')}_UNKNOWN`,\n  rule_title_en: c.rule_title_en ?? c.rule_code ?? `Rule ${i+1}`,\n  rule_title_ar: c.rule_title_ar ?? null,\n  severity:      c.severity      ?? 'blocking',\n  status:        c.status        ?? 'needs_info',\n  evidence_quote:  c.evidence_quote  ?? null,\n  expected_value:  c.expected_value  ?? null,\n  actual_value:    c.actual_value    ?? null,\n  ai_confidence:   typeof c.ai_confidence === 'number' ? c.ai_confidence : null,\n  reasoning:       c.reasoning ?? null,\n}));\n\nreturn [{\n  json: {\n    voucher_id: ctx.voucher_id,\n    tenant_id:  ctx.tenant_id,\n    project_id: ctx.project_id,\n    agent_run_id: run.id,\n    overall_verdict: parsed.overall_verdict || 'needs_review',\n    summary: parsed.summary || '',\n    pass_count: pass,\n    fail_count: fail,\n    warn_count: warn,\n    tokens_in: tokensIn,\n    tokens_out: tokensOut,\n    check_rows: checkRows,\n    submitted_by_external_email: ctx.voucher?.submitted_by_external_email ?? null,\n  }\n}];"
+      },
+      "id": "node-parse",
+      "name": "Parse Claude + Build Inserts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_checks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.check_rows) }}",
+        "options": {}
+      },
+      "id": "node-insert-checks",
+      "name": "Insert Agent Checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 320]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_voucher_agent_runs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $node['Parse Claude + Build Inserts'].json.agent_run_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), pass_count: $node['Parse Claude + Build Inserts'].json.pass_count, fail_count: $node['Parse Claude + Build Inserts'].json.fail_count, warn_count: $node['Parse Claude + Build Inserts'].json.warn_count, total_tokens_in: $node['Parse Claude + Build Inserts'].json.tokens_in, total_tokens_out: $node['Parse Claude + Build Inserts'].json.tokens_out, summary: $node['Parse Claude + Build Inserts'].json.summary }) }}",
+        "options": {}
+      },
+      "id": "node-finalize-run",
+      "name": "Finalize Agent Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map overall_verdict → voucher.status.\nconst v = $node['Parse Claude + Build Inserts'].json.overall_verdict;\nlet status = 'needs_review';\nif (v === 'approved') status = 'needs_review';   // even on AI pass, a human still approves\nelse if (v === 'rejected') status = 'rejected';\nelse status = 'needs_review';\nreturn [{ json: { ...$json, next_voucher_status: status } }];"
+      },
+      "id": "node-decide-status",
+      "name": "Decide Voucher Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/escrow_vouchers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.voucher_id }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.next_voucher_status }) }}",
+        "options": {}
+      },
+      "id": "node-update-voucher",
+      "name": "Update Voucher Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2860, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  from: 'Full Scope <notifications@fullscope.sa>',\n  to: [$env.TRUSTEE_NOTIFY_EMAIL || 'support@elevatemybusiness.co'],\n  subject: 'Voucher audit complete — ' + ($node['Parse Claude + Build Inserts'].json.overall_verdict.toUpperCase()),\n  html: '<h2>Voucher audit complete</h2><p><strong>Verdict:</strong> ' + $node['Parse Claude + Build Inserts'].json.overall_verdict + '</p><p><strong>Pass:</strong> ' + $node['Parse Claude + Build Inserts'].json.pass_count + ' · <strong>Fail:</strong> ' + $node['Parse Claude + Build Inserts'].json.fail_count + ' · <strong>Warn/Needs info:</strong> ' + $node['Parse Claude + Build Inserts'].json.warn_count + '</p><p>' + $node['Parse Claude + Build Inserts'].json.summary + '</p><p><a href=\"https://app.fullscope.sa/app/escrow/' + $node['Parse Claude + Build Inserts'].json.project_id + '/vouchers/' + $node['Parse Claude + Build Inserts'].json.voucher_id + '\">Open voucher in Full Scope →</a></p>'\n}) }}",
+        "options": {}
+      },
+      "id": "node-notify",
+      "name": "Notify Trustee (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3080, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, voucher_id: $node['Parse Claude + Build Inserts'].json.voucher_id, verdict: $node['Parse Claude + Build Inserts'].json.overall_verdict, pass: $node['Parse Claude + Build Inserts'].json.pass_count, fail: $node['Parse Claude + Build Inserts'].json.fail_count, warn: $node['Parse Claude + Build Inserts'].json.warn_count } }];"
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 400]
+    }
+  ],
+  "connections": {
+    "Webhook":                       { "main": [[{ "node": "Extract IDs",                  "type": "main", "index": 0 }]] },
+    "Extract IDs":                   { "main": [[{ "node": "Fetch Voucher + Context",     "type": "main", "index": 0 }]] },
+    "Fetch Voucher + Context":       { "main": [[{ "node": "Unwrap Voucher",              "type": "main", "index": 0 }]] },
+    "Unwrap Voucher": {
+      "main": [[
+        { "node": "Fetch Contracts",               "type": "main", "index": 0 },
+        { "node": "Fetch Completion Certificates", "type": "main", "index": 0 },
+        { "node": "Fetch Prior Vouchers",          "type": "main", "index": 0 }
+      ]]
+    },
+    "Fetch Contracts":               { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Fetch Completion Certificates": { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Fetch Prior Vouchers":          { "main": [[{ "node": "Build Audit Context",         "type": "main", "index": 0 }]] },
+    "Build Audit Context":           { "main": [[{ "node": "Create Agent Run",            "type": "main", "index": 0 }]] },
+    "Create Agent Run":              { "main": [[{ "node": "Voucher → agent_running",     "type": "main", "index": 0 }]] },
+    "Voucher → agent_running":       { "main": [[{ "node": "Claude — Run All 13 Checks", "type": "main", "index": 0 }]] },
+    "Claude — Run All 13 Checks":   { "main": [[{ "node": "Parse Claude + Build Inserts","type": "main", "index": 0 }]] },
+    "Parse Claude + Build Inserts":  {
+      "main": [[
+        { "node": "Insert Agent Checks", "type": "main", "index": 0 },
+        { "node": "Decide Voucher Status","type": "main", "index": 0 }
+      ]]
+    },
+    "Insert Agent Checks":           { "main": [[{ "node": "Finalize Agent Run",          "type": "main", "index": 0 }]] },
+    "Decide Voucher Status":         { "main": [[{ "node": "Update Voucher Status",       "type": "main", "index": 0 }]] },
+    "Update Voucher Status":         { "main": [[{ "node": "Notify Trustee (Resend)",     "type": "main", "index": 0 }]] },
+    "Notify Trustee (Resend)":       { "main": [[{ "node": "Respond to Webhook",          "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "versionId": "",
+  "meta": { "templateCredsSetupCompleted": false },
+  "id": "voucher-audit-phase1",
+  "tags": []
+}

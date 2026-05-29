@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -60,19 +60,43 @@ const CRM_ITEMS: Item[] = [
   { href: '/app/crm/contacts', labelKey: 'crm.nav.contacts', icon: Contact },
 ]
 
+// Escrow Control nav — temporarily hidden after the disbursement pivot.
+// Keep the definitions around in case we revive the module; the sidebar simply
+// never routes here.
+const ESCROW_ITEMS: Item[] = [
+  // { href: '/app/escrow',           labelKey: 'escrow.nav.home',      icon: Landmark },        // hidden
+  // { href: '/app/escrow/vouchers',  labelKey: 'escrow.nav.vouchers',  icon: ScrollText },      // hidden
+  // { href: '/app/escrow/suppliers', labelKey: 'escrow.nav.suppliers', icon: ShoppingBag },     // hidden
+  // { href: '/app/escrow/deposits',  labelKey: 'escrow.nav.deposits',  icon: Wallet },          // hidden
+  // { href: '/app/escrow/settings',  labelKey: 'escrow.nav.settings',  icon: Settings },        // hidden
+]
+
+// Disbursements (الصرف) — the active workflow module after the pivot.
+const DSB_ITEMS: Item[] = [
+  { href: '/app/disbursements?tab=mine',      labelKey: 'dsb.nav.inbox',  icon: Inbox },
+  { href: '/app/disbursements?tab=active',    labelKey: 'dsb.nav.active', icon: ScrollText },
+  { href: '/app/disbursements?tab=signed',    labelKey: 'dsb.nav.signed', icon: FileText },
+]
+
 function isActive(pathname: string, href: string) {
-  if (href === '/app/hr')  return pathname === '/app/hr'
-  if (href === '/app/dms') return pathname === '/app/dms'
-  if (href === '/app/crm') return pathname === '/app/crm'
-  return pathname === href || pathname.startsWith(href + '/')
+  // Strip query strings — nav items may include ?tab=… for tabbed sub-pages.
+  const hrefPath = href.split('?')[0] ?? href
+  if (hrefPath === '/app/hr')             return pathname === '/app/hr'
+  if (hrefPath === '/app/dms')            return pathname === '/app/dms'
+  if (hrefPath === '/app/crm')            return pathname === '/app/crm'
+  if (hrefPath === '/app/escrow')         return pathname === '/app/escrow' || /^\/app\/escrow\/[^/]+$/.test(pathname)
+  if (hrefPath === '/app/disbursements')  return pathname === '/app/disbursements'
+  return pathname === hrefPath || pathname.startsWith(hrefPath + '/')
 }
 
 /** Resolve which module the user is currently inside. */
-function moduleFor(pathname: string): 'hr' | 'crm' | 'accounting' | 'dms' | 'picker' {
-  if (pathname.startsWith('/app/hr'))         return 'hr'
-  if (pathname.startsWith('/app/dms'))        return 'dms'
-  if (pathname.startsWith('/app/crm'))        return 'crm'
-  if (pathname.startsWith('/app/accounting')) return 'accounting'
+function moduleFor(pathname: string): 'hr' | 'crm' | 'accounting' | 'dms' | 'escrow' | 'dsb' | 'picker' {
+  if (pathname.startsWith('/app/hr'))             return 'hr'
+  if (pathname.startsWith('/app/dms'))            return 'dms'
+  if (pathname.startsWith('/app/crm'))            return 'crm'
+  if (pathname.startsWith('/app/escrow'))         return 'escrow'
+  if (pathname.startsWith('/app/disbursements'))  return 'dsb'
+  if (pathname.startsWith('/app/accounting'))     return 'accounting'
   return 'picker'
 }
 
@@ -84,16 +108,24 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
   // The picker page (/app) gets a slimmer sidebar — no module nav, just the
   // brand header + sign-out. The user is choosing a module, not navigating
   // inside one.
-  const showModuleNav = currentModule === 'hr' || currentModule === 'dms' || currentModule === 'crm'
+  const showModuleNav = currentModule === 'hr' || currentModule === 'dms' || currentModule === 'crm' || currentModule === 'dsb'
   const items =
-    currentModule === 'dms' ? DMS_ITEMS :
-    currentModule === 'crm' ? CRM_ITEMS :
+    currentModule === 'dms'    ? DMS_ITEMS :
+    currentModule === 'crm'    ? CRM_ITEMS :
+    currentModule === 'dsb'    ? DSB_ITEMS :
+    currentModule === 'escrow' ? ESCROW_ITEMS :
     HR_ITEMS
+
+  // Silence unused-vars TS warnings for icons still referenced by hidden
+  // ESCROW_ITEMS placeholders (kept for future revival).
+  void Landmark; void ShoppingBag; void Wallet; void Settings
 
   const moduleLabel: Record<typeof currentModule, StringKey> = {
     hr:         'app.module.hr.title',
     dms:        'app.module.dms.title',
     crm:        'app.module.crm.title',
+    escrow:     'app.module.escrow.title',
+    dsb:        'app.module.dsb.title',
     accounting: 'app.module.accounting.title',
     picker:     'app.module.switcher.firm',
   }
