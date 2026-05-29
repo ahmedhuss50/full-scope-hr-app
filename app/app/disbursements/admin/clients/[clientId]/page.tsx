@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, Plus, Users, FolderKanban, FileText, Mail } from 'lucide-react'
+import { ShareUploadLinkButton } from './ShareUploadLinkButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -200,7 +201,16 @@ export default async function ClientDetailPage({
               </span>
             </div>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2 flex-wrap">
+            <ShareUploadLinkButton
+              client={{
+                id: client.id,
+                company_name_ar: client.company_name_ar,
+                contact_name: client.contact_name,
+                contact_email: client.contact_email,
+              }}
+              projects={projects.map((p) => ({ id: p.id, code: p.code, name_ar: p.name_ar }))}
+            />
             <Link
               href={`/app/disbursements/admin/projects/new?client=${encodeURIComponent(client.id)}`}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
@@ -275,23 +285,31 @@ export default async function ClientDetailPage({
                 : '—'
               const count = projectCaseCounts.get(p.id) ?? 0
               return (
-                <li key={p.id} className="px-5 py-3 hover:bg-slate-50 transition">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="font-mono text-xs text-slate-500">{p.code}</span>
-                        <span className="text-xs text-slate-400">·</span>
-                        <span className="text-xs text-slate-500">{count} سند</span>
+                <li key={p.id}>
+                  <Link
+                    href={`/app/disbursements/admin/projects/${p.id}`}
+                    className="block px-5 py-3 hover:bg-slate-50 transition"
+                  >
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="font-mono text-xs text-slate-500">{p.code}</span>
+                          <span className="text-xs text-slate-400">·</span>
+                          <span className="text-xs text-slate-500">{count} سند</span>
+                        </div>
+                        <div className="text-sm font-semibold text-slate-900 truncate">{p.name_ar}</div>
+                        <div className="text-xs text-slate-500 mt-0.5 truncate">الموظف المسؤول: {empName}</div>
                       </div>
-                      <div className="text-sm font-semibold text-slate-900 truncate">{p.name_ar}</div>
-                      <div className="text-xs text-slate-500 mt-0.5 truncate">الموظف المسؤول: {empName}</div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pPill.cls}`}
+                        >
+                          {pPill.label}
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400 rotate-180" aria-hidden="true" />
+                      </div>
                     </div>
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pPill.cls}`}
-                    >
-                      {pPill.label}
-                    </span>
-                  </div>
+                  </Link>
                 </li>
               )
             })}

@@ -228,23 +228,31 @@ export default async function DisbursementsAdminPage({
                 const empName = p.assigned_employee_id ? employeeNameById.get(p.assigned_employee_id) ?? '—' : '—'
                 const count = projectCaseCounts.get(p.id) ?? 0
                 return (
-                  <li key={p.id} className="px-5 py-3 hover:bg-slate-50 transition">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="font-mono text-xs text-slate-500">{p.code}</span>
-                          <span className="text-xs text-slate-400">·</span>
-                          <span className="text-xs text-slate-500">{count} سند</span>
+                  <li key={p.id}>
+                    <Link
+                      href={`/app/disbursements/admin/projects/${p.id}`}
+                      className="block px-5 py-3 hover:bg-slate-50 transition"
+                    >
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="font-mono text-xs text-slate-500">{p.code}</span>
+                            <span className="text-xs text-slate-400">·</span>
+                            <span className="text-xs text-slate-500">{count} سند</span>
+                          </div>
+                          <div className="text-sm font-semibold text-slate-900 truncate">{p.name_ar}</div>
+                          <div className="text-xs text-slate-500 mt-0.5 truncate">الموظف المسؤول: {empName}</div>
                         </div>
-                        <div className="text-sm font-semibold text-slate-900 truncate">{p.name_ar}</div>
-                        <div className="text-xs text-slate-500 mt-0.5 truncate">الموظف المسؤول: {empName}</div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pill.cls}`}
+                          >
+                            {pill.label}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5 text-slate-400 rotate-180" aria-hidden="true" />
+                        </div>
                       </div>
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pill.cls}`}
-                      >
-                        {pill.label}
-                      </span>
-                    </div>
+                    </Link>
                   </li>
                 )
               })}

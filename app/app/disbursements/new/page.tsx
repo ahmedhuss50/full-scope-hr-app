@@ -5,7 +5,11 @@ import { NewCaseForm, type DeveloperOption, type ProjectOption } from './NewCase
 
 export const dynamic = 'force-dynamic'
 
-export default async function StaffNewCasePage() {
+export default async function StaffNewCasePage({
+  searchParams,
+}: {
+  searchParams?: { developer?: string; project?: string }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -47,6 +51,17 @@ export default async function StaffNewCasePage() {
   const noClients = developers.length === 0
   const noProjects = projects.length === 0
 
+  // Optional pre-selection from the query string. Only honour values that
+  // match the data we just loaded — never trust unverified IDs.
+  const defaultDeveloperId =
+    searchParams?.developer && developers.some((d) => d.id === searchParams.developer)
+      ? searchParams.developer
+      : null
+  const defaultProjectId =
+    searchParams?.project && projects.some((p) => p.id === searchParams.project)
+      ? searchParams.project
+      : null
+
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
       <header className="space-y-2">
@@ -74,7 +89,12 @@ export default async function StaffNewCasePage() {
           )}
         </div>
       ) : (
-        <NewCaseForm developers={developers} projects={projects} />
+        <NewCaseForm
+          developers={developers}
+          projects={projects}
+          defaultDeveloperId={defaultDeveloperId}
+          defaultProjectId={defaultProjectId}
+        />
       )}
     </div>
   )

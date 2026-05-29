@@ -18,14 +18,20 @@ export type ProjectOption = { id: string; code: string; name_ar: string; develop
 export function NewCaseForm({
   developers,
   projects,
+  defaultDeveloperId = null,
+  defaultProjectId = null,
 }: {
   developers: DeveloperOption[]
   projects: ProjectOption[]
+  defaultDeveloperId?: string | null
+  defaultProjectId?: string | null
 }) {
   const router = useRouter()
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
-  const [developerId, setDeveloperId] = useState<string>(developers[0]?.id ?? '')
+  const [developerId, setDeveloperId] = useState<string>(
+    defaultDeveloperId ?? developers[0]?.id ?? '',
+  )
 
   // Projects shown for the currently selected client: those tied to this
   // developer + any untied legacy projects (developer_id is null).
@@ -37,7 +43,7 @@ export function NewCaseForm({
   }, [developerId, projects])
 
   const [projectId, setProjectId] = useState<string>(
-    filteredProjects[0]?.id ?? projects[0]?.id ?? ''
+    defaultProjectId ?? filteredProjects[0]?.id ?? projects[0]?.id ?? ''
   )
 
   // If the picked developer changes and the currently selected project no
