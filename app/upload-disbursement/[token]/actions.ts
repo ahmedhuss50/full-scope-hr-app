@@ -3,6 +3,7 @@
 import crypto from 'crypto'
 import { createSupabaseService } from '@/lib/supabase/server'
 import { sendDeveloperUploadedEmail } from '@/lib/email/disbursement-emails'
+import { fireDsbBreakdownWebhook } from '@/lib/n8n/fire-dsb-breakdown'
 
 // ============================================================================
 // Public (tokenized) disbursement upload — server actions.
@@ -336,6 +337,11 @@ export async function registerUploadViaToken(
       }).catch((e) => console.error('[dsb.registerUploadViaToken] email failed', e))
     }
   }
+
+  // 6) Fire-and-forget AI breakdown.
+  fireDsbBreakdownWebhook({ case_id: input.case_id, tenant_id: tok.tenant_id }).catch(
+    (e) => console.error('[dsb.registerUploadViaToken] fireDsbBreakdownWebhook failed', e),
+  )
 
   return { ok: true, redirect_to: `/upload-disbursement/${input.token_raw}/done` }
 }

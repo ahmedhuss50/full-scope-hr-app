@@ -161,3 +161,87 @@ Common Phase 1 issues:
 - **401 on Supabase calls** — `SUPABASE_SERVICE_ROLE_KEY` env var is wrong, or the URL has a trailing slash.
 - **Claude returns non-JSON** — Claude very rarely wraps output in prose. The parse node tries to recover, but if it fails, the execution log will show the raw text.
 - **Email never arrives** — your Resend domain (`fullscope.sa`) needs to be verified in resend.com. Until then, change the `from` in the Notify node to a verified address.
+
+---
+
+## Phase 3 — Disbursement Breakdown (AI)
+
+This is a **separate, lightweight workflow** for the new الصرف (disbursement)
+module. When any disbursement case PDF is uploaded — from the developer portal,
+the Full Scope staff upload screen, OR a magic-link token — the Full Scope app
+POSTs `{ case_id, tenant_id }` to this webhook. n8n then:
+
+1. Reads the case + its single combined PDF upload from Supabase
+2. Mints a signed Storage URL and downloads the PDF (binary)
+3. Sends it to Claude with an Arabic-aware classifier prompt
+4. Receives JSON: `{ sections: [{ kind, page_from, page_to, summary_ar }] }`
+5. Inserts one row per section into `dsb_breakdown_items` with `source='ai'`
+6. Writes an `ai_breakdown_complete` row into `dsb_audit_log`
+7. Responds `{ ok, case_id, sections }`
+
+The employee then opens the case and sees the breakdown editor **pre-filled**
+with AI suggestions — they can edit, delete, or add rows before approving.
+
+> **Email notifications stay independent.** The existing developer-uploaded
+> email fires the moment the case flips to `with_employee` — it does not wait
+> on n8n. The AI breakdown is pure pre-fill: if n8n is down the workflow still
+> works, just without the head start.
+
+### Setup steps
+
+1. **Import the workflow.** In n8n Cloud → **Workflows** → **Import from File**,
+   pick `n8n/dsb-breakdown.json`. You'll see **12 nodes** wired linearly from
+   `Webhook` to `Respond to Webhook`.
+2. **Env vars.** This workflow re-uses the same n8n variables you set in
+   Phase 1/Phase 2 — `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `ANTHROPIC_API_KEY`. Nothing new to add on the n8n side.
+3. **Activate.** Toggle the workflow to **Active**. Click the **Webhook** node
+   and copy the **Production URL**. It will look like:
+   ```
+   https://YOUR-WORKSPACE.app.n8n.cloud/webhook/dsb-breakdown
+   ```
+4. **Add the URL to Vercel.** In your Vercel project → **Settings** →
+   **Environment Variables**, add:
+
+   | Key                              | Value                                                           |
+   |----------------------------------|-----------------------------------------------------------------|
+   | `N8N_DSB_BREAKDOWN_WEBHOOK_URL`  | the production URL from step 3                                  |
+
+   Redeploy so server actions pick it up.
+
+### Test it end to end
+
+1. Open the developer portal at `/developer/new` (or use a magic-link upload,
+   or the staff upload at `/app/disbursements/new`).
+2. Create a case and upload any disbursement PDF.
+3. Within **~20 seconds**, run in Supabase SQL Editor:
+   ```sql
+   select kind, page_from, page_to, summary_ar, source, order_index
+   from dsb_breakdown_items
+   where case_id = '<the case id>'
+   order by order_index;
+   ```
+   You should see one row per section with `source = 'ai'`.
+4. The `dsb_audit_log` should have an `ai_breakdown_complete` row.
+5. Open the case in the employee inbox — the breakdown editor should show
+   the AI-suggested rows ready to review.
+
+### If something breaks
+
+Open **Executions** in n8n and click the failed run.
+
+- **"Case not found"** — case ID didn't match. Verify the row exists and that
+  `SUPABASE_SERVICE_ROLE_KEY` is the service-role secret (RLS would otherwise
+  hide it).
+- **"Case has no uploads to break down"** — the webhook fired before the
+  upload row was inserted. The Full Scope helper fires *after* both insert
+  + status flip, so this should be rare. If it happens repeatedly, the upload
+  row insert is failing silently in the app.
+- **"Claude returned non-JSON"** — Claude very occasionally wraps output in
+  prose. The parse node tries to recover by slicing the first `{...}` block.
+  If it still fails, the execution log shows the raw text.
+- **Webhook never gets hit** — `N8N_DSB_BREAKDOWN_WEBHOOK_URL` is unset on
+  Vercel, or the workflow is paused. The helper logs
+  `[n8n] N8N_DSB_BREAKDOWN_WEBHOOK_URL not set — skipping AI breakdown` when
+  unset.
+

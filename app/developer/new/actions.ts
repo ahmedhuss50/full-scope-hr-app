@@ -2,6 +2,7 @@
 
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { sendDeveloperUploadedEmail } from '@/lib/email/disbursement-emails'
+import { fireDsbBreakdownWebhook } from '@/lib/n8n/fire-dsb-breakdown'
 
 const STORAGE_BUCKET = 'Document submission'
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
@@ -294,6 +295,11 @@ export async function submitDisbursement(input: SubmitDisbursementInput): Promis
       }).catch((e) => console.error('[dsb] email failed', e))
     }
   }
+
+  // Fire-and-forget AI breakdown — never block the user's redirect on n8n latency.
+  fireDsbBreakdownWebhook({ case_id: input.case_id, tenant_id: caller.tenantId }).catch(
+    (e) => console.error('[dsb] fireDsbBreakdownWebhook failed', e),
+  )
 
   return { ok: true }
 }
