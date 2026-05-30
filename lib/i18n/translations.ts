@@ -1923,6 +1923,42 @@ export const strings = {
                                          ar: 'لا يوجد حساب — سيُنشأ عند الإرسال' },
   'dsb.client.portal.error_no_email':  { en: 'No email on file',
                                          ar: 'لا يوجد بريد إلكتروني للعميل' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Case process diagram (visual stepper)
+  // -----------------------------------------------------------------
+  'dsb.process.step.upload':       { en: 'Developer upload',     ar: 'رفع المطور' },
+  'dsb.process.step.employee':     { en: 'Employee review',      ar: 'مراجعة الموظف' },
+  'dsb.process.step.supervisor':   { en: 'Supervisor review',    ar: 'مراجعة السوبرفايزر' },
+  'dsb.process.step.owner':        { en: 'Final signature',      ar: 'التوقيع النهائي' },
+  'dsb.process.handled_by':        { en: 'Handled by',           ar: 'بإدارة' },
+  'dsb.process.legend.done':       { en: 'Done',                 ar: 'مكتمل' },
+  'dsb.process.legend.current':    { en: 'Current',              ar: 'الحالي' },
+  'dsb.process.legend.pending':    { en: 'Pending',              ar: 'قيد الانتظار' },
+  'dsb.process.legend.sent_back':  { en: 'Sent back',            ar: 'أعيدت' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Compliance checklist
+  // -----------------------------------------------------------------
+  'dsb.checklist.heading':            { en: 'Compliance checklist',
+                                        ar: 'قائمة المراجعة' },
+  'dsb.checklist.counter':            { en: '{n} of {total} answered',
+                                        ar: '{n} من {total} تم الإجابة عليها' },
+  'dsb.checklist.col.num':            { en: '#',     ar: '#' },
+  'dsb.checklist.col.item':           { en: 'Item',  ar: 'البند' },
+  'dsb.checklist.col.ai':             { en: 'AI suggestion',  ar: 'اقتراح الذكاء الاصطناعي' },
+  'dsb.checklist.col.status':         { en: 'Final status',   ar: 'الحالة النهائية' },
+  'dsb.checklist.col.notes':          { en: 'Notes',          ar: 'ملاحظات' },
+  'dsb.checklist.col.actions':        { en: 'Action',         ar: 'إجراء' },
+  'dsb.checklist.save':               { en: 'Save',           ar: 'حفظ' },
+  'dsb.checklist.saving':             { en: 'Saving…',        ar: 'جارٍ الحفظ…' },
+  'dsb.checklist.status.pending':       { en: 'Pending',        ar: 'بانتظار' },
+  'dsb.checklist.status.verified':      { en: 'Verified',       ar: 'تم التحقق' },
+  'dsb.checklist.status.issue':         { en: 'Issue',          ar: 'يوجد مشكلة' },
+  'dsb.checklist.status.not_mentioned': { en: 'Not mentioned',  ar: 'لم يُذكر' },
+  'dsb.checklist.status.not_attached':  { en: 'Not attached',   ar: 'لم يُرفق' },
+  'dsb.checklist.read_only':          { en: 'Read-only — your role can view but not edit checklist',
+                                        ar: 'للعرض فقط — دورك يسمح بالعرض دون التعديل' },
 } as const
 
 export type StringKey = keyof typeof strings

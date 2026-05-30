@@ -3,8 +3,10 @@ import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FileText } from 'lucide-react'
 import { BreakdownEditor, type BreakdownItem } from './BreakdownEditor'
+import { ChecklistEditor, type ChecklistItem, type ChecklistResponse, type ChecklistStatus } from './ChecklistEditor'
 import { DecisionBar } from './DecisionBar'
 import { PdfOpener } from './PdfOpener'
+import { ProcessDiagram } from './ProcessDiagram'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,7 +133,53 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     .order('occurred_at', { ascending: false })
   const audit = (auditRaw ?? []) as AuditRow[]
 
+  // Assigned employee's display name for the process diagram.
+  let assignedEmployeeName: string | null = null
+  if (project?.assigned_employee_id) {
+    const { data: assignedRow } = await svc
+      .from('users')
+      .select('full_name')
+      .eq('id', project.assigned_employee_id)
+      .maybeSingle()
+    assignedEmployeeName = (assignedRow?.full_name as string | undefined) ?? null
+  }
+
+  // Checklist items visible to this tenant (global NULL or own tenant), ordered.
+  const { data: checklistItemsRaw } = await svc
+    .from('dsb_checklist_items')
+    .select('id, code, order_index, prompt_ar, prompt_en, tenant_id, active')
+    .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
+    .eq('active', true)
+    .order('order_index', { ascending: true })
+  const checklistItems: ChecklistItem[] = ((checklistItemsRaw ?? []) as Array<{
+    id: string; code: string; order_index: number; prompt_ar: string; prompt_en: string
+  }>).map((r) => ({
+    id: r.id,
+    code: r.code,
+    order_index: r.order_index,
+    prompt_ar: r.prompt_ar,
+    prompt_en: r.prompt_en,
+  }))
+
+  // Existing responses for this case.
+  const { data: checklistRespRaw } = await svc
+    .from('dsb_case_checklist_responses')
+    .select('id, checklist_item_id, status, notes, ai_suggested_status')
+    .eq('tenant_id', tenantId)
+    .eq('case_id', params.caseId)
+  const checklistResponses: ChecklistResponse[] = ((checklistRespRaw ?? []) as Array<{
+    id: string; checklist_item_id: string; status: ChecklistStatus; notes: string | null;
+    ai_suggested_status: ChecklistStatus | null
+  }>).map((r) => ({
+    id: r.id,
+    checklist_item_id: r.checklist_item_id,
+    status: r.status,
+    notes: r.notes,
+    ai_suggested_status: r.ai_suggested_status,
+  }))
+
   const isAssignedEmployee = !!project && project.assigned_employee_id === userId
+  const canEditChecklist = dsbRole === 'employee' || dsbRole === 'supervisor'
   // Breakdown is editable only by the role currently responsible.
   const breakdownEditable =
     (kase.status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee) ||
@@ -164,6 +212,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           </span>
         </div>
       </header>
+
+      <ProcessDiagram
+        status={kase.status}
+        developerName={developer?.company_name_ar ?? '—'}
+        assignedEmployeeName={assignedEmployeeName ?? '—'}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
@@ -211,6 +265,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             </div>
             <BreakdownEditor caseId={kase.id} items={breakdownItems} readOnly={!breakdownEditable} />
           </section>
+
+          <ChecklistEditor
+            caseId={kase.id}
+            items={checklistItems}
+            responses={checklistResponses}
+            canEdit={canEditChecklist}
+          />
         </div>
 
         <div className="space-y-6">

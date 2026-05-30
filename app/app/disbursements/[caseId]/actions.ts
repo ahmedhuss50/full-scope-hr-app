@@ -396,6 +396,81 @@ export async function signCase(input: { case_id: string }): Promise<{ ok: true }
 }
 
 // ----------------------------------------------------------------------------
+// upsertChecklistResponse — per-case checklist item response
+// ----------------------------------------------------------------------------
+
+type ChecklistStatus = 'pending' | 'verified' | 'issue' | 'not_mentioned' | 'not_attached'
+
+const CHECKLIST_STATUSES: ChecklistStatus[] = [
+  'pending',
+  'verified',
+  'issue',
+  'not_mentioned',
+  'not_attached',
+]
+
+export interface UpsertChecklistResponseInput {
+  case_id: string
+  checklist_item_id: string
+  status: ChecklistStatus
+  notes: string | null
+}
+
+export type UpsertChecklistResponseResult = { ok: true } | { ok: false; error: string }
+
+export async function upsertChecklistResponse(
+  input: UpsertChecklistResponseInput,
+): Promise<UpsertChecklistResponseResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية تعديل قائمة المراجعة.' }
+  }
+  if (!CHECKLIST_STATUSES.includes(input.status)) {
+    return { ok: false, error: 'حالة غير صالحة.' }
+  }
+
+  const svc = createSupabaseService()
+
+  // Confirm the case belongs to this tenant.
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  // Confirm the checklist item is visible to this tenant
+  // (global tenant_id IS NULL or own tenant).
+  const { data: item } = await svc
+    .from('dsb_checklist_items')
+    .select('id, tenant_id')
+    .eq('id', input.checklist_item_id)
+    .maybeSingle()
+  if (!item) return { ok: false, error: 'بند غير موجود.' }
+  const itemTenant = (item.tenant_id as string | null) ?? null
+  if (itemTenant !== null && itemTenant !== caller.tenantId) {
+    return { ok: false, error: 'بند غير متاح لمؤسستك.' }
+  }
+
+  const now = new Date().toISOString()
+  const { error } = await svc
+    .from('dsb_case_checklist_responses')
+    .upsert(
+      {
+        tenant_id: caller.tenantId,
+        case_id: input.case_id,
+        checklist_item_id: input.checklist_item_id,
+        status: input.status,
+        notes: input.notes,
+        responded_by_user_id: caller.userId,
+        responded_at: now,
+      },
+      { onConflict: 'case_id,checklist_item_id' },
+    )
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // getSignedPdfUrl — short-lived signed URL for the uploaded PDF
 // ----------------------------------------------------------------------------
 
