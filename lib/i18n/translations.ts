@@ -1891,6 +1891,38 @@ export const strings = {
                                          ar: 'أعيدت' },
   'dsb.project.detail.empty_col':      { en: 'No cases',
                                          ar: 'لا توجد سندات' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Suite-wide pipeline board
+  // -----------------------------------------------------------------
+  'dsb.nav.board':                     { en: 'Board',                ar: 'لوحة المراحل' },
+
+  'dsb.board.title':                   { en: 'Pipeline board',
+                                         ar: 'لوحة الصرفيات' },
+  'dsb.board.subtitle':                { en: 'All cases across all projects, organised by stage.',
+                                         ar: 'كل سندات الصرف في كل المشاريع، مرتبة حسب المرحلة.' },
+  'dsb.board.stat.total':              { en: 'Total cases',          ar: 'إجمالي السندات' },
+  'dsb.board.stat.signed':             { en: 'Signed',               ar: 'موقّعة' },
+  'dsb.board.stat.sent_back':          { en: 'Sent back',            ar: 'أعيدت إلى المطور' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Client portal sign-in card (client detail page)
+  // -----------------------------------------------------------------
+  'dsb.client.portal.title':           { en: 'Client portal',
+                                         ar: 'بوابة العميل' },
+  'dsb.client.portal.subtitle':        { en: 'Their sign-in URL for tracking disbursements.',
+                                         ar: 'رابط دخول العميل إلى بوابته الخاصة لمتابعة الصرفيات.' },
+  'dsb.client.portal.copy':            { en: 'Copy URL',             ar: 'نسخ الرابط' },
+  'dsb.client.portal.copied':          { en: 'Copied ✓',             ar: 'تم النسخ ✓' },
+  'dsb.client.portal.send':            { en: 'Email sign-in link',
+                                         ar: 'إرسال رابط الدخول إيميل' },
+  'dsb.client.portal.sending':         { en: 'Sending…',             ar: 'جاري الإرسال…' },
+  'dsb.client.portal.sent':            { en: 'Sent ✓',               ar: 'تم الإرسال ✓' },
+  'dsb.client.portal.has_login':       { en: 'Has login',            ar: 'لديه حساب' },
+  'dsb.client.portal.no_login':        { en: 'No login — will be created on send',
+                                         ar: 'لا يوجد حساب — سيُنشأ عند الإرسال' },
+  'dsb.client.portal.error_no_email':  { en: 'No email on file',
+                                         ar: 'لا يوجد بريد إلكتروني للعميل' },
 } as const
 
 export type StringKey = keyof typeof strings

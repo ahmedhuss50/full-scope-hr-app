@@ -74,6 +74,7 @@ const ESCROW_ITEMS: Item[] = [
 // Disbursements (الصرف) — the active workflow module after the pivot.
 const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements?tab=mine',      labelKey: 'dsb.nav.inbox',  icon: Inbox },
+  { href: '/app/disbursements/board',         labelKey: 'dsb.nav.board',  icon: LayoutDashboard },
   { href: '/app/disbursements?tab=active',    labelKey: 'dsb.nav.active', icon: ScrollText },
   { href: '/app/disbursements?tab=signed',    labelKey: 'dsb.nav.signed', icon: FileText },
   { href: '/app/disbursements/admin',         labelKey: 'dsb.nav.admin',  icon: Settings },

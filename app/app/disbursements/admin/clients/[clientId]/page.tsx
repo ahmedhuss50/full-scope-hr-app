@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, Plus, Users, FolderKanban, FileText, Mail } from 'lucide-react'
 import { ShareUploadLinkButton } from './ShareUploadLinkButton'
+import { ClientPortalCard } from './ClientPortalCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -172,6 +173,7 @@ export default async function ClientDetailPage({
 
   const pill = statusPill(client.status)
   const hasLogin = !!client.user_id
+  const portalUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://app.fullscope.sa') + '/login'
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
@@ -256,6 +258,15 @@ export default async function ClientDetailPage({
           </div>
         )}
       </section>
+
+      {/* Client portal sign-in card */}
+      <ClientPortalCard
+        clientId={client.id}
+        recipientName={client.contact_name ?? client.company_name_ar}
+        recipientEmail={client.contact_email}
+        hasLogin={hasLogin}
+        portalUrl={portalUrl}
+      />
 
       {/* Projects section */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
