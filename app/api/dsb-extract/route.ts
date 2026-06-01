@@ -108,6 +108,8 @@ const SYSTEM_PROMPT = `You are an expert document classifier for Saudi real-esta
       "invoice_total_sar":          number | null,
       "invoice_vat_sar":            number | null,
       "issued_to":                  string | null,
+      "disbursement_type_label_ar": string | null,
+      "disbursement_type_code":     "admin_marketing" | "construction" | "bank_financing" | "moh_incentive" | "unit_seriousness_fees" | "vat_project_registry" | "vat_sales_payment" | "other" | null,
       "line_items": [
         {
           "description_ar":  string | null,
@@ -121,7 +123,21 @@ const SYSTEM_PROMPT = `You are an expert document classifier for Saudi real-esta
     }
   }
 }
-Use the most specific kind possible. If a section doesn't fit any category, use "other". Page ranges must not overlap. Extract fields from the document as accurately as possible. If a field is not present, set it to null. Do not guess. Preserve Arabic strings exactly as they appear in the document. Provide English transliterations for names where helpful. For monetary values, return the number without currency symbols (e.g., 60000 not "60,000 SAR"). Dates MUST be ISO YYYY-MM-DD (convert Hijri/Arabic-numeral dates if needed). confidence_overall is a number between 0 and 1 expressing your overall confidence in the extraction.`
+Use the most specific kind possible. If a section doesn't fit any category, use "other". Page ranges must not overlap. Extract fields from the document as accurately as possible. If a field is not present, set it to null. Do not guess. Preserve Arabic strings exactly as they appear in the document. Provide English transliterations for names where helpful. For monetary values, return the number without currency symbols (e.g., 60000 not "60,000 SAR"). Dates MUST be ISO YYYY-MM-DD (convert Hijri/Arabic-numeral dates if needed). confidence_overall is a number between 0 and 1 expressing your overall confidence in the extraction.
+
+DISBURSEMENT TYPE EXTRACTION: Saudi real-estate disbursement vouchers contain a section "نوع الصرف" (disbursement type) listing several categorical options with checkboxes. Identify which option is TICKED/CHECKED/MARKED on the document and return:
+  - disbursement_type_label_ar: the literal Arabic label of the checked option, exactly as it appears (e.g., "مصاريف إنشائية").
+  - disbursement_type_code: normalized code matching the checked option. Use these mappings:
+      "مصاريف إدارية وتسويقية"                                                     → "admin_marketing"
+      "مصاريف إنشائية"                                                              → "construction"
+      "من قيمة تمويل بنكي"                                                         → "bank_financing"
+      "من قيمة حافز وزارة الإسكان"                                                 → "moh_incentive"
+      "رسوم الجدية في شراء الوحدة العقارية المختارة"                              → "unit_seriousness_fees"
+      "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"                            → "vat_project_registry"
+      "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"                   → "vat_sales_payment"
+      anything else                                                                  → "other"
+  - If no option is clearly checked, set BOTH fields to null.
+  - If multiple options appear checked, pick the one that best matches the document's content and note the ambiguity in the "notes" field at the top level.`
 
 // ---------------------------------------------------------------------------
 // Small helpers

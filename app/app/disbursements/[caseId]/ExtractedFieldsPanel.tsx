@@ -18,6 +18,16 @@ import { Sparkles } from 'lucide-react'
 //     the reviewer still sees the panel header and knows AI will fill it.
 // -----------------------------------------------------------------------------
 
+export type DisbursementTypeCode =
+  | 'admin_marketing'
+  | 'construction'
+  | 'bank_financing'
+  | 'moh_incentive'
+  | 'unit_seriousness_fees'
+  | 'vat_project_registry'
+  | 'vat_sales_payment'
+  | 'other'
+
 export type ExtractedFields = {
   developer_name_ar?: string | null
   developer_name_en?: string | null
@@ -31,6 +41,8 @@ export type ExtractedFields = {
   invoice_total_sar?: number | null
   invoice_vat_sar?: number | null
   issued_to?: string | null
+  disbursement_type_label_ar?: string | null
+  disbursement_type_code?: DisbursementTypeCode | null
   line_items?: Array<{
     description_ar?: string | null
     description_en?: string | null
@@ -39,6 +51,20 @@ export type ExtractedFields = {
     line_total_sar?: number | null
   }> | null
   confidence_overall?: number | null
+}
+
+// Canonical Arabic labels for each disbursement type. Used when the AI returns
+// the code but the document-extracted label is missing/garbled — we fall back
+// to the canonical wording.
+const DISBURSEMENT_TYPE_LABELS_AR: Record<DisbursementTypeCode, string> = {
+  admin_marketing:       'مصاريف إدارية وتسويقية',
+  construction:          'مصاريف إنشائية',
+  bank_financing:        'من قيمة تمويل بنكي',
+  moh_incentive:         'من قيمة حافز وزارة الإسكان',
+  unit_seriousness_fees: 'رسوم الجدية في شراء الوحدة العقارية المختارة',
+  vat_project_registry:  'ضريبة القيمة المضافة عن السجل الضريبي للمشروع',
+  vat_sales_payment:     'سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع',
+  other:                 'أخرى',
 }
 
 type Fmt = {
@@ -179,9 +205,35 @@ export function ExtractedFieldsPanel({
 
   const lineItems = Array.isArray(extracted.line_items) ? extracted.line_items : []
 
+  // Disbursement type — prefer the literal label the AI read off the document;
+  // fall back to the canonical label for the matched code; only show the dash
+  // when neither is available. The code itself is shown as a small mono pill
+  // next to the label so the reviewer can sanity-check the categorization.
+  const dtypeCode = (extracted.disbursement_type_code ?? null) as DisbursementTypeCode | null
+  const dtypeLiteralLabel = extracted.disbursement_type_label_ar?.trim() || null
+  const dtypeCanonicalLabel =
+    dtypeCode && dtypeCode in DISBURSEMENT_TYPE_LABELS_AR
+      ? DISBURSEMENT_TYPE_LABELS_AR[dtypeCode]
+      : null
+  const dtypeDisplay = dtypeLiteralLabel ?? dtypeCanonicalLabel ?? null
+
   return (
     <HeaderCard>
       <PanelHeader confidence={extracted.confidence_overall ?? null} />
+
+      {dtypeDisplay && (
+        <div className="rounded-lg border border-teal-200 bg-teal-50/40 px-4 py-3">
+          <div className="text-[11px] font-semibold text-teal-700 mb-1">نوع الصرف</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-slate-900">{dtypeDisplay}</span>
+            {dtypeCode && (
+              <span className="inline-block text-[10px] font-mono text-teal-700 bg-white border border-teal-200 rounded px-1.5 py-0.5">
+                {dtypeCode}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-lg border border-slate-200 bg-white">
         <div className="px-4">
