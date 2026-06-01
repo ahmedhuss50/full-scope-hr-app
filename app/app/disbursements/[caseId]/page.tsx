@@ -5,6 +5,7 @@ import { FileText } from 'lucide-react'
 import { BreakdownEditor, type BreakdownItem } from './BreakdownEditor'
 import { ChecklistEditor, type ChecklistItem, type ChecklistResponse, type ChecklistStatus } from './ChecklistEditor'
 import { DecisionBar } from './DecisionBar'
+import { ExtractedFieldsPanel, type ExtractedFields } from './ExtractedFieldsPanel'
 import { PdfOpener } from './PdfOpener'
 import { ProcessDiagram } from './ProcessDiagram'
 
@@ -59,6 +60,7 @@ type CaseRow = {
   notes: string | null
   submitted_at: string | null
   signed_at: string | null
+  extracted_fields: ExtractedFields | null
   project: { id: string; code: string; name_ar: string; assigned_employee_id: string | null } | { id: string; code: string; name_ar: string; assigned_employee_id: string | null }[] | null
   developer: { id: string; company_name_ar: string } | { id: string; company_name_ar: string }[] | null
 }
@@ -87,7 +89,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, extracted_fields,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`)
     .eq('tenant_id', tenantId)
@@ -95,6 +97,11 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     .maybeSingle()
   const kase = kaseRaw as CaseRow | null
   if (!kase) notFound()
+
+  // The extracted_fields column is JSONB; cast to our shape (it may be null
+  // when the AI breakdown workflow hasn't run yet, or when the extracted
+  // sub-block was absent from Claude's response).
+  const extractedFields: ExtractedFields | null = (kase.extracted_fields ?? null) as ExtractedFields | null
 
   const project = single(kase.project)
   const developer = single(kase.developer)
@@ -286,6 +293,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             items={checklistItems}
             responses={checklistResponses}
             canEdit={canEditChecklist}
+          />
+
+          <ExtractedFieldsPanel
+            extracted={extractedFields}
+            expectedDeveloperNameAr={developer?.company_name_ar ?? null}
+            fmt={{ fmtSar, fmtDate }}
           />
         </div>
 
