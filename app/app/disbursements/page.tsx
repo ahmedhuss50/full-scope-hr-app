@@ -148,8 +148,12 @@ export default async function DisbursementsDashboardPage() {
   if (!profile) redirect('/login')
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
+  // Developers (clients) belong in /developer, not the staff dashboard.
+  // Redirect them directly instead of going through /app (which would just
+  // bounce back here and cause ERR_TOO_MANY_REDIRECTS).
+  if (dsbRole === 'developer') redirect('/developer')
   if (!dsbRole || !['employee', 'supervisor', 'owner'].includes(dsbRole)) {
-    redirect('/app')
+    redirect('/login')
   }
 
   const tenantId = profile.tenant_id as string
