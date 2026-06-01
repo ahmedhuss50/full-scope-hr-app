@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { upsertChecklistResponse } from './actions'
 
@@ -54,13 +54,7 @@ function statusPillCls(status: ChecklistStatus): string {
   }
 }
 
-type RowState = {
-  status: ChecklistStatus
-  notes: string
-  saving: boolean
-  saved_at: number | null
-  error: string | null
-}
+type Snapshot = { status: ChecklistStatus; notes: string }
 
 export function ChecklistEditor({
   caseId,
@@ -76,99 +70,113 @@ export function ChecklistEditor({
   const router = useRouter()
   const [, startTransition] = useTransition()
 
-  // Index responses by item_id for quick lookup.
   const responseByItemId = useMemo(() => {
     const m = new Map<string, ChecklistResponse>()
     for (const r of responses) m.set(r.checklist_item_id, r)
     return m
   }, [responses])
 
-  // Initial per-item state.
-  const [rows, setRows] = useState<Record<string, RowState>>(() => {
-    const initial: Record<string, RowState> = {}
+  // Build the baseline (last-persisted) snapshot once per items/responses pair.
+  // Any difference between `current[itemId]` and `baseline[itemId]` is an
+  // unsaved change that the "save all" button will flush.
+  const buildBaseline = (): Record<string, Snapshot> => {
+    const out: Record<string, Snapshot> = {}
     for (const it of items) {
       const r = responseByItemId.get(it.id)
-      initial[it.id] = {
+      out[it.id] = {
         status: (r?.status as ChecklistStatus) ?? 'pending',
         notes: r?.notes ?? '',
-        saving: false,
-        saved_at: null,
-        error: null,
       }
     }
-    return initial
-  })
+    return out
+  }
 
-  // Debounce timer handle per-item for autosave on dropdown change.
-  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({})
+  const [baseline, setBaseline] = useState<Record<string, Snapshot>>(buildBaseline)
+  const [current, setCurrent] = useState<Record<string, Snapshot>>(buildBaseline)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedFlash, setSavedFlash] = useState(false)
 
+  // Which item IDs have unsaved edits.
+  const dirtyItemIds = useMemo(() => {
+    const out: string[] = []
+    for (const it of items) {
+      const b = baseline[it.id]
+      const c = current[it.id]
+      if (!b || !c) continue
+      if (b.status !== c.status || (b.notes ?? '').trim() !== (c.notes ?? '').trim()) {
+        out.push(it.id)
+      }
+    }
+    return out
+  }, [items, baseline, current])
+
+  const dirtyCount = dirtyItemIds.length
   const answeredCount = useMemo(
-    () => Object.values(rows).filter((r) => r.status !== 'pending').length,
-    [rows],
+    () => Object.values(current).filter((r) => r.status !== 'pending').length,
+    [current],
   )
 
-  async function persist(itemId: string) {
-    const cur = rows[itemId]
-    if (!cur) return
-    setRows((prev) => ({
-      ...prev,
-      [itemId]: { ...prev[itemId]!, saving: true, error: null },
-    }))
-    const res = await upsertChecklistResponse({
-      case_id: caseId,
-      checklist_item_id: itemId,
-      status: cur.status,
-      notes: cur.notes.trim() ? cur.notes.trim() : null,
-    })
-    setRows((prev) => {
-      const row = prev[itemId]
-      if (!row) return prev
-      return {
-        ...prev,
-        [itemId]: {
-          ...row,
-          saving: false,
-          saved_at: res.ok ? Date.now() : row.saved_at,
-          error: res.ok ? null : res.error,
-        },
-      }
-    })
-    if (res.ok) {
-      startTransition(() => router.refresh())
-    }
-  }
-
-  function scheduleAutoSave(itemId: string, delayMs = 500) {
-    const existing = timersRef.current[itemId]
-    if (existing) clearTimeout(existing)
-    timersRef.current[itemId] = setTimeout(() => {
-      timersRef.current[itemId] = null
-      persist(itemId)
-    }, delayMs)
-  }
-
   function onStatusChange(itemId: string, status: ChecklistStatus) {
-    setRows((prev) => ({
+    setError(null)
+    setSavedFlash(false)
+    setCurrent((prev) => ({
       ...prev,
-      [itemId]: { ...prev[itemId]!, status, error: null },
+      [itemId]: { ...(prev[itemId] ?? { notes: '' }), status },
     }))
-    if (canEdit) scheduleAutoSave(itemId, 500)
   }
 
   function onNotesChange(itemId: string, notes: string) {
-    setRows((prev) => ({
+    setError(null)
+    setSavedFlash(false)
+    setCurrent((prev) => ({
       ...prev,
-      [itemId]: { ...prev[itemId]!, notes, error: null },
+      [itemId]: { ...(prev[itemId] ?? { status: 'pending' as ChecklistStatus }), notes },
     }))
   }
 
-  function onSaveClick(itemId: string) {
-    const existing = timersRef.current[itemId]
-    if (existing) {
-      clearTimeout(existing)
-      timersRef.current[itemId] = null
+  async function saveAll() {
+    if (!canEdit) return
+    if (dirtyCount === 0) return
+    setSaving(true)
+    setError(null)
+    setSavedFlash(false)
+
+    // Persist sequentially so a partial failure leaves us with a precise
+    // error rather than a confusing race. The action itself is idempotent.
+    let failedItemCode: string | null = null
+    for (const itemId of dirtyItemIds) {
+      const cur = current[itemId]!
+      const res = await upsertChecklistResponse({
+        case_id: caseId,
+        checklist_item_id: itemId,
+        status: cur.status,
+        notes: cur.notes.trim() ? cur.notes.trim() : null,
+      })
+      if (!res.ok) {
+        const item = items.find((it) => it.id === itemId)
+        failedItemCode = item?.code ?? itemId
+        setError(`${failedItemCode}: ${res.error}`)
+        break
+      }
     }
-    persist(itemId)
+
+    setSaving(false)
+    if (!failedItemCode) {
+      // Promote current → baseline so dirty count resets to zero.
+      setBaseline({ ...current })
+      setSavedFlash(true)
+      startTransition(() => router.refresh())
+      // Auto-hide the "saved" pill after a few seconds.
+      setTimeout(() => setSavedFlash(false), 2500)
+    }
+  }
+
+  function discardChanges() {
+    if (dirtyCount === 0) return
+    setCurrent({ ...baseline })
+    setError(null)
+    setSavedFlash(false)
   }
 
   const inputCls =
@@ -193,14 +201,58 @@ export function ChecklistEditor({
           <h2 className="serif font-bold text-lg text-slate-900">قائمة المراجعة</h2>
           <p className="text-xs text-slate-500 mt-1">
             {`${toArabicDigits(answeredCount)} من ${toArabicDigits(total)} تم الإجابة عليها`}
+            {dirtyCount > 0 && (
+              <span className="ms-2 text-amber-700 font-semibold">
+                {`· ${toArabicDigits(dirtyCount)} غير محفوظة`}
+              </span>
+            )}
           </p>
         </div>
-        {!canEdit && (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ring-1 ring-inset bg-slate-100 text-slate-600 ring-slate-200">
-            للعرض فقط — دورك يسمح بالعرض دون التعديل
-          </span>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {!canEdit && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ring-1 ring-inset bg-slate-100 text-slate-600 ring-slate-200">
+              للعرض فقط — دورك يسمح بالعرض دون التعديل
+            </span>
+          )}
+          {canEdit && (
+            <>
+              {dirtyCount > 0 && (
+                <button
+                  type="button"
+                  onClick={discardChanges}
+                  disabled={saving}
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  تجاهل التغييرات
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={saveAll}
+                disabled={saving || dirtyCount === 0}
+                className="inline-flex items-center px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50"
+              >
+                {saving
+                  ? 'جارٍ الحفظ…'
+                  : dirtyCount > 0
+                    ? `حفظ التغييرات (${toArabicDigits(dirtyCount)})`
+                    : 'حفظ الكل'}
+              </button>
+              {savedFlash && (
+                <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-green-50 text-green-700 ring-1 ring-inset ring-green-200">
+                  ✓ تم الحفظ
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
+
+      {error && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -209,23 +261,22 @@ export function ChecklistEditor({
               <th className="text-start py-2 px-2 w-10">#</th>
               <th className="text-start py-2 px-2">البند</th>
               <th className="text-start py-2 px-2 w-36">اقتراح الذكاء الاصطناعي</th>
-              <th className="text-start py-2 px-2 w-40">الحالة النهائية</th>
+              <th className="text-start py-2 px-2 w-44">الحالة النهائية</th>
               <th className="text-start py-2 px-2 w-56">ملاحظات</th>
-              <th className="text-start py-2 px-2 w-24">إجراء</th>
             </tr>
           </thead>
           <tbody>
             {items.map((it, idx) => {
-              const row = rows[it.id] ?? {
-                status: 'pending' as ChecklistStatus,
-                notes: '',
-                saving: false,
-                saved_at: null,
-                error: null,
-              }
+              const row = current[it.id] ?? { status: 'pending' as ChecklistStatus, notes: '' }
               const aiSuggestion = responseByItemId.get(it.id)?.ai_suggested_status ?? null
+              const isDirty = dirtyItemIds.includes(it.id)
               return (
-                <tr key={it.id} className="border-b border-slate-100 align-top">
+                <tr
+                  key={it.id}
+                  className={`border-b border-slate-100 align-top ${
+                    isDirty ? 'bg-amber-50/30' : ''
+                  }`}
+                >
                   <td className="py-2 px-2 text-xs text-slate-500 font-mono">
                     {toArabicDigits(idx + 1)}
                   </td>
@@ -254,7 +305,7 @@ export function ChecklistEditor({
                   <td className="py-2 px-2">
                     <div className="flex flex-col gap-1">
                       <select
-                        disabled={!canEdit || row.saving}
+                        disabled={!canEdit || saving}
                         className={inputCls}
                         value={row.status}
                         onChange={(e) => onStatusChange(it.id, e.target.value as ChecklistStatus)}
@@ -271,31 +322,12 @@ export function ChecklistEditor({
                   <td className="py-2 px-2">
                     <input
                       type="text"
-                      disabled={!canEdit || row.saving}
+                      disabled={!canEdit || saving}
                       className={inputCls}
                       placeholder="ملاحظة قصيرة"
                       value={row.notes}
                       onChange={(e) => onNotesChange(it.id, e.target.value)}
                     />
-                  </td>
-                  <td className="py-2 px-2">
-                    {canEdit ? (
-                      <div className="flex flex-col gap-1">
-                        <button
-                          type="button"
-                          disabled={row.saving}
-                          onClick={() => onSaveClick(it.id)}
-                          className="inline-flex items-center justify-center px-2 py-1 rounded-md bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition disabled:opacity-50"
-                        >
-                          {row.saving ? 'جارٍ الحفظ…' : 'حفظ'}
-                        </button>
-                        {row.error && (
-                          <div className="text-[10px] text-red-600">{row.error}</div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
                   </td>
                 </tr>
               )
@@ -303,6 +335,27 @@ export function ChecklistEditor({
           </tbody>
         </table>
       </div>
+
+      {canEdit && dirtyCount > 0 && (
+        <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={discardChanges}
+            disabled={saving}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            تجاهل التغييرات
+          </button>
+          <button
+            type="button"
+            onClick={saveAll}
+            disabled={saving}
+            className="inline-flex items-center px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50"
+          >
+            {saving ? 'جارٍ الحفظ…' : `حفظ التغييرات (${toArabicDigits(dirtyCount)})`}
+          </button>
+        </div>
+      )}
     </section>
   )
 }
