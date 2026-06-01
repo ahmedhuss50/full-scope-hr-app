@@ -187,7 +187,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   }))
 
   const isAssignedEmployee = !!project && project.assigned_employee_id === userId
-  const canEditChecklist = dsbRole === 'employee' || dsbRole === 'supervisor'
+  const canEditChecklist = dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'
   // Breakdown is editable only by the role currently responsible.
   const breakdownEditable =
     (kase.status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee) ||
