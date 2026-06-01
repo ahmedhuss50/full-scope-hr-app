@@ -30,6 +30,7 @@ export function NewDisbursementForm({
   const [voucherNumber, setVoucherNumber] = useState('')
   const [voucherDate, setVoucherDate] = useState(today)
   const [amountSar, setAmountSar] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState('')
   const [notes, setNotes] = useState('')
   const [file, setFile] = useState<File | null>(null)
 
@@ -76,6 +77,7 @@ export function NewDisbursementForm({
         voucher_number_text: voucherNumber.trim(),
         voucher_date: voucherDate,
         amount_sar: amountNum,
+        delivery_date: deliveryDate || null,
         notes: notes.trim() || null,
       })
       if (!create.ok) {
@@ -197,18 +199,30 @@ export function NewDisbursementForm({
         </div>
       </div>
 
-      <div>
-        <label className={labelCls} htmlFor="amount_sar">المبلغ (ر.س) *</label>
-        <input
-          id="amount_sar"
-          type="number"
-          required
-          min={0}
-          step="0.01"
-          className={inputCls}
-          value={amountSar}
-          onChange={(e) => setAmountSar(e.target.value)}
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className={labelCls} htmlFor="amount_sar">المبلغ (ر.س) *</label>
+          <input
+            id="amount_sar"
+            type="number"
+            required
+            min={0}
+            step="0.01"
+            className={inputCls}
+            value={amountSar}
+            onChange={(e) => setAmountSar(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="delivery_date">تاريخ التسليم</label>
+          <input
+            id="delivery_date"
+            type="date"
+            className={inputCls}
+            value={deliveryDate}
+            onChange={(e) => setDeliveryDate(e.target.value)}
+          />
+        </div>
       </div>
 
       <div>

@@ -54,6 +54,7 @@ type CaseRow = {
   voucher_number_text: string | null
   voucher_date: string | null
   amount_sar: number | null
+  delivery_date: string | null
   status: CaseStatus
   notes: string | null
   submitted_at: string | null
@@ -86,7 +87,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, status, notes, submitted_at, signed_at,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`)
     .eq('tenant_id', tenantId)
@@ -207,9 +208,22 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               {developer?.company_name_ar ?? '—'}
             </div>
           </div>
-          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ring-1 ring-inset ${pill.cls}`}>
-            {pill.label}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {kase.status === 'signed' && (
+              <Link
+                href={`/app/disbursements/${kase.id}/delivery-document`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+              >
+                <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                إصدار وثيقة تسليم
+              </Link>
+            )}
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ring-1 ring-inset ${pill.cls}`}>
+              {pill.label}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -227,6 +241,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <Detail label="رقم السند" value={kase.voucher_number_text ?? '—'} />
               <Detail label="تاريخ السند" value={fmtDate(kase.voucher_date)} />
               <Detail label="المبلغ" value={fmtSar(kase.amount_sar)} />
+              <Detail label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
               <Detail label="وقت الإرسال" value={fmtDate(kase.submitted_at)} />
               {kase.signed_at && <Detail label="وقت التوقيع" value={fmtDate(kase.signed_at)} />}
             </div>

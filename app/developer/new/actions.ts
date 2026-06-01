@@ -53,6 +53,7 @@ export interface CreateDisbursementCaseInput {
   voucher_number_text: string
   voucher_date: string
   amount_sar: number
+  delivery_date?: string | null
   notes?: string | null
 }
 
@@ -106,6 +107,7 @@ export async function createDisbursementCase(
       voucher_number_text: input.voucher_number_text.trim(),
       voucher_date: input.voucher_date,
       amount_sar: input.amount_sar,
+      delivery_date: input.delivery_date || null,
       status: 'draft',
       notes: input.notes?.trim() || null,
     })

@@ -39,7 +39,7 @@
         "queryParameters": {
           "parameters": [
             { "name": "id",     "value": "=eq.{{ $json.case_id }}" },
-            { "name": "select", "value": "id,tenant_id,project_id,developer_id,case_number,voucher_number_text,voucher_date,amount_sar,status,notes,uploads:dsb_uploads(id,filename,storage_path,storage_bucket,file_size_bytes,mime_type,page_count),project:dsb_projects!dsb_cases_project_id_fkey(id,code,name_ar),developer:dsb_developers!dsb_cases_developer_id_fkey(id,company_name_ar)" }
+            { "name": "select", "value": "id,tenant_id,project_id,developer_id,case_number,voucher_number_text,voucher_date,amount_sar,delivery_date,status,notes,uploads:dsb_uploads(id,filename,storage_path,storage_bucket,file_size_bytes,mime_type,page_count),project:dsb_projects!dsb_cases_project_id_fkey(id,code,name_ar),developer:dsb_developers!dsb_cases_developer_id_fkey(id,company_name_ar)" }
           ]
         },
         "sendHeaders": true,
@@ -59,7 +59,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Unwrap the Supabase array. Expect exactly one case. Pull the FIRST upload\n// (the combined PDF) into `upload` for downstream nodes. Throws if there is\n// no case or no uploads attached yet.\nconst arr = $input.first().json;\nif (!Array.isArray(arr) || arr.length === 0) {\n  throw new Error('Case not found');\n}\nconst c = arr[0];\nconst uploads = Array.isArray(c.uploads) ? c.uploads : [];\nif (uploads.length === 0) {\n  throw new Error('Case has no uploads to break down');\n}\n\nconst u = uploads[0];\nconst upload = {\n  id:             u.id,\n  filename:       u.filename,\n  storage_path:   u.storage_path,\n  storage_bucket: u.storage_bucket || 'Document submission',\n  file_size_bytes: u.file_size_bytes || null,\n  mime_type:      u.mime_type || 'application/pdf',\n  page_count:     u.page_count || null,\n};\n\nreturn [{\n  json: {\n    case_id:      c.id,\n    tenant_id:    c.tenant_id,\n    project_id:   c.project_id,\n    developer_id: c.developer_id,\n    case_number:  c.case_number,\n    notes:        c.notes,\n    uploads,\n    upload,\n    project:      c.project   || null,\n    developer:    c.developer || null,\n  }\n}];"
+        "jsCode": "// Unwrap the Supabase array. Expect exactly one case. Pull the FIRST upload\n// (the combined PDF) into `upload` for downstream nodes. Throws if there is\n// no case or no uploads attached yet.\n//\n// Also expose the current values of fields the AI may later try to autofill so\n// the metadata-update node can compare and only overwrite NULL/empty values.\nconst arr = $input.first().json;\nif (!Array.isArray(arr) || arr.length === 0) {\n  throw new Error('Case not found');\n}\nconst c = arr[0];\nconst uploads = Array.isArray(c.uploads) ? c.uploads : [];\nif (uploads.length === 0) {\n  throw new Error('Case has no uploads to break down');\n}\n\nconst u = uploads[0];\nconst upload = {\n  id:             u.id,\n  filename:       u.filename,\n  storage_path:   u.storage_path,\n  storage_bucket: u.storage_bucket || 'Document submission',\n  file_size_bytes: u.file_size_bytes || null,\n  mime_type:      u.mime_type || 'application/pdf',\n  page_count:     u.page_count || null,\n};\n\nreturn [{\n  json: {\n    case_id:      c.id,\n    tenant_id:    c.tenant_id,\n    project_id:   c.project_id,\n    developer_id: c.developer_id,\n    case_number:  c.case_number,\n    notes:        c.notes,\n    // Existing metadata snapshot — used downstream to decide whether to autofill.\n    existing: {\n      voucher_number_text: c.voucher_number_text || null,\n      voucher_date:        c.voucher_date        || null,\n      amount_sar:          (c.amount_sar === null || c.amount_sar === undefined) ? null : c.amount_sar,\n      delivery_date:       c.delivery_date       || null,\n      notes:               c.notes               || null,\n    },\n    uploads,\n    upload,\n    project:      c.project   || null,\n    developer:    c.developer || null,\n  }\n}];"
       },
       "id": "node-unwrap-case",
       "name": "Unwrap Case",
@@ -112,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the Anthropic /v1/messages body. ONE Claude call: classify + segment\n// the Arabic disbursement PDF into typed page-range sections.\n//\n// The PDF lands in $binary.data after the Download step (responseFormat: file).\n// n8n stores binaries with a base64 'data' field already — we hand that straight\n// to Anthropic's document block.\nconst item = $input.first();\nconst bin = item.binary && item.binary.data;\nif (!bin || !bin.data) {\n  throw new Error('No binary PDF on this item');\n}\nconst base64 = bin.data;\n\nconst system = 'You are an expert document classifier for Saudi real-estate disbursement workflows. The PDF provided is in Arabic. Identify each section by document type and page range. Return ONLY a JSON object — no prose, no code fences. Shape:\\n{\\n  \"sections\": [\\n    {\\n      \"kind\": one of \"voucher\" | \"invoice\" | \"proof_of_payment\" | \"completion_certificate\" | \"contract\" | \"receipt\" | \"other\",\\n      \"page_from\": int (1-indexed),\\n      \"page_to\": int (1-indexed),\\n      \"summary_ar\": string (one short sentence in Arabic describing this section\\'s content)\\n    }\\n  ]\\n}\\nUse the most specific kind possible. If a section doesn\\'t fit any category, use \"other\". Page ranges must not overlap.';\n\nconst claude_body = {\n  model: 'claude-sonnet-4-5-20250929',\n  max_tokens: 4000,\n  system,\n  messages: [\n    {\n      role: 'user',\n      content: [\n        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },\n        { type: 'text', text: 'Classify and segment the document into rows. Return JSON only.' }\n      ]\n    }\n  ]\n};\n\nreturn [{ json: { claude_body } }];"
+        "jsCode": "// Build the Anthropic /v1/messages body. ONE Claude call: classify + segment\n// the Arabic disbursement PDF into typed page-range sections AND extract the\n// voucher metadata (number, dates, amount, notes) so the case row can be auto-\n// filled when the human created the case with blanks.\n//\n// The PDF lands in $binary.data after the Download step (responseFormat: file).\n// n8n stores binaries with a base64 'data' field already — we hand that straight\n// to Anthropic's document block.\nconst item = $input.first();\nconst bin = item.binary && item.binary.data;\nif (!bin || !bin.data) {\n  throw new Error('No binary PDF on this item');\n}\nconst base64 = bin.data;\n\nconst system = 'You are an expert document classifier for Saudi real-estate disbursement workflows. The PDF provided is in Arabic. Identify each section by document type and page range, AND extract the headline voucher metadata. Return ONLY a JSON object — no prose, no code fences. Shape:\\n{\\n  \"sections\": [\\n    {\\n      \"kind\": one of \"voucher\" | \"invoice\" | \"proof_of_payment\" | \"completion_certificate\" | \"contract\" | \"receipt\" | \"other\",\\n      \"page_from\": int (1-indexed),\\n      \"page_to\": int (1-indexed),\\n      \"summary_ar\": string (one short sentence in Arabic describing this section\\'s content)\\n    }\\n  ],\\n  \"case_metadata\": {\\n    \"voucher_number_text\": string | null,\\n    \"voucher_date\":        \"YYYY-MM-DD\" | null,\\n    \"amount_sar\":          number | null,\\n    \"delivery_date\":       \"YYYY-MM-DD\" | null,\\n    \"notes\":               string | null\\n  }\\n}\\nUse the most specific kind possible. If a section doesn\\'t fit any category, use \"other\". Page ranges must not overlap. For case_metadata, return null for any field you cannot read with high confidence — do NOT guess. Dates MUST be ISO YYYY-MM-DD (convert Hijri/Arabic-numeral dates if needed). amount_sar is a plain number with no currency symbol.';\n\nconst claude_body = {\n  model: 'claude-sonnet-4-5-20250929',\n  max_tokens: 4000,\n  system,\n  messages: [\n    {\n      role: 'user',\n      content: [\n        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },\n        { type: 'text', text: 'Classify and segment the document into rows AND extract case_metadata. Return JSON only.' }\n      ]\n    }\n  ]\n};\n\nreturn [{ json: { claude_body } }];"
       },
       "id": "node-build-claude-msg",
       "name": "Build Claude Message",
@@ -145,7 +145,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse Claude's JSON. Robust extractor handles fenced code blocks and prose\n// preambles. Validates each section, clamps `kind` to the allowed enum, then\n// builds one dsb_breakdown_items insert row per section.\nconst item = $input.first();\nconst claudeResp = item.json;\nconst text = (claudeResp.content && claudeResp.content[0] && claudeResp.content[0].text) || '';\nconst tokensIn  = claudeResp.usage?.input_tokens  ?? 0;\nconst tokensOut = claudeResp.usage?.output_tokens ?? 0;\n\nfunction extractJSON(s) {\n  const stripped = s.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(stripped); } catch (e) {}\n  const first = stripped.indexOf('{');\n  const last  = stripped.lastIndexOf('}');\n  if (first >= 0 && last > first) {\n    try { return JSON.parse(stripped.slice(first, last + 1)); } catch (e) {}\n  }\n  throw new Error('Claude returned non-JSON: ' + s.slice(0, 200));\n}\n\nconst parsed = extractJSON(text);\nconst sectionsRaw = Array.isArray(parsed.sections) ? parsed.sections : [];\n\nconst ALLOWED = ['voucher','invoice','proof_of_payment','completion_certificate','contract','receipt','other'];\n\n// Pull case scope from the Unwrap node so we have tenant/case/upload IDs.\nconst scope = $node['Unwrap Case'].json;\nconst tenant_id = scope.tenant_id;\nconst case_id   = scope.case_id;\nconst upload_id = scope.upload && scope.upload.id;\nif (!tenant_id || !case_id || !upload_id) {\n  throw new Error('Missing scope for insert (tenant_id/case_id/upload_id)');\n}\n\nconst rows = [];\nlet idx = 0;\nfor (const s of sectionsRaw) {\n  if (!s || typeof s !== 'object') continue;\n  const kindRaw = typeof s.kind === 'string' ? s.kind : 'other';\n  const kind = ALLOWED.includes(kindRaw) ? kindRaw : 'other';\n  const page_from = Number.isFinite(s.page_from) ? Math.max(1, Math.floor(s.page_from)) : null;\n  const page_to   = Number.isFinite(s.page_to)   ? Math.max(1, Math.floor(s.page_to))   : null;\n  if (page_from === null || page_to === null) continue;\n  const summary_ar = typeof s.summary_ar === 'string' ? s.summary_ar : '';\n  idx += 1;\n  rows.push({\n    tenant_id,\n    case_id,\n    upload_id,\n    kind,\n    page_from,\n    page_to,\n    summary_ar,\n    source: 'ai',\n    order_index: idx,\n  });\n}\n\nif (rows.length === 0) {\n  throw new Error('No valid sections returned by Claude');\n}\n\nreturn [{\n  json: {\n    rows,\n    section_count: rows.length,\n    tokens_in:  tokensIn,\n    tokens_out: tokensOut,\n    case_id,\n    tenant_id,\n  }\n}];"
+        "jsCode": "// Parse Claude's JSON. Robust extractor handles fenced code blocks and prose\n// preambles. Validates each section, clamps `kind` to the allowed enum, then\n// builds one dsb_breakdown_items insert row per section. Also extracts the\n// optional `case_metadata` block and builds an autofill body that ONLY contains\n// fields the case row currently has as NULL/empty — we never overwrite human\n// input.\nconst item = $input.first();\nconst claudeResp = item.json;\nconst text = (claudeResp.content && claudeResp.content[0] && claudeResp.content[0].text) || '';\nconst tokensIn  = claudeResp.usage?.input_tokens  ?? 0;\nconst tokensOut = claudeResp.usage?.output_tokens ?? 0;\n\nfunction extractJSON(s) {\n  const stripped = s.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(stripped); } catch (e) {}\n  const first = stripped.indexOf('{');\n  const last  = stripped.lastIndexOf('}');\n  if (first >= 0 && last > first) {\n    try { return JSON.parse(stripped.slice(first, last + 1)); } catch (e) {}\n  }\n  throw new Error('Claude returned non-JSON: ' + s.slice(0, 200));\n}\n\nconst parsed = extractJSON(text);\nconst sectionsRaw = Array.isArray(parsed.sections) ? parsed.sections : [];\nconst metaRaw = (parsed.case_metadata && typeof parsed.case_metadata === 'object') ? parsed.case_metadata : {};\n\nconst ALLOWED = ['voucher','invoice','proof_of_payment','completion_certificate','contract','receipt','other'];\n\n// Pull case scope from the Unwrap node so we have tenant/case/upload IDs.\nconst scope = $node['Unwrap Case'].json;\nconst tenant_id = scope.tenant_id;\nconst case_id   = scope.case_id;\nconst upload_id = scope.upload && scope.upload.id;\nif (!tenant_id || !case_id || !upload_id) {\n  throw new Error('Missing scope for insert (tenant_id/case_id/upload_id)');\n}\n\nconst rows = [];\nlet idx = 0;\nfor (const s of sectionsRaw) {\n  if (!s || typeof s !== 'object') continue;\n  const kindRaw = typeof s.kind === 'string' ? s.kind : 'other';\n  const kind = ALLOWED.includes(kindRaw) ? kindRaw : 'other';\n  const page_from = Number.isFinite(s.page_from) ? Math.max(1, Math.floor(s.page_from)) : null;\n  const page_to   = Number.isFinite(s.page_to)   ? Math.max(1, Math.floor(s.page_to))   : null;\n  if (page_from === null || page_to === null) continue;\n  const summary_ar = typeof s.summary_ar === 'string' ? s.summary_ar : '';\n  idx += 1;\n  rows.push({\n    tenant_id,\n    case_id,\n    upload_id,\n    kind,\n    page_from,\n    page_to,\n    summary_ar,\n    source: 'ai',\n    order_index: idx,\n  });\n}\n\nif (rows.length === 0) {\n  throw new Error('No valid sections returned by Claude');\n}\n\n// ------------------------------------------------------------------\n// Build the conditional case-metadata update body.\n// Rule: only include a field if (a) Claude returned a non-null value\n//       AND (b) the case row currently has NULL/empty for that field.\n// This prevents the AI from overwriting anything the developer typed.\n// ------------------------------------------------------------------\nconst existing = scope.existing || {};\nconst metaUpdate = {};\nfunction isBlank(v) {\n  return v === null || v === undefined || (typeof v === 'string' && v.trim() === '');\n}\nfunction validDate(s) {\n  return typeof s === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(s);\n}\n\nif (isBlank(existing.voucher_number_text) && typeof metaRaw.voucher_number_text === 'string' && metaRaw.voucher_number_text.trim()) {\n  metaUpdate.voucher_number_text = metaRaw.voucher_number_text.trim();\n}\nif (isBlank(existing.voucher_date) && validDate(metaRaw.voucher_date)) {\n  metaUpdate.voucher_date = metaRaw.voucher_date;\n}\nif (isBlank(existing.amount_sar) && typeof metaRaw.amount_sar === 'number' && isFinite(metaRaw.amount_sar) && metaRaw.amount_sar > 0) {\n  metaUpdate.amount_sar = metaRaw.amount_sar;\n}\nif (isBlank(existing.delivery_date) && validDate(metaRaw.delivery_date)) {\n  metaUpdate.delivery_date = metaRaw.delivery_date;\n}\nif (isBlank(existing.notes) && typeof metaRaw.notes === 'string' && metaRaw.notes.trim()) {\n  metaUpdate.notes = metaRaw.notes.trim();\n}\n\nconst metaUpdateKeys = Object.keys(metaUpdate);\n\nreturn [{\n  json: {\n    rows,\n    section_count: rows.length,\n    tokens_in:  tokensIn,\n    tokens_out: tokensOut,\n    case_id,\n    tenant_id,\n    case_metadata_raw: metaRaw,\n    case_metadata_update: metaUpdate,\n    case_metadata_update_keys: metaUpdateKeys,\n    case_metadata_will_update: metaUpdateKeys.length > 0,\n  }\n}];"
       },
       "id": "node-parse-rows",
       "name": "Parse + Build Rows",
@@ -179,6 +179,30 @@
     },
     {
       "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/dsb_cases?id=eq.{{ $node['Unwrap Case'].json.case_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($node['Parse + Build Rows'].json.case_metadata_update || {}) }}",
+        "options": {}
+      },
+      "id": "node-update-case-meta",
+      "name": "Update Case Metadata (AI-extracted)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/dsb_audit_log",
         "sendHeaders": true,
@@ -192,24 +216,24 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ tenant_id: $node['Parse + Build Rows'].json.tenant_id, case_id: $node['Parse + Build Rows'].json.case_id, event: 'ai_breakdown_complete', notes: 'AI extracted ' + $node['Parse + Build Rows'].json.section_count + ' sections', occurred_at: new Date().toISOString() }) }}",
+        "jsonBody": "={{ JSON.stringify({ tenant_id: $node['Parse + Build Rows'].json.tenant_id, case_id: $node['Parse + Build Rows'].json.case_id, event: 'ai_breakdown_complete', notes: 'AI extracted ' + $node['Parse + Build Rows'].json.section_count + ' sections' + ($node['Parse + Build Rows'].json.case_metadata_will_update ? '; autofilled: ' + ($node['Parse + Build Rows'].json.case_metadata_update_keys || []).join(',') : ''), occurred_at: new Date().toISOString() }) }}",
         "options": {}
       },
       "id": "node-log-audit",
       "name": "Log Audit Event",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2400, 300]
+      "position": [2620, 300]
     },
     {
       "parameters": {
-        "jsCode": "const parsed = $node['Parse + Build Rows'].json;\nreturn [{ json: { ok: true, case_id: parsed.case_id, sections: parsed.section_count } }];"
+        "jsCode": "const parsed = $node['Parse + Build Rows'].json;\nreturn [{ json: { ok: true, case_id: parsed.case_id, sections: parsed.section_count, metadata_autofilled: parsed.case_metadata_update_keys || [] } }];"
       },
       "id": "node-respond",
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2620, 300]
+      "position": [2840, 300]
     }
   ],
   "connections": {
@@ -222,7 +246,8 @@
     "Build Claude Message":        { "main": [[{ "node": "Claude — Classify Sections", "type": "main", "index": 0 }]] },
     "Claude — Classify Sections": { "main": [[{ "node": "Parse + Build Rows",     "type": "main", "index": 0 }]] },
     "Parse + Build Rows":          { "main": [[{ "node": "Insert Breakdown Rows", "type": "main", "index": 0 }]] },
-    "Insert Breakdown Rows":       { "main": [[{ "node": "Log Audit Event",       "type": "main", "index": 0 }]] },
+    "Insert Breakdown Rows":       { "main": [[{ "node": "Update Case Metadata (AI-extracted)", "type": "main", "index": 0 }]] },
+    "Update Case Metadata (AI-extracted)": { "main": [[{ "node": "Log Audit Event", "type": "main", "index": 0 }]] },
     "Log Audit Event":             { "main": [[{ "node": "Respond to Webhook",    "type": "main", "index": 0 }]] }
   },
   "active": false,

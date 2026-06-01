@@ -1959,6 +1959,65 @@ export const strings = {
   'dsb.checklist.status.not_attached':  { en: 'Not attached',   ar: 'لم يُرفق' },
   'dsb.checklist.read_only':          { en: 'Read-only — your role can view but not edit checklist',
                                         ar: 'للعرض فقط — دورك يسمح بالعرض دون التعديل' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Delivery date field
+  // -----------------------------------------------------------------
+  'dsb.case.field.delivery_date':       { en: 'Delivery date',                ar: 'تاريخ التسليم' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Delivery document (printable HTML page)
+  // -----------------------------------------------------------------
+  'dsb.case.delivery_doc.button':       { en: 'Issue delivery document',      ar: 'إصدار وثيقة تسليم' },
+  'dsb.case.delivery_doc.title':        { en: 'Delivery document',            ar: 'وثيقة تسليم' },
+  'dsb.case.delivery_doc.print':        { en: 'Print / save as PDF',          ar: 'طباعة / حفظ كـ PDF' },
+  'dsb.case.delivery_doc.gate':         { en: 'Delivery document is available only after final signature.',
+                                          ar: 'وثيقة التسليم متاحة فقط بعد التوقيع النهائي.' },
+  'dsb.case.delivery_doc.case_no':      { en: 'Case number',                  ar: 'رقم القضية' },
+  'dsb.case.delivery_doc.issued_on':    { en: 'Issued on',                    ar: 'تاريخ الإصدار' },
+  'dsb.case.delivery_doc.project':      { en: 'Project',                      ar: 'المشروع' },
+  'dsb.case.delivery_doc.client':       { en: 'Client',                       ar: 'العميل' },
+  'dsb.case.delivery_doc.voucher_no':   { en: 'Voucher number',               ar: 'رقم وثيقة الصرف' },
+  'dsb.case.delivery_doc.amount':       { en: 'Amount',                       ar: 'المبلغ' },
+  'dsb.case.delivery_doc.voucher_date': { en: 'Voucher date',                 ar: 'تاريخ السند' },
+  'dsb.case.delivery_doc.delivery_date':{ en: 'Delivery date',                ar: 'تاريخ التسليم' },
+  'dsb.case.delivery_doc.status':       { en: 'Status',                       ar: 'الحالة' },
+  'dsb.case.delivery_doc.signed_by':    { en: 'Signed by',                    ar: 'وقّع نهائياً' },
+  'dsb.case.delivery_doc.notes':        { en: 'Notes',                        ar: 'ملاحظات' },
+  'dsb.case.delivery_doc.signature':    { en: 'Authorized signature',         ar: 'توقيع الإدارة' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Admin / Employees
+  // -----------------------------------------------------------------
+  'dsb.admin.employees.heading':        { en: 'Employees',                    ar: 'الموظفون' },
+  'dsb.admin.employees.new':            { en: '+ New employee',               ar: '+ موظف جديد' },
+  'dsb.admin.employees.empty':          { en: 'No employees yet.',            ar: 'لا يوجد موظفون بعد.' },
+
+  'dsb.employee.new.title':             { en: 'New employee',                 ar: 'موظف جديد' },
+  'dsb.employee.field.full_name':       { en: 'Full name',                    ar: 'الاسم الكامل' },
+  'dsb.employee.field.email':           { en: 'Email',                        ar: 'البريد الإلكتروني' },
+  'dsb.employee.field.job_title':       { en: 'Job title',                    ar: 'المسمى الوظيفي' },
+  'dsb.employee.field.notes':           { en: 'Notes',                        ar: 'ملاحظات' },
+  'dsb.employee.field.send_invite':     { en: 'Create login for employee',    ar: 'إنشاء حساب دخول للموظف' },
+  'dsb.employee.submit':                { en: 'Create employee',              ar: 'إنشاء الموظف' },
+  'dsb.employee.submitting':            { en: 'Creating…',                    ar: 'جارٍ الإنشاء…' },
+
+  // -----------------------------------------------------------------
+  // Disbursements — Documents register
+  // -----------------------------------------------------------------
+  'dsb.nav.documents':                  { en: 'Documents',                    ar: 'وثائق التسليم' },
+  'dsb.documents.title':                { en: 'Delivery documents register',  ar: 'سجل وثائق التسليم' },
+  'dsb.documents.col.case':             { en: 'Case',                         ar: 'رقم القضية' },
+  'dsb.documents.col.project':          { en: 'Project',                      ar: 'المشروع' },
+  'dsb.documents.col.client':           { en: 'Client',                       ar: 'العميل' },
+  'dsb.documents.col.voucher_no':       { en: 'Voucher #',                    ar: 'رقم السند' },
+  'dsb.documents.col.amount':           { en: 'Amount',                       ar: 'المبلغ' },
+  'dsb.documents.col.signed_at':        { en: 'Signed at',                    ar: 'تاريخ التوقيع' },
+  'dsb.documents.col.signed_by':        { en: 'Signed by',                    ar: 'وقّع' },
+  'dsb.documents.col.action':           { en: 'Action',                       ar: 'الإجراء' },
+  'dsb.documents.download':             { en: 'Download',                     ar: 'تنزيل' },
+  'dsb.documents.empty':                { en: 'No delivery documents issued yet.',
+                                          ar: 'لم تُصدَر أي وثائق تسليم بعد.' },
 } as const
 
 export type StringKey = keyof typeof strings
