@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog, ListChecks } from 'lucide-react'
 import { DeleteEmployeeButton } from './EntityDeleteButtons'
+import {
+  SendWelcomeToUserButton,
+  SendWelcomeToAllStaffButton,
+} from './WelcomeEmailButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -255,13 +259,16 @@ export default async function DisbursementsAdminPage({
               <span className="text-xs text-slate-400 font-mono">({employees.length})</span>
             </div>
             {isOwner && (
-              <Link
-                href="/app/disbursements/admin/employees/new"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                موظف جديد
-              </Link>
+              <div className="flex items-center gap-2 flex-wrap">
+                <SendWelcomeToAllStaffButton />
+                <Link
+                  href="/app/disbursements/admin/employees/new"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+                >
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                  موظف جديد
+                </Link>
+              </div>
             )}
           </div>
 
@@ -290,12 +297,18 @@ export default async function DisbursementsAdminPage({
                         {rp.label}
                       </span>
                     </div>
-                    {canDelete && (
-                      <div className="pt-1">
-                        <DeleteEmployeeButton
+                    {isOwner && (
+                      <div className="pt-1 flex items-center gap-2 flex-wrap">
+                        <SendWelcomeToUserButton
                           userId={e.id}
                           fullName={e.full_name ?? e.email ?? '—'}
                         />
+                        {canDelete && (
+                          <DeleteEmployeeButton
+                            userId={e.id}
+                            fullName={e.full_name ?? e.email ?? '—'}
+                          />
+                        )}
                       </div>
                     )}
                   </li>
