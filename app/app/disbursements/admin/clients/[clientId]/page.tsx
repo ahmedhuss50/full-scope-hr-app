@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { ArrowRight, Plus, Users, FolderKanban, FileText, Mail } from 'lucide-react'
 import { ShareUploadLinkButton } from './ShareUploadLinkButton'
 import { ClientPortalCard } from './ClientPortalCard'
+import { DeleteClientButton } from '../../EntityDeleteButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -220,6 +221,13 @@ export default async function ClientDetailPage({
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
               مشروع جديد
             </Link>
+            {dsbRole === 'owner' && (
+              <DeleteClientButton
+                clientId={client.id}
+                clientName={client.company_name_ar}
+                size="sm"
+              />
+            )}
           </div>
         </div>
       </header>

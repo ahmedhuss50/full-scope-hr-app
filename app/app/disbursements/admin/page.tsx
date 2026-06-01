@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog, ListChecks } from 'lucide-react'
+import { DeleteEmployeeButton } from './EntityDeleteButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -270,8 +271,10 @@ export default async function DisbursementsAdminPage({
             <ul className="divide-y divide-slate-100">
               {employees.map((e) => {
                 const rp = roleLabel(e.dsb_role)
+                // Owner cannot delete themselves; everyone else is fair game.
+                const canDelete = isOwner && e.id !== profile.id
                 return (
-                  <li key={e.id} className="px-5 py-3">
+                  <li key={e.id} className="px-5 py-3 space-y-2">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold text-slate-900 truncate">
@@ -287,6 +290,14 @@ export default async function DisbursementsAdminPage({
                         {rp.label}
                       </span>
                     </div>
+                    {canDelete && (
+                      <div className="pt-1">
+                        <DeleteEmployeeButton
+                          userId={e.id}
+                          fullName={e.full_name ?? e.email ?? '—'}
+                        />
+                      </div>
+                    )}
                   </li>
                 )
               })}

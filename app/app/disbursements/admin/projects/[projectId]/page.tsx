@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FolderKanban, FileText, Plus } from 'lucide-react'
+import { DeleteProjectButton } from '../../EntityDeleteButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -199,7 +200,7 @@ export default async function ProjectDetailPage({
               </span>
             </div>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2 flex-wrap">
             <Link
               href={newCaseHref}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
@@ -207,6 +208,13 @@ export default async function ProjectDetailPage({
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
               سند صرف جديد
             </Link>
+            {dsbRole === 'owner' && (
+              <DeleteProjectButton
+                projectId={project.id}
+                projectCode={project.code}
+                size="sm"
+              />
+            )}
           </div>
         </div>
       </header>

@@ -9,6 +9,7 @@ import { ExtractedFieldsPanel, type ExtractedFields } from './ExtractedFieldsPan
 import { PdfOpener } from './PdfOpener'
 import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
+import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -233,6 +234,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ring-1 ring-inset ${pill.cls}`}>
               {pill.label}
             </span>
+            {dsbRole === 'owner' && (
+              <DeleteCaseButton
+                caseId={kase.id}
+                caseNumber={kase.case_number}
+                size="sm"
+              />
+            )}
           </div>
         </div>
       </header>
