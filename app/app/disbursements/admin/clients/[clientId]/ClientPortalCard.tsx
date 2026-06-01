@@ -25,6 +25,8 @@ export function ClientPortalCard({
   const [status, setStatus] = useState<Status>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [magicCopied, setMagicCopied] = useState(false)
+  const [magicLink, setMagicLink] = useState<string | null>(null)
 
   const hasEmail = !!recipientEmail && recipientEmail.trim().length > 0
 
@@ -38,19 +40,30 @@ export function ClientPortalCard({
     }
   }
 
+  async function onCopyMagic() {
+    if (!magicLink) return
+    try {
+      await navigator.clipboard.writeText(magicLink)
+      setMagicCopied(true)
+      setTimeout(() => setMagicCopied(false), 2000)
+    } catch {
+      // ignore
+    }
+  }
+
   async function onSend() {
     if (!hasEmail) return
     setStatus('sending')
     setMessage(null)
+    setMagicLink(null)
     try {
       const res = await sendClientPortalSignInLink({ developer_id: clientId })
       if (res.ok) {
         setStatus('sent')
         setMessage(res.message)
-        setTimeout(() => {
-          setStatus('idle')
-          setMessage(null)
-        }, 3000)
+        if (res.magic_link_url) setMagicLink(res.magic_link_url)
+        // Keep the "sent" state + magic link visible — don't auto-hide so the
+        // trustee can copy and share via WhatsApp or any other channel.
       } else {
         setStatus('error')
         setMessage(res.error)
@@ -146,6 +159,45 @@ export function ClientPortalCard({
           <span className="text-xs text-green-700">{message}</span>
         )}
       </div>
+
+      {/* Generated magic-link surfaced so trustee can copy + share via any channel */}
+      {magicLink && (
+        <div className="space-y-2 pt-3 border-t border-slate-100">
+          <div className="text-xs font-semibold text-slate-700">
+            رابط دخول مباشر (انسخه وأرسله عبر واتساب أو أي قناة)
+          </div>
+          <div className="flex items-stretch gap-2">
+            <input
+              type="text"
+              readOnly
+              value={magicLink}
+              className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-teal-200 bg-teal-50 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              dir="ltr"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <button
+              type="button"
+              onClick={onCopyMagic}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-teal-200 bg-white text-teal-700 text-xs font-semibold hover:bg-teal-50 transition"
+            >
+              {magicCopied ? (
+                <>
+                  <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                  تم النسخ ✓
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                  نسخ الرابط المباشر
+                </>
+              )}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            هذا رابط لمرة واحدة. عند فتحه يقوم بتسجيل دخول العميل تلقائيًا إلى بوابته.
+          </p>
+        </div>
+      )}
     </section>
   )
 }

@@ -49,7 +49,7 @@ export interface SendClientPortalSignInLinkInput {
 }
 
 export type SendClientPortalSignInLinkResult =
-  | { ok: true; message: string }
+  | { ok: true; message: string; magic_link_url?: string; emailed?: boolean }
   | { ok: false; error: string }
 
 export async function sendClientPortalSignInLink(
@@ -157,7 +157,28 @@ export async function sendClientPortalSignInLink(
         if (!invite?.error) {
           const authUserId = invite?.data?.user?.id ?? null
           await ensureUserRow(authUserId)
-          return { ok: true, message: 'تم إرسال دعوة الدخول إلى العميل عبر البريد.' }
+          // inviteUserByEmail doesn't expose the action_link, but Supabase's
+          // own email contains it. Try generateLink right after to give the
+          // trustee a copyable URL too.
+          let magicUrl: string | undefined
+          if (typeof authAdmin.generateLink === 'function') {
+            try {
+              const gen = await authAdmin.generateLink({
+                type: 'magiclink',
+                email: contactEmail,
+                options: { redirectTo: `${origin}/developer` },
+              })
+              magicUrl = gen?.data?.properties?.action_link ?? undefined
+            } catch {
+              // best-effort — return without the URL
+            }
+          }
+          return {
+            ok: true,
+            message: 'تم إرسال دعوة الدخول إلى العميل عبر البريد.',
+            magic_link_url: magicUrl,
+            emailed: true,
+          }
         }
         // Fall through to generateLink fallback.
       } catch (e) {
@@ -184,11 +205,18 @@ export async function sendClientPortalSignInLink(
             locale: 'ar',
           })
           if (sendRes.sent) {
-            return { ok: true, message: 'تم إرسال رابط الدخول إلى بريد العميل.' }
+            return {
+              ok: true,
+              message: 'تم إرسال رابط الدخول إلى بريد العميل.',
+              magic_link_url: actionLink,
+              emailed: true,
+            }
           }
           return {
             ok: true,
-            message: 'تم توليد رابط الدخول، لكن تعذّر إرساله بالبريد تلقائيًا. يمكن إعادة الإرسال من لوحة Supabase.',
+            message: 'تم توليد رابط الدخول، لكن تعذّر إرساله بالبريد تلقائيًا. انسخه أدناه وأرسله يدويًا.',
+            magic_link_url: actionLink,
+            emailed: false,
           }
         }
       } catch (e) {
@@ -221,11 +249,18 @@ export async function sendClientPortalSignInLink(
           locale: 'ar',
         })
         if (sendRes.sent) {
-          return { ok: true, message: 'تم إرسال رابط الدخول إلى بريد العميل.' }
+          return {
+            ok: true,
+            message: 'تم إرسال رابط الدخول إلى بريد العميل.',
+            magic_link_url: actionLink,
+            emailed: true,
+          }
         }
         return {
           ok: true,
-          message: 'تم توليد الرابط، لكن تعذّر إرساله بالبريد تلقائيًا. يمكن إعادة الإرسال من لوحة Supabase.',
+          message: 'تم توليد الرابط، لكن تعذّر إرساله بالبريد تلقائيًا. انسخه أدناه وأرسله يدويًا.',
+          magic_link_url: actionLink,
+          emailed: false,
         }
       }
     } catch (e) {
@@ -242,11 +277,18 @@ export async function sendClientPortalSignInLink(
     locale: 'ar',
   })
   if (sendRes.sent) {
-    return { ok: true, message: 'تم إرسال رابط البوابة إلى بريد العميل.' }
+    return {
+      ok: true,
+      message: 'تم إرسال رابط البوابة إلى بريد العميل.',
+      magic_link_url: loginUrl,
+      emailed: true,
+    }
   }
   return {
     ok: true,
     message:
       'تعذّر إرسال رابط الدخول تلقائيًا في هذه البيئة. يمكن إعادة الإرسال يدويًا من لوحة Supabase.',
+    magic_link_url: loginUrl,
+    emailed: false,
   }
 }
