@@ -242,14 +242,45 @@ export async function deleteEmployee(
   if (!target) return { ok: false, error: 'الموظف غير موجود.' }
 
   try {
-    // Unassign from any projects that point at this user. (Service-role write
-    // bypasses RLS; tenant scoping is enforced explicitly via the filter.)
+    // Null out every FK pointing at this user before removing the row.
+    // Otherwise Postgres rejects the DELETE with a constraint violation.
+    //
+    // 1) Projects: assigned_employee_id → projects survive, just unassigned.
     const { error: unassignErr } = await svc
       .from('dsb_projects')
       .update({ assigned_employee_id: null })
       .eq('tenant_id', caller.tenantId)
       .eq('assigned_employee_id', input.user_id)
     if (unassignErr) throw new Error(unassignErr.message)
+
+    // 2) Developers (clients): user_id link, set when a client signs in.
+    //    Nulling this leaves the client record intact but disconnects their
+    //    login. They can be re-linked later by issuing a fresh portal invite.
+    const { error: devUnlinkErr } = await svc
+      .from('dsb_developers')
+      .update({ user_id: null })
+      .eq('tenant_id', caller.tenantId)
+      .eq('user_id', input.user_id)
+    if (devUnlinkErr) throw new Error(devUnlinkErr.message)
+
+    // 3) Signed-by audit trail on cases. Cases that this user personally
+    //    signed get their signer pointer nulled so the case row survives.
+    //    signed_at + status are preserved so the audit history stays intact.
+    const { error: signedByErr } = await svc
+      .from('dsb_cases')
+      .update({ signed_by_user_id: null })
+      .eq('tenant_id', caller.tenantId)
+      .eq('signed_by_user_id', input.user_id)
+    if (signedByErr) throw new Error(signedByErr.message)
+
+    // 4) Audit log actor_user_id. Same treatment — preserve the events,
+    //    just disconnect the actor pointer.
+    const { error: auditActorErr } = await svc
+      .from('dsb_audit_log')
+      .update({ actor_user_id: null })
+      .eq('tenant_id', caller.tenantId)
+      .eq('actor_user_id', input.user_id)
+    if (auditActorErr) throw new Error(auditActorErr.message)
 
     const { error } = await svc
       .from('users')
