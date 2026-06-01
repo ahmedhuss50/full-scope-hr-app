@@ -47,7 +47,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
     return { sent: false, reason: 'RESEND_API_KEY not configured' }
   }
 
-  const from = args.from ?? process.env.RESEND_FROM ?? 'Full Scope <noreply@fullscope.sa>'
+  const from = args.from ?? process.env.RESEND_FROM ?? 'Full Scope <noreply@elevatemybusiness.co>'
 
   try {
     const resp = await client().emails.send({

@@ -213,7 +213,7 @@ ${url}
 — ${firmName}`
 
       const result = await sendEmail({
-        from: 'Full Scope <notifications@fullscope.sa>',
+        from: process.env.DSB_EMAIL_FROM || 'Full Scope <notifications@elevatemybusiness.co>',
         to: recipientEmail,
         subject: `رفع وثيقة صرف — ${developerName}`,
         html,

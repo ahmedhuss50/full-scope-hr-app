@@ -31,7 +31,8 @@ async function resolveStaff(): Promise<
   }
 }
 
-const DSB_FROM = 'Full Scope <notifications@fullscope.sa>'
+const DSB_FROM =
+  process.env.DSB_EMAIL_FROM || 'Full Scope <notifications@elevatemybusiness.co>'
 
 function buildEmailHtml(name: string, url: string): string {
   const safeName = name.replace(/</g, '&lt;')

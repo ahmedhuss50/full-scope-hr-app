@@ -7,7 +7,12 @@
  */
 import { sendEmail } from './resend'
 
-const DSB_FROM = 'Full Scope <notifications@fullscope.sa>'
+// Sender uses the verified Resend domain (elevatemybusiness.co). When
+// fullscope.sa is added + verified in Resend we can flip this back to
+// notifications@fullscope.sa. Overridable via env so it's a one-line change
+// per environment without a redeploy of the code.
+const DSB_FROM =
+  process.env.DSB_EMAIL_FROM || 'Full Scope <notifications@elevatemybusiness.co>'
 
 function html(body: string): string {
   return `<!doctype html><html dir="rtl" lang="ar"><body style="font-family:Cairo,Tahoma,Arial,sans-serif;color:#0f172a;line-height:1.7;">${body}</body></html>`
