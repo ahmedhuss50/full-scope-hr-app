@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { approveCase, sendBackToDeveloper, signCase } from './actions'
+import { approveCase, sendBackToDeveloper, signCase, moveCaseToStage } from './actions'
 
 type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner' | null
 type CaseStatus =
@@ -13,6 +13,27 @@ type CaseStatus =
   | 'sent_back_to_developer'
   | 'signed'
   | 'cancelled'
+
+type MoveTargetStatus =
+  | 'with_employee'
+  | 'with_supervisor'
+  | 'with_owner'
+  | 'sent_back_to_developer'
+  | 'signed'
+
+const MOVE_TARGET_LABELS: Record<MoveTargetStatus, string> = {
+  with_employee:           'بانتظار الموظف',
+  with_supervisor:         'بانتظار السوبرفايزر',
+  with_owner:              'بانتظار التوقيع النهائي',
+  sent_back_to_developer:  'أعيدت إلى المطور',
+  signed:                  'موقّعة',
+}
+
+const MOVE_ALLOWED_BY_ROLE: Record<'employee' | 'supervisor' | 'owner', MoveTargetStatus[]> = {
+  employee:   ['with_supervisor', 'sent_back_to_developer'],
+  supervisor: ['with_employee', 'with_owner', 'sent_back_to_developer'],
+  owner:      ['with_employee', 'with_supervisor', 'with_owner', 'sent_back_to_developer', 'signed'],
+}
 
 export function DecisionBar({
   caseId,
@@ -30,13 +51,22 @@ export function DecisionBar({
   const [error, setError] = useState<string | null>(null)
   const [sendBackOpen, setSendBackOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState<'approve' | 'sign' | 'send_back' | null>(null)
+  const [busy, setBusy] = useState<'approve' | 'sign' | 'send_back' | 'move' | null>(null)
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [moveTarget, setMoveTarget] = useState<MoveTargetStatus | ''>('')
+  const [moveNotes, setMoveNotes] = useState('')
 
   const canApproveAsEmployee = status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee
   const canApproveAsSupervisor = status === 'with_supervisor' && dsbRole === 'supervisor'
   const canSign = status === 'with_owner' && dsbRole === 'owner'
   const canSendBack = ['with_employee', 'with_supervisor', 'with_owner'].includes(status) &&
     ['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')
+  const canMove = ['employee', 'supervisor', 'owner'].includes(dsbRole ?? '') &&
+    status !== 'signed' && status !== 'cancelled' && status !== 'draft'
+  const moveOptions: MoveTargetStatus[] =
+    dsbRole && ['employee', 'supervisor', 'owner'].includes(dsbRole)
+      ? MOVE_ALLOWED_BY_ROLE[dsbRole as 'employee' | 'supervisor' | 'owner']
+      : []
 
   async function doApprove() {
     setError(null)
@@ -81,7 +111,35 @@ export function DecisionBar({
     startTransition(() => router.refresh())
   }
 
-  if (!canApproveAsEmployee && !canApproveAsSupervisor && !canSign && !canSendBack) {
+  async function doMove(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setError(null)
+    if (!moveTarget) {
+      setError('اختر المرحلة.')
+      return
+    }
+    if (moveTarget === 'sent_back_to_developer' && !moveNotes.trim()) {
+      setError('الملاحظة مطلوبة عند الإعادة إلى المطور.')
+      return
+    }
+    setBusy('move')
+    const res = await moveCaseToStage({
+      case_id: caseId,
+      target_status: moveTarget,
+      notes: moveNotes.trim() || undefined,
+    })
+    setBusy(null)
+    if (!res.ok) {
+      setError(res.error)
+      return
+    }
+    setMoveOpen(false)
+    setMoveTarget('')
+    setMoveNotes('')
+    startTransition(() => router.refresh())
+  }
+
+  if (!canApproveAsEmployee && !canApproveAsSupervisor && !canSign && !canSendBack && !canMove) {
     return null
   }
 
@@ -136,6 +194,16 @@ export function DecisionBar({
             إعادة إلى المطوّر
           </button>
         )}
+        {canMove && !moveOpen && moveOptions.length > 0 && (
+          <button
+            type="button"
+            disabled={busy !== null || pending}
+            onClick={() => setMoveOpen(true)}
+            className="inline-flex items-center px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            نقل إلى مرحلة أخرى
+          </button>
+        )}
       </div>
 
       {sendBackOpen && (
@@ -161,6 +229,59 @@ export function DecisionBar({
             <button
               type="button"
               onClick={() => { setSendBackOpen(false); setReason('') }}
+              className="rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              إلغاء
+            </button>
+          </div>
+        </form>
+      )}
+
+      {moveOpen && (
+        <form onSubmit={doMove} className="space-y-3 pt-2 border-t border-slate-100">
+          <div className="space-y-2">
+            <div className="text-sm font-semibold text-slate-700">نقل القضية إلى…</div>
+            <div className="space-y-1.5">
+              {moveOptions.map((opt) => (
+                <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="move_target"
+                    value={opt}
+                    checked={moveTarget === opt}
+                    onChange={() => setMoveTarget(opt)}
+                    className="w-4 h-4 border-slate-300 text-teal-600 focus:ring-teal-500"
+                  />
+                  <span className="text-sm text-slate-700">{MOVE_TARGET_LABELS[opt]}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-semibold text-slate-700 block">
+              ملاحظة {moveTarget === 'sent_back_to_developer' ? '(مطلوبة)' : '(اختياري)'}
+            </label>
+            <textarea
+              rows={3}
+              required={moveTarget === 'sent_back_to_developer'}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              value={moveNotes}
+              onChange={(e) => setMoveNotes(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={busy !== null || !moveTarget}
+              className="inline-flex items-center px-3 py-1.5 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 transition disabled:opacity-50"
+            >
+              {busy === 'move' ? 'جاري النقل…' : 'نقل'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMoveOpen(false); setMoveTarget(''); setMoveNotes('') }}
               className="rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               إلغاء

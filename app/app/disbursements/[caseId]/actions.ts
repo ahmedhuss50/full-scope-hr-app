@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import {
+  sendDeveloperUploadedEmail,
   sendEmployeeApprovedEmail,
   sendSupervisorApprovedEmail,
   sendSentBackToDeveloperEmail,
@@ -498,4 +499,173 @@ export async function getSignedPdfUrl(input: { case_id: string; upload_id: strin
     return { ok: false, error: 'تعذّر إنشاء الرابط.' }
   }
   return { ok: true, url: data.signedUrl }
+}
+
+// ----------------------------------------------------------------------------
+// moveCaseToStage — explicit stage routing
+// ----------------------------------------------------------------------------
+
+type MoveTargetStatus =
+  | 'with_employee'
+  | 'with_supervisor'
+  | 'with_owner'
+  | 'sent_back_to_developer'
+  | 'signed'
+
+const MOVE_TARGET_STATUSES: MoveTargetStatus[] = [
+  'with_employee',
+  'with_supervisor',
+  'with_owner',
+  'sent_back_to_developer',
+  'signed',
+]
+
+const MOVE_ALLOWED_BY_ROLE: Record<'employee' | 'supervisor' | 'owner', MoveTargetStatus[]> = {
+  employee:   ['with_supervisor', 'sent_back_to_developer'],
+  supervisor: ['with_employee', 'with_owner', 'sent_back_to_developer'],
+  owner:      ['with_employee', 'with_supervisor', 'with_owner', 'sent_back_to_developer', 'signed'],
+}
+
+export interface MoveCaseToStageInput {
+  case_id: string
+  target_status: MoveTargetStatus
+  notes?: string
+}
+
+export async function moveCaseToStage(
+  input: MoveCaseToStageInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const role = caller.dsbRole
+  if (!role || !['employee', 'supervisor', 'owner'].includes(role)) {
+    return { ok: false, error: 'دورك لا يسمح بهذه النقلة.' }
+  }
+  if (!MOVE_TARGET_STATUSES.includes(input.target_status)) {
+    return { ok: false, error: 'مرحلة غير صالحة.' }
+  }
+  const allowed = MOVE_ALLOWED_BY_ROLE[role as 'employee' | 'supervisor' | 'owner']
+  if (!allowed.includes(input.target_status)) {
+    return { ok: false, error: 'دورك لا يسمح بهذه النقلة.' }
+  }
+
+  const trimmedNotes = (input.notes ?? '').trim()
+  if (input.target_status === 'sent_back_to_developer' && !trimmedNotes) {
+    return { ok: false, error: 'الملاحظة مطلوبة عند الإعادة إلى المطور.' }
+  }
+
+  const svc = createSupabaseService()
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const project = single(kase.project)
+  const developer = single(kase.developer)
+  const fromStatus = kase.status
+
+  // Build update payload — include signed_at/signed_by_user_id when signing.
+  const updatePayload: Record<string, unknown> = { status: input.target_status }
+  if (input.target_status === 'signed') {
+    updatePayload.signed_at = new Date().toISOString()
+    updatePayload.signed_by_user_id = caller.userId
+  }
+
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update(updatePayload)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  // For send-back, also create a dsb_notes row mirroring sendBackToDeveloper.
+  if (input.target_status === 'sent_back_to_developer') {
+    await svc.from('dsb_notes').insert({
+      tenant_id: caller.tenantId,
+      case_id: input.case_id,
+      from_user_id: caller.userId,
+      from_role: caller.dsbRole,
+      to_role: 'developer',
+      body_ar: trimmedNotes,
+      is_change_request: true,
+    })
+  }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'manual_move',
+    actor_user_id: caller.userId,
+    from_status: fromStatus,
+    to_status: input.target_status,
+    notes: trimmedNotes || null,
+  })
+
+  // Fire the appropriate email — best-effort.
+  const ctx = {
+    caseNumber: kase.case_number,
+    projectName: project?.name_ar ?? '—',
+    developerName: developer?.company_name_ar ?? '—',
+    amountSar: kase.amount_sar,
+    caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
+  }
+
+  if (input.target_status === 'with_supervisor') {
+    const { data: sups } = await svc
+      .from('users')
+      .select('email')
+      .eq('tenant_id', caller.tenantId)
+      .eq('dsb_role', 'supervisor')
+    const emails = ((sups ?? []) as { email: string | null }[])
+      .map((s) => s.email)
+      .filter((e): e is string => !!e)
+    for (const to of emails) {
+      sendEmployeeApprovedEmail({ to, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  } else if (input.target_status === 'with_owner') {
+    const { data: owners } = await svc
+      .from('users')
+      .select('email')
+      .eq('tenant_id', caller.tenantId)
+      .eq('dsb_role', 'owner')
+    const emails = ((owners ?? []) as { email: string | null }[])
+      .map((s) => s.email)
+      .filter((e): e is string => !!e)
+    for (const to of emails) {
+      sendSupervisorApprovedEmail({ to, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  } else if (input.target_status === 'with_employee') {
+    // Re-route to the assigned employee's inbox (treat as developer-uploaded).
+    const empEmail = await userEmail(svc, project?.assigned_employee_id)
+    if (empEmail) {
+      sendDeveloperUploadedEmail({ to: empEmail, ...ctx })
+        .catch((e) => console.error('[dsb] email failed', e))
+    }
+  } else if (input.target_status === 'sent_back_to_developer') {
+    const devEmail = (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
+    if (devEmail) {
+      sendSentBackToDeveloperEmail({
+        to: devEmail,
+        caseNumber: kase.case_number,
+        projectName: project?.name_ar ?? '—',
+        developerName: developer?.company_name_ar ?? '—',
+        amountSar: kase.amount_sar,
+        caseUrl: appUrl(`/developer/${input.case_id}`),
+        reason: trimmedNotes,
+      }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  } else if (input.target_status === 'signed') {
+    const devEmail = (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
+    if (devEmail) {
+      sendSignedEmail({ ...ctx, to: devEmail, caseUrl: appUrl(`/developer/${input.case_id}`) })
+        .catch((e) => console.error('[dsb] email failed', e))
+    }
+    const empEmail = await userEmail(svc, project?.assigned_employee_id)
+    if (empEmail) {
+      sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  return { ok: true }
 }

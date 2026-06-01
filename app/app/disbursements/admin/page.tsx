@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog } from 'lucide-react'
+import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog, ListChecks } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -120,6 +120,14 @@ export default async function DisbursementsAdminPage({
       employeeNameById.set(row.id, row.full_name ?? '—')
     }
   }
+
+  // Count active checklist items (global defaults + tenant-specific).
+  const { data: checklistData } = await svc
+    .from('dsb_checklist_items')
+    .select('id, active')
+    .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
+  const checklistActiveCount = ((checklistData ?? []) as { id: string; active: boolean }[])
+    .filter((r) => r.active).length
 
   // Counts per project.
   const projectCaseCounts = new Map<string, number>()
@@ -344,6 +352,24 @@ export default async function DisbursementsAdminPage({
           )}
         </section>
       </div>
+
+      {/* Checklist section */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-5 py-4">
+          <div className="inline-flex items-center gap-2 min-w-0">
+            <ListChecks className="w-4 h-4 text-slate-500 shrink-0" aria-hidden="true" />
+            <h2 className="serif font-bold text-lg text-slate-900">قائمة المراجعة</h2>
+            <span className="text-xs text-slate-400 font-mono">({checklistActiveCount} نشط)</span>
+          </div>
+          <Link
+            href="/app/disbursements/admin/checklist"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+          >
+            إدارة
+            <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
     </div>
   )
 }
