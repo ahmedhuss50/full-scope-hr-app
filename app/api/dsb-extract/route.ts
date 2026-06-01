@@ -171,6 +171,29 @@ function jsonError(error: string, status = 400) {
 }
 
 // ---------------------------------------------------------------------------
+// GET — lightweight diagnostic. Open in a browser to confirm the route is
+// deployed AND that the env vars the POST handler needs are present. Returns
+// booleans only (never the actual secret values).
+// ---------------------------------------------------------------------------
+
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    route: '/api/dsb-extract',
+    runtime,
+    env: {
+      ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || null,
+      VERCEL_URL: process.env.VERCEL_URL || null,
+      DSB_EXTRACT_SECRET_required: !!process.env.DSB_EXTRACT_SECRET,
+      SUPABASE_URL_set: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY_set: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    },
+    now: new Date().toISOString(),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
