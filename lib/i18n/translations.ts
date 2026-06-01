@@ -1582,10 +1582,10 @@ export const strings = {
   // -----------------------------------------------------------------
   // Disbursements module (الصرف) — replaces Escrow on the picker tile
   // -----------------------------------------------------------------
-  'app.module.dsb.title':              { en: 'Disbursements',
-                                         ar: 'الصرف' },
-  'app.module.dsb.description':        { en: 'Review, approve, and sign developer disbursement vouchers.',
-                                         ar: 'مراجعة واعتماد وتوقيع سندات صرف المطوّرين.' },
+  'app.module.dsb.title':              { en: 'Document Review',
+                                         ar: 'مراجعة المستندات' },
+  'app.module.dsb.description':        { en: 'Review, approve, and sign developer documents.',
+                                         ar: 'مراجعة واعتماد وتوقيع مستندات المطوّرين.' },
   'app.module.dsb.stats':              { en: '{inbox} in your inbox · {active} active · {signed} signed',
                                          ar: '{inbox} بانتظارك · {active} نشطة · {signed} موقَّعة' },
 
@@ -1636,7 +1636,7 @@ export const strings = {
   'dsb.dev.new.submitting':            { en: 'Submitting…', ar: 'جاري الإرسال…' },
   'dsb.dev.new.cancel':                { en: 'Cancel', ar: 'إلغاء' },
 
-  'dsb.fs.title':                      { en: 'Disbursements', ar: 'الصرف' },
+  'dsb.fs.title':                      { en: 'Document Review', ar: 'مراجعة المستندات' },
   'dsb.fs.subtitle':                   { en: 'Review and act on incoming developer disbursements.',
                                          ar: 'مراجعة طلبات الصرف الواردة من المطوّرين واتخاذ القرار.' },
   'dsb.fs.tab.mine':                   { en: 'My inbox',            ar: 'بانتظاري' },
@@ -1726,7 +1726,7 @@ export const strings = {
   // -----------------------------------------------------------------
   'dsb.nav.admin':                     { en: 'Admin',                ar: 'إدارة' },
 
-  'dsb.admin.title':                   { en: 'Disbursements admin',  ar: 'إدارة الصرفيات' },
+  'dsb.admin.title':                   { en: 'Document review admin',  ar: 'إدارة مراجعة المستندات' },
   'dsb.admin.subtitle':                { en: 'Manage clients and projects.',
                                          ar: 'إدارة العملاء والمشاريع.' },
   'dsb.admin.back_to_inbox':           { en: 'Back to inbox',        ar: 'صندوق الصرفيات' },
