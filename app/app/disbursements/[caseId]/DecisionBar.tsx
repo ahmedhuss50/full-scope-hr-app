@@ -1,8 +1,15 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { approveCase, sendBackToDeveloper, signCase, moveCaseToStage } from './actions'
+import {
+  approveCase,
+  sendBackToDeveloper,
+  signCase,
+  moveCaseToStage,
+  requestSignedDocumentUploadUrl,
+  signCaseWithUploadedDocument,
+} from './actions'
 
 type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner' | null
 type CaseStatus =
@@ -51,7 +58,8 @@ export function DecisionBar({
   const [error, setError] = useState<string | null>(null)
   const [sendBackOpen, setSendBackOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState<'approve' | 'sign' | 'send_back' | 'move' | null>(null)
+  const [busy, setBusy] = useState<'approve' | 'sign' | 'sign_upload' | 'send_back' | 'move' | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [moveOpen, setMoveOpen] = useState(false)
   const [moveTarget, setMoveTarget] = useState<MoveTargetStatus | ''>('')
   const [moveNotes, setMoveNotes] = useState('')
@@ -87,6 +95,58 @@ export function DecisionBar({
     setBusy(null)
     if (!res.ok) {
       setError(res.error)
+      return
+    }
+    startTransition(() => router.refresh())
+  }
+
+  // Sign-with-uploaded-document flow: pick file → get signed upload URL →
+  // PUT file directly to Supabase Storage → call server action to finalize.
+  // Direct-to-storage upload bypasses Vercel's 4.5MB request body limit.
+  async function doSignWithUpload(file: File) {
+    setError(null)
+    if (file.type && file.type !== 'application/pdf') {
+      setError('الملف يجب أن يكون PDF.')
+      return
+    }
+    setBusy('sign_upload')
+
+    const urlRes = await requestSignedDocumentUploadUrl({
+      case_id: caseId,
+      filename: file.name,
+      size: file.size,
+    })
+    if (!urlRes.ok) {
+      setBusy(null)
+      setError(urlRes.error)
+      return
+    }
+
+    try {
+      const putResp = await fetch(urlRes.signed_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/pdf' },
+        body: file,
+      })
+      if (!putResp.ok) {
+        setBusy(null)
+        setError(`تعذّر رفع الملف (HTTP ${putResp.status}).`)
+        return
+      }
+    } catch (err) {
+      setBusy(null)
+      setError(err instanceof Error ? err.message : 'تعذّر رفع الملف.')
+      return
+    }
+
+    const finalizeRes = await signCaseWithUploadedDocument({
+      case_id: caseId,
+      storage_path: urlRes.storage_path,
+      filename: file.name,
+    })
+    setBusy(null)
+    if (!finalizeRes.ok) {
+      setError(finalizeRes.error)
       return
     }
     startTransition(() => router.refresh())
@@ -175,14 +235,36 @@ export function DecisionBar({
           </button>
         )}
         {canSign && (
-          <button
-            type="button"
-            disabled={busy !== null || pending}
-            onClick={doSign}
-            className="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
-          >
-            {busy === 'sign' ? 'جاري التوقيع…' : 'التوقيع وإغلاق الطلب'}
-          </button>
+          <>
+            <button
+              type="button"
+              disabled={busy !== null || pending}
+              onClick={doSign}
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
+            >
+              {busy === 'sign' ? 'جاري التوقيع…' : 'التوقيع وإغلاق الطلب'}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || pending}
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-700 text-sm font-semibold hover:bg-emerald-50 transition disabled:opacity-50"
+            >
+              {busy === 'sign_upload' ? 'جاري الرفع والتوقيع…' : 'توقيع برفع مستند موقّع'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) doSignWithUpload(f)
+                // Reset so picking the same file twice in a row still triggers.
+                e.target.value = ''
+              }}
+            />
+          </>
         )}
         {canSendBack && !sendBackOpen && (
           <button

@@ -669,3 +669,208 @@ export async function moveCaseToStage(
   revalidatePath('/app/disbursements')
   return { ok: true }
 }
+
+// ----------------------------------------------------------------------------
+// requestSignedDocumentUploadUrl — direct-to-Storage signed URL for the
+// owner's manually-signed PDF. Mirrors the developer-side direct-upload
+// pattern so we bypass Vercel's 4.5MB request body limit. The client PUTs the
+// file to `signed_url`, then calls `signCaseWithUploadedDocument` with the
+// returned `storage_path`.
+// ----------------------------------------------------------------------------
+
+const MAX_SIGNED_DOC_SIZE = 50 * 1024 * 1024 // 50 MB
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180)
+}
+
+export interface RequestSignedDocumentUploadUrlInput {
+  case_id: string
+  filename: string
+  size: number
+}
+
+export type RequestSignedDocumentUploadUrlResult =
+  | { ok: true; signed_url: string; storage_path: string }
+  | { ok: false; error: string }
+
+export async function requestSignedDocumentUploadUrl(
+  input: RequestSignedDocumentUploadUrlInput,
+): Promise<RequestSignedDocumentUploadUrlResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'رفع المستند الموقّع متاح لصاحب القرار فقط.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+  if (input.size > MAX_SIGNED_DOC_SIZE) {
+    return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, status')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  // We allow uploading a signed document on any non-cancelled case so an
+  // already-signed case can still receive its scanned paper copy after the
+  // fact. We only block 'cancelled' to avoid resurrecting dead cases.
+  if (kase.status === 'cancelled') {
+    return { ok: false, error: 'لا يمكن رفع مستند لطلب ملغى.' }
+  }
+
+  const uuid = crypto.randomUUID()
+  const safe = sanitizeFilename(input.filename || `signed-${uuid}.pdf`)
+  const storagePath = `signed/${caller.tenantId}/${input.case_id}/${uuid}-${safe}`
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath)
+  if (error || !data) {
+    console.error('[dsb.requestSignedDocumentUploadUrl] failed', error)
+    return { ok: false, error: 'تعذّر إنشاء رابط الرفع.' }
+  }
+  return { ok: true, signed_url: data.signedUrl, storage_path: data.path ?? storagePath }
+}
+
+// ----------------------------------------------------------------------------
+// signCaseWithUploadedDocument — owner finalizes the case by attaching a
+// physically-signed PDF. Behaves like signCase (status, signed_at,
+// signed_by_user_id, audit log, emails) and ALSO records signed_document_path
+// + signed_document_filename so the file can be retrieved later.
+//
+// If the case is already 'signed', we only attach the document (don't bump
+// signed_at) — supports the "scanned the paper copy a week later" workflow.
+// ----------------------------------------------------------------------------
+
+export interface SignCaseWithUploadedDocumentInput {
+  case_id: string
+  storage_path: string
+  filename: string
+}
+
+export type SignCaseWithUploadedDocumentResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+export async function signCaseWithUploadedDocument(
+  input: SignCaseWithUploadedDocumentInput,
+): Promise<SignCaseWithUploadedDocumentResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'التوقيع متاح لصاحب القرار فقط.' }
+  }
+  if (!input.case_id || !input.storage_path) {
+    return { ok: false, error: 'بيانات ناقصة.' }
+  }
+
+  const svc = createSupabaseService()
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  if (kase.status === 'cancelled') {
+    return { ok: false, error: 'لا يمكن توقيع طلب ملغى.' }
+  }
+
+  const project = single(kase.project)
+  const developer = single(kase.developer)
+  const wasAlreadySigned = kase.status === 'signed'
+  const previousStatus = kase.status
+
+  const updatePayload: Record<string, string | null> = {
+    signed_document_path: input.storage_path,
+    signed_document_filename: sanitizeFilename(input.filename),
+  }
+  if (!wasAlreadySigned) {
+    updatePayload.status = 'signed'
+    updatePayload.signed_at = new Date().toISOString()
+    updatePayload.signed_by_user_id = caller.userId
+  }
+
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update(updatePayload)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: wasAlreadySigned ? 'signed_document_attached' : 'signed_with_document',
+    actor_user_id: caller.userId,
+    from_status: previousStatus,
+    to_status: 'signed',
+    notes: wasAlreadySigned
+      ? `تم إرفاق نسخة موقّعة لاحقًا: ${updatePayload.signed_document_filename}`
+      : `تم التوقيع برفع مستند موقّع يدويًا: ${updatePayload.signed_document_filename}`,
+  })
+
+  // Only notify on the first-time transition. Re-attachments stay silent so we
+  // don't re-email everyone for a paper-copy archive update.
+  if (!wasAlreadySigned) {
+    const devEmail =
+      (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
+    const ctx = {
+      caseNumber: kase.case_number,
+      projectName: project?.name_ar ?? '—',
+      developerName: developer?.company_name_ar ?? '—',
+      amountSar: kase.amount_sar,
+      caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
+    }
+    if (devEmail) {
+      sendSignedEmail({ to: devEmail, ...ctx, caseUrl: appUrl(`/developer/${input.case_id}`) })
+        .catch((e) => console.error('[dsb] email failed', e))
+    }
+    const empEmail = await userEmail(svc, project?.assigned_employee_id)
+    if (empEmail) {
+      sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  revalidatePath('/app/disbursements/documents')
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
+// getSignedDocumentUrl — short-lived signed URL to view/download the owner's
+// uploaded signed PDF.
+// ----------------------------------------------------------------------------
+
+export async function getSignedDocumentUrl(input: { case_id: string }): Promise<
+  | { ok: true; url: string; filename: string }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, signed_document_path, signed_document_filename')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase?.signed_document_path) {
+    return { ok: false, error: 'لا يوجد مستند موقّع.' }
+  }
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(kase.signed_document_path as string, 60 * 10)
+  if (error || !data?.signedUrl) {
+    console.error('[dsb.getSignedDocumentUrl] failed', error)
+    return { ok: false, error: 'تعذّر إنشاء الرابط.' }
+  }
+  return {
+    ok: true,
+    url: data.signedUrl,
+    filename: (kase.signed_document_filename as string) ?? 'signed.pdf',
+  }
+}

@@ -8,6 +8,7 @@ import { DecisionBar } from './DecisionBar'
 import { ExtractedFieldsPanel, type ExtractedFields } from './ExtractedFieldsPanel'
 import { PdfOpener } from './PdfOpener'
 import { ProcessDiagram } from './ProcessDiagram'
+import { SignedDocumentCard } from './SignedDocumentCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,6 +61,8 @@ type CaseRow = {
   notes: string | null
   submitted_at: string | null
   signed_at: string | null
+  signed_document_path: string | null
+  signed_document_filename: string | null
   extracted_fields: ExtractedFields | null
   project: { id: string; code: string; name_ar: string; assigned_employee_id: string | null } | { id: string; code: string; name_ar: string; assigned_employee_id: string | null }[] | null
   developer: { id: string; company_name_ar: string } | { id: string; company_name_ar: string }[] | null
@@ -89,7 +92,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, extracted_fields,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`)
     .eq('tenant_id', tenantId)
@@ -259,6 +262,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               </div>
             )}
           </section>
+
+          {kase.signed_document_path && (
+            <SignedDocumentCard
+              caseId={kase.id}
+              filename={kase.signed_document_filename ?? 'signed.pdf'}
+            />
+          )}
 
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
             <h2 className="serif font-bold text-lg text-slate-900">ملف PDF</h2>
