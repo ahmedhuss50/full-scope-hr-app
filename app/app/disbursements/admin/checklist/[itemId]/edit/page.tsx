@@ -46,8 +46,9 @@ export default async function EditChecklistItemPage({
 
   if (!itemData) notFound()
   const item = itemData as ChecklistItemRow
-  // Cannot edit defaults (tenant_id IS NULL) or items from another tenant.
-  if (item.tenant_id === null || item.tenant_id !== tenantId) notFound()
+  // Owner can now edit defaults (tenant_id IS NULL) AND own-tenant items.
+  // Block only items from OTHER tenants.
+  if (item.tenant_id !== null && item.tenant_id !== tenantId) notFound()
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">

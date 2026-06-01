@@ -139,13 +139,14 @@ export default async function ChecklistAdminPage() {
                         </span>
                       </td>
                       <td className="py-3 px-3">
-                        {isGlobal || !isOwner ? (
+                        {!isOwner ? (
                           <span className="text-xs text-slate-400">—</span>
                         ) : (
                           <div className="flex items-center gap-2">
                             <Link
                               href={`/app/disbursements/admin/checklist/${it.id}/edit`}
                               className="inline-flex items-center px-2.5 py-1 rounded-md border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition"
+                              title={isGlobal ? 'تعديل بند افتراضي' : undefined}
                             >
                               تعديل
                             </Link>
@@ -161,8 +162,8 @@ export default async function ChecklistAdminPage() {
         )}
       </section>
 
-      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-        البنود الافتراضية محمية. لإضافة أو تعديل أو إخفاء بنود، أنشئ بنودًا مخصصة للمكتب.
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+        البنود الافتراضية قابلة للتعديل والحذف. إذا أردت إخفاء بند مؤقتًا اجعله «غير نشط» بدلاً من حذفه.
       </div>
     </div>
   )

@@ -61,7 +61,8 @@ export async function updateChecklistItem(
 
   const svc = createSupabaseService()
 
-  // Load the item & verify it belongs to caller's tenant (cannot edit defaults).
+  // Load the item. Owner can edit BOTH defaults (tenant_id IS NULL) AND
+  // their own tenant items. Block only items belonging to another tenant.
   const { data: existing } = await svc
     .from('dsb_checklist_items')
     .select('id, tenant_id')
@@ -69,20 +70,24 @@ export async function updateChecklistItem(
     .maybeSingle()
   if (!existing) return { ok: false, error: 'البند غير موجود.' }
   const itemTenant = (existing.tenant_id as string | null) ?? null
-  if (itemTenant === null) return { ok: false, error: 'لا يمكن تعديل البنود الافتراضية.' }
-  if (itemTenant !== caller.tenantId) return { ok: false, error: 'البند لا يخص مكتبك.' }
+  if (itemTenant !== null && itemTenant !== caller.tenantId) {
+    return { ok: false, error: 'البند لا يخص مكتبك.' }
+  }
+  const isDefaultItem = itemTenant === null
 
-  // Uniqueness check (excluding self).
-  const { data: clash } = await svc
+  // Uniqueness check (excluding self) — scoped to same tenant bucket as the item.
+  const clashQuery = svc
     .from('dsb_checklist_items')
     .select('id')
-    .eq('tenant_id', caller.tenantId)
     .eq('code', code)
     .neq('id', input.item_id)
-    .maybeSingle()
-  if (clash) return { ok: false, error: 'يوجد بند بهذا الرمز للمكتب بالفعل.' }
+  const clashRes = isDefaultItem
+    ? await clashQuery.is('tenant_id', null).maybeSingle()
+    : await clashQuery.eq('tenant_id', caller.tenantId).maybeSingle()
+  if (clashRes.data) return { ok: false, error: 'يوجد بند بهذا الرمز بالفعل.' }
 
-  const { error } = await svc
+  // Build update; only filter by tenant if it's a tenant-specific item.
+  const updateQuery = svc
     .from('dsb_checklist_items')
     .update({
       code,
@@ -92,7 +97,9 @@ export async function updateChecklistItem(
       active,
     })
     .eq('id', input.item_id)
-    .eq('tenant_id', caller.tenantId)
+  const { error } = isDefaultItem
+    ? await updateQuery.is('tenant_id', null)
+    : await updateQuery.eq('tenant_id', caller.tenantId)
   if (error) return { ok: false, error: error.message }
 
   revalidatePath('/app/disbursements/admin/checklist')
@@ -114,14 +121,18 @@ export async function deleteChecklistItem(
     .maybeSingle()
   if (!existing) return { ok: false, error: 'البند غير موجود.' }
   const itemTenant = (existing.tenant_id as string | null) ?? null
-  if (itemTenant === null) return { ok: false, error: 'لا يمكن حذف البنود الافتراضية.' }
-  if (itemTenant !== caller.tenantId) return { ok: false, error: 'البند لا يخص مكتبك.' }
+  if (itemTenant !== null && itemTenant !== caller.tenantId) {
+    return { ok: false, error: 'البند لا يخص مكتبك.' }
+  }
+  const isDefaultItem = itemTenant === null
 
-  const { error } = await svc
+  const deleteQuery = svc
     .from('dsb_checklist_items')
     .delete()
     .eq('id', input.item_id)
-    .eq('tenant_id', caller.tenantId)
+  const { error } = isDefaultItem
+    ? await deleteQuery.is('tenant_id', null)
+    : await deleteQuery.eq('tenant_id', caller.tenantId)
   if (error) return { ok: false, error: error.message }
 
   revalidatePath('/app/disbursements/admin/checklist')
