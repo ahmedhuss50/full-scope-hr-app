@@ -2066,6 +2066,42 @@ export const strings = {
   'dsb.decision.move_to.cancel':          { en: 'Cancel',   ar: 'إلغاء' },
   'dsb.decision.move_to.error.forbidden': { en: 'Your role does not allow this move.',
                                             ar: 'دورك لا يسمح بهذه النقلة.' },
+
+  // Disbursements dashboard (combined landing page).
+  'dsb.nav.home':                            { en: 'Home', ar: 'الرئيسية' },
+
+  'dsb.dashboard.welcome':                   { en: 'Welcome, {name}', ar: 'مرحبًا، {name}' },
+  'dsb.dashboard.welcome_default':           { en: 'Welcome', ar: 'مرحبًا بك' },
+  'dsb.dashboard.subtitle':                  { en: 'Overview of all disbursements',
+                                               ar: 'نظرة عامة على سندات الصرف' },
+
+  'dsb.dashboard.kpi.my_inbox':              { en: 'In my queue',           ar: 'في صندوقي' },
+  'dsb.dashboard.kpi.active_total':          { en: 'Active total',          ar: 'إجمالي النشطة' },
+  'dsb.dashboard.kpi.signed_this_month':     { en: 'Signed this month',     ar: 'موقّعة هذا الشهر' },
+  'dsb.dashboard.kpi.sent_back':             { en: 'Sent back to developer', ar: 'أعيدت إلى المطور' },
+  'dsb.dashboard.kpi.avg_cycle_days':        { en: 'Avg. days to sign',     ar: 'متوسط الزمن للتوقيع (يوم)' },
+
+  'dsb.dashboard.kanban.heading':            { en: 'Pipeline',              ar: 'مسار السندات' },
+  'dsb.dashboard.kanban.view_all':           { en: 'View full board →',     ar: 'عرض اللوحة الكاملة ←' },
+
+  'dsb.dashboard.activity.heading':          { en: 'Recent activity',       ar: 'النشاط الأخير' },
+  'dsb.dashboard.activity.empty':            { en: 'No recent activity.',   ar: 'لا يوجد نشاط حديث.' },
+
+  'dsb.dashboard.event.uploaded':            { en: 'New disbursement uploaded',
+                                               ar: 'تم رفع وثيقة صرف جديدة' },
+  'dsb.dashboard.event.employee_approved':   { en: 'Employee approved → supervisor',
+                                               ar: 'اعتمد الموظف وأرسل للسوبرفايزر' },
+  'dsb.dashboard.event.supervisor_approved': { en: 'Supervisor approved → owner',
+                                               ar: 'اعتمد السوبرفايزر وأرسل للتوقيع النهائي' },
+  'dsb.dashboard.event.sent_back':           { en: 'Sent back to developer',
+                                               ar: 'أعيدت إلى المطور' },
+  'dsb.dashboard.event.signed':              { en: 'Owner signed',          ar: 'وقّع المدير نهائيًا' },
+  'dsb.dashboard.event.cancelled':           { en: 'Case cancelled',        ar: 'أُلغيت القضية' },
+  'dsb.dashboard.event.manual_move':         { en: 'Case manually moved',   ar: 'تم نقل القضية يدويًا' },
+
+  'dsb.dashboard.role.employee':             { en: 'Employee',   ar: 'الموظف' },
+  'dsb.dashboard.role.supervisor':           { en: 'Supervisor', ar: 'السوبرفايزر' },
+  'dsb.dashboard.role.owner':                { en: 'Owner',      ar: 'المدير' },
 } as const
 
 export type StringKey = keyof typeof strings
