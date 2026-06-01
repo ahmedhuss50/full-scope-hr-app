@@ -231,7 +231,7 @@ export function DecisionBar({
             onClick={doApprove}
             className="inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50"
           >
-            {busy === 'approve' ? 'جاري الاعتماد…' : 'اعتماد وتحويل إلى صاحب القرار'}
+            {busy === 'approve' ? 'جاري الاعتماد…' : 'اعتماد وتحويل إلى المدير'}
           </button>
         )}
         {canSign && (

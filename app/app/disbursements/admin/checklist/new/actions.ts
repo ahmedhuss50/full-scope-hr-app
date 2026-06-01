@@ -21,7 +21,7 @@ async function resolveOwner(): Promise<
     .maybeSingle()
   if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
   const role = (profile.dsb_role as StaffRole | null) ?? null
-  if (role !== 'owner') return { error: 'صاحب القرار فقط يمكنه تعديل قائمة المراجعة.' }
+  if (role !== 'owner') return { error: 'المدير فقط يمكنه تعديل قائمة المراجعة.' }
   return {
     tenantId: profile.tenant_id as string,
     userId: profile.id as string,

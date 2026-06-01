@@ -19,7 +19,7 @@ async function resolveOwner(): Promise<
   if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
   const role = (profile.dsb_role as string | null) ?? null
   if (role !== 'owner') {
-    return { error: 'إنشاء الموظفين متاح لصاحب القرار فقط.' }
+    return { error: 'إنشاء الموظفين متاح للمدير فقط.' }
   }
   return {
     tenantId: profile.tenant_id as string,

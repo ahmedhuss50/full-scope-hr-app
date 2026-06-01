@@ -35,7 +35,7 @@ async function resolveOwner(): Promise<
     .maybeSingle()
   if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
   const role = (profile.dsb_role as DsbRole | null) ?? null
-  if (role !== 'owner') return { error: 'الحذف متاح لصاحب القرار فقط.' }
+  if (role !== 'owner') return { error: 'الحذف متاح للمدير فقط.' }
   return {
     tenantId: profile.tenant_id as string,
     userId: profile.id as string,

@@ -47,7 +47,7 @@ type EmployeeRow = {
 function roleLabel(role: string | null): { cls: string; label: string } {
   switch (role) {
     case 'owner':
-      return { cls: 'bg-violet-50 text-violet-700 ring-violet-200', label: 'صاحب القرار' }
+      return { cls: 'bg-violet-50 text-violet-700 ring-violet-200', label: 'مدير' }
     case 'supervisor':
       return { cls: 'bg-amber-50 text-amber-800 ring-amber-200', label: 'مشرف' }
     case 'employee':

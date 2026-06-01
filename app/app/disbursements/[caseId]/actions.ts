@@ -343,7 +343,7 @@ export async function sendBackToDeveloper(input: { case_id: string; reason: stri
 export async function signCase(input: { case_id: string }): Promise<{ ok: true } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
-  if (caller.dsbRole !== 'owner') return { ok: false, error: 'التوقيع متاح لصاحب القرار فقط.' }
+  if (caller.dsbRole !== 'owner') return { ok: false, error: 'التوقيع متاح للمدير فقط.' }
 
   const svc = createSupabaseService()
   const kase = await loadCase(caller.tenantId, input.case_id)
@@ -700,7 +700,7 @@ export async function requestSignedDocumentUploadUrl(
   const caller = await resolveCaller()
   if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
   if (caller.dsbRole !== 'owner') {
-    return { ok: false, error: 'رفع المستند الموقّع متاح لصاحب القرار فقط.' }
+    return { ok: false, error: 'رفع المستند الموقّع متاح للمدير فقط.' }
   }
   if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
   if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
@@ -763,7 +763,7 @@ export async function signCaseWithUploadedDocument(
   const caller = await resolveCaller()
   if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
   if (caller.dsbRole !== 'owner') {
-    return { ok: false, error: 'التوقيع متاح لصاحب القرار فقط.' }
+    return { ok: false, error: 'التوقيع متاح للمدير فقط.' }
   }
   if (!input.case_id || !input.storage_path) {
     return { ok: false, error: 'بيانات ناقصة.' }
