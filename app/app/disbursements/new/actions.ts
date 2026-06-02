@@ -105,7 +105,11 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
   // All metadata fields are optional; the AI extraction will populate them
   // and the staff can edit manually via EditCaseInfo if needed.
   const voucherNum = input.voucher_number_text?.trim() || null
-  const amount = Number.isFinite(input.amount_sar) && input.amount_sar > 0 ? input.amount_sar : null
+  const amountRaw = input.amount_sar
+  const amount =
+    typeof amountRaw === 'number' && Number.isFinite(amountRaw) && amountRaw > 0
+      ? amountRaw
+      : null
   const { data: row, error } = await svc
     .from('dsb_cases')
     .insert({
