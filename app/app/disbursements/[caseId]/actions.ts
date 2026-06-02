@@ -676,6 +676,67 @@ export async function moveCaseToStage(
 }
 
 // ----------------------------------------------------------------------------
+// updateExtractedFields — edit the AI-extracted block stored on
+// dsb_cases.extracted_fields. Any staff role can correct mistakes the AI
+// made (e.g. wrong IBAN, missed VAT, wrong disbursement type).
+//
+// The shape of `fields` is loose JSON; we accept whatever the client sends
+// and merge it into the existing JSONB column. Validation lives client-side
+// in the EditExtractedFields component.
+// ----------------------------------------------------------------------------
+
+export interface UpdateExtractedFieldsInput {
+  case_id: string
+  fields: Record<string, unknown>
+}
+
+export async function updateExtractedFields(
+  input: UpdateExtractedFieldsInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  if (!input.fields || typeof input.fields !== 'object') {
+    return { ok: false, error: 'البيانات غير صحيحة.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, extracted_fields')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  // Merge: keep any fields the editor didn't touch (e.g. confidence_overall)
+  // and overwrite the ones it sent.
+  const existing = (kase.extracted_fields ?? {}) as Record<string, unknown>
+  const merged = { ...existing, ...input.fields, edited_by_human: true, edited_at: new Date().toISOString() }
+
+  const { error } = await svc
+    .from('dsb_cases')
+    .update({ extracted_fields: merged })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'extracted_fields_edited',
+    actor_user_id: caller.userId,
+    notes: 'تم تعديل البيانات المستخرجة من الذكاء الاصطناعي.',
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // updateCaseFields — edit the top-level case metadata (voucher number, date,
 // amount, delivery date, notes). Open to ALL staff roles so an employee can
 // correct typos on a case they're reviewing without escalating. The status,

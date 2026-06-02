@@ -11,6 +11,7 @@ import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
+import { EditExtractedFields } from './EditExtractedFields'
 
 export const dynamic = 'force-dynamic'
 
@@ -327,11 +328,20 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             canEdit={canEditChecklist}
           />
 
-          <ExtractedFieldsPanel
-            extracted={extractedFields}
-            expectedDeveloperNameAr={developer?.company_name_ar ?? null}
-            fmt={{ fmtSar, fmtDate }}
-          />
+          <div className="space-y-3">
+            <div className="flex items-center justify-end">
+              <EditExtractedFields
+                caseId={kase.id}
+                extracted={extractedFields}
+                canEdit={dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'}
+              />
+            </div>
+            <ExtractedFieldsPanel
+              extracted={extractedFields}
+              expectedDeveloperNameAr={developer?.company_name_ar ?? null}
+              fmt={{ fmtSar, fmtDate }}
+            />
+          </div>
         </div>
 
         <div className="space-y-6">
