@@ -57,9 +57,11 @@ async function nextCaseNumber(tenantId: string): Promise<string> {
 export interface CreateCaseByStaffInput {
   developer_id: string
   project_id: string
-  voucher_number_text: string
-  voucher_date: string
-  amount_sar: number
+  // The following are optional — the AI extracts them from the PDF after
+  // upload. The form can omit them entirely.
+  voucher_number_text?: string | null
+  voucher_date?: string | null
+  amount_sar?: number | null
   delivery_date?: string | null
   notes?: string | null
 }
@@ -72,10 +74,10 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
   const caller = await resolveStaff()
   if ('error' in caller) return { ok: false, error: caller.error }
 
-  if (!input.developer_id || !input.project_id) return { ok: false, error: 'بيانات ناقصة.' }
-  if (!input.voucher_number_text?.trim()) return { ok: false, error: 'رقم سند الصرف مطلوب.' }
-  if (!input.voucher_date) return { ok: false, error: 'تاريخ السند مطلوب.' }
-  if (!(input.amount_sar > 0)) return { ok: false, error: 'يجب أن يكون المبلغ أكبر من صفر.' }
+  // Client + project are the only required fields up-front. Voucher number,
+  // date, amount, etc. are filled in by the AI extraction after upload, and
+  // can be edited manually later if anything is wrong.
+  if (!input.developer_id || !input.project_id) return { ok: false, error: 'يرجى اختيار العميل والمشروع.' }
 
   const svc = createSupabaseService()
 
@@ -100,6 +102,10 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
   const caseNumber = await nextCaseNumber(caller.tenantId)
 
   // Employee uploading on behalf — case lands directly in employee inbox.
+  // All metadata fields are optional; the AI extraction will populate them
+  // and the staff can edit manually via EditCaseInfo if needed.
+  const voucherNum = input.voucher_number_text?.trim() || null
+  const amount = Number.isFinite(input.amount_sar) && input.amount_sar > 0 ? input.amount_sar : null
   const { data: row, error } = await svc
     .from('dsb_cases')
     .insert({
@@ -107,9 +113,9 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
       project_id: input.project_id,
       developer_id: input.developer_id,
       case_number: caseNumber,
-      voucher_number_text: input.voucher_number_text.trim(),
-      voucher_date: input.voucher_date,
-      amount_sar: input.amount_sar,
+      voucher_number_text: voucherNum,
+      voucher_date: input.voucher_date || null,
+      amount_sar: amount,
       delivery_date: input.delivery_date || null,
       status: 'with_employee',
       submitted_at: new Date().toISOString(),

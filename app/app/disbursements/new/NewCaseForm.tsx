@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, FileText, X } from 'lucide-react'
+import { Upload, FileText, X, Sparkles } from 'lucide-react'
 import {
   createCaseByStaff,
   requestUploadUrl,
@@ -15,6 +15,16 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 export type DeveloperOption = { id: string; company_name_ar: string }
 export type ProjectOption = { id: string; code: string; name_ar: string; developer_id: string | null }
 
+/**
+ * Minimal new-case form.
+ *
+ * The reviewer picks a client + a project, attaches the PDF, and submits.
+ * Every other field — voucher number, voucher date, amount, delivery date,
+ * notes — is left empty on insert and filled in by the AI extraction
+ * pipeline (`/api/dsb-extract`) after upload. If the AI misses or gets
+ * something wrong, the case page has an inline "تعديل البيانات" form for
+ * manual correction.
+ */
 export function NewCaseForm({
   developers,
   projects,
@@ -27,14 +37,11 @@ export function NewCaseForm({
   defaultProjectId?: string | null
 }) {
   const router = useRouter()
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
   const [developerId, setDeveloperId] = useState<string>(
     defaultDeveloperId ?? developers[0]?.id ?? '',
   )
 
-  // Projects shown for the currently selected client: those tied to this
-  // developer + any untied legacy projects (developer_id is null).
   const filteredProjects = useMemo(() => {
     if (!developerId) return projects
     return projects.filter(
@@ -46,8 +53,6 @@ export function NewCaseForm({
     defaultProjectId ?? filteredProjects[0]?.id ?? projects[0]?.id ?? ''
   )
 
-  // If the picked developer changes and the currently selected project no
-  // longer fits the filter, snap to the first valid one (or clear).
   function onDeveloperChange(newId: string) {
     setDeveloperId(newId)
     const stillValid = newId
@@ -64,13 +69,8 @@ export function NewCaseForm({
       setProjectId(nextProjects[0]?.id ?? '')
     }
   }
-  const [voucherNumber, setVoucherNumber] = useState('')
-  const [voucherDate, setVoucherDate] = useState(today)
-  const [amountSar, setAmountSar] = useState('')
-  const [deliveryDate, setDeliveryDate] = useState('')
-  const [notes, setNotes] = useState('')
-  const [file, setFile] = useState<File | null>(null)
 
+  const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [uploadPct, setUploadPct] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -91,32 +91,22 @@ export function NewCaseForm({
     e.preventDefault()
     setError(null)
 
-    const amountNum = Number(amountSar)
-    if (
-      !developerId ||
-      !projectId ||
-      !voucherNumber.trim() ||
-      !voucherDate ||
-      !Number.isFinite(amountNum) ||
-      amountNum <= 0 ||
-      !file
-    ) {
-      setError('الرجاء تعبئة جميع الحقول المطلوبة.')
+    if (!developerId || !projectId) {
+      setError('يرجى اختيار العميل والمشروع.')
+      return
+    }
+    if (!file) {
+      setError('يرجى اختيار ملف PDF.')
       return
     }
 
     setSubmitting(true)
     setUploadPct(null)
     try {
-      // 1) Create case row.
+      // 1) Create empty case row — AI will fill the metadata.
       const create = await createCaseByStaff({
         developer_id: developerId,
         project_id: projectId,
-        voucher_number_text: voucherNumber.trim(),
-        voucher_date: voucherDate,
-        amount_sar: amountNum,
-        delivery_date: deliveryDate || null,
-        notes: notes.trim() || null,
       })
       if (!create.ok) {
         setError(create.error)
@@ -169,7 +159,7 @@ export function NewCaseForm({
         return
       }
 
-      // 5) Finalize — audit log + email assigned employee.
+      // 5) Finalize — audit log + fire AI extraction + email assigned employee.
       const fin = await finalizeStaffUpload({ case_id: caseId })
       if (!fin.ok) {
         setError(fin.error)
@@ -192,6 +182,13 @@ export function NewCaseForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-5 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+      <div className="flex items-start gap-2 rounded-lg border border-teal-200 bg-teal-50/60 px-3 py-2.5 text-xs text-teal-800">
+        <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+        <span>
+          اختر العميل والمشروع، ثم ارفع ملف PDF. سيقوم الذكاء الاصطناعي باستخراج بيانات السند تلقائيًا (رقم السند، التاريخ، المبلغ، نوع الصرف، وغيرها) وعرضها على صفحة الطلب.
+        </span>
+      </div>
+
       {error && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -231,76 +228,16 @@ export function NewCaseForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className={labelCls} htmlFor="voucher_number">رقم سند الصرف *</label>
-          <input
-            id="voucher_number"
-            required
-            maxLength={60}
-            className={inputCls}
-            value={voucherNumber}
-            onChange={(e) => setVoucherNumber(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="voucher_date">تاريخ سند الصرف *</label>
-          <input
-            id="voucher_date"
-            type="date"
-            required
-            className={inputCls}
-            value={voucherDate}
-            onChange={(e) => setVoucherDate(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className={labelCls} htmlFor="amount_sar">المبلغ بالريال السعودي *</label>
-          <input
-            id="amount_sar"
-            type="number"
-            required
-            min={0}
-            step="0.01"
-            className={inputCls}
-            value={amountSar}
-            onChange={(e) => setAmountSar(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="delivery_date">تاريخ التسليم</label>
-          <input
-            id="delivery_date"
-            type="date"
-            className={inputCls}
-            value={deliveryDate}
-            onChange={(e) => setDeliveryDate(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className={labelCls} htmlFor="notes">ملاحظات</label>
-        <textarea
-          id="notes"
-          rows={3}
-          className={inputCls}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-      </div>
-
       <div>
         <label className={labelCls} htmlFor="file">الملف الموحّد *</label>
         <label
           htmlFor="file"
-          className="flex items-center justify-center gap-2 px-4 py-6 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 cursor-pointer hover:border-teal-400 hover:bg-teal-50/40 transition"
+          className="flex items-center justify-center gap-2 px-4 py-8 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 cursor-pointer hover:border-teal-400 hover:bg-teal-50/40 transition"
         >
-          <Upload className="w-4 h-4 text-slate-500" aria-hidden="true" />
-          <span className="text-sm font-semibold text-slate-700">اضغط لاختيار ملف PDF</span>
+          <Upload className="w-5 h-5 text-slate-500" aria-hidden="true" />
+          <span className="text-sm font-semibold text-slate-700">
+            {file ? 'استبدال الملف' : 'اضغط لاختيار ملف PDF'}
+          </span>
         </label>
         <input
           id="file"
@@ -342,7 +279,7 @@ export function NewCaseForm({
           disabled={submitting}
           className="inline-flex items-center px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50"
         >
-          {submitting ? 'جارٍ الإرسال…' : 'إرسال'}
+          {submitting ? 'جارٍ الرفع…' : 'رفع وإرسال للمراجعة'}
         </button>
         <a
           href="/app/disbursements"
