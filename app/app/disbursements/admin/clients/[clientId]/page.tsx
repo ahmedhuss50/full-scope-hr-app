@@ -5,6 +5,7 @@ import { ArrowRight, Plus, Users, FolderKanban, FileText, Mail } from 'lucide-re
 import { ShareUploadLinkButton } from './ShareUploadLinkButton'
 import { ClientPortalCard } from './ClientPortalCard'
 import { DeleteClientButton } from '../../EntityDeleteButtons'
+import { EditClientInfo } from './EditClientInfo'
 
 export const dynamic = 'force-dynamic'
 
@@ -221,6 +222,16 @@ export default async function ClientDetailPage({
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
               مشروع جديد
             </Link>
+            <EditClientInfo
+              client={{
+                id: client.id,
+                company_name_ar: client.company_name_ar,
+                contact_name: client.contact_name,
+                contact_email: client.contact_email ?? '',
+                notes: client.notes,
+                status: client.status,
+              }}
+            />
             {dsbRole === 'owner' && (
               <DeleteClientButton
                 clientId={client.id}

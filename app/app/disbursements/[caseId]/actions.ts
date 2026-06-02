@@ -676,6 +676,97 @@ export async function moveCaseToStage(
 }
 
 // ----------------------------------------------------------------------------
+// updateCaseFields — edit the top-level case metadata (voucher number, date,
+// amount, delivery date, notes). Open to ALL staff roles so an employee can
+// correct typos on a case they're reviewing without escalating. The status,
+// signed_at, signed_by_user_id are NOT touched here — workflow transitions
+// stay role-gated through approveCase / signCase / etc.
+// ----------------------------------------------------------------------------
+
+export interface UpdateCaseFieldsInput {
+  case_id: string
+  voucher_number_text: string | null
+  voucher_date: string | null
+  amount_sar: number | null
+  delivery_date: string | null
+  notes: string | null
+}
+
+export async function updateCaseFields(
+  input: UpdateCaseFieldsInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  // Build the patch — only include fields that pass basic validation. Null
+  // values are explicitly allowed so the user can clear an existing field.
+  const patch: Record<string, string | number | null> = {}
+
+  const voucherNumber = (input.voucher_number_text ?? '').trim()
+  patch.voucher_number_text = voucherNumber ? voucherNumber : null
+
+  if (input.voucher_date === null || input.voucher_date === '') {
+    patch.voucher_date = null
+  } else if (typeof input.voucher_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.voucher_date)) {
+    patch.voucher_date = input.voucher_date
+  } else {
+    return { ok: false, error: 'تاريخ السند غير صالح.' }
+  }
+
+  if (input.amount_sar === null) {
+    patch.amount_sar = null
+  } else if (typeof input.amount_sar === 'number' && Number.isFinite(input.amount_sar) && input.amount_sar >= 0) {
+    patch.amount_sar = input.amount_sar
+  } else {
+    return { ok: false, error: 'المبلغ غير صالح.' }
+  }
+
+  if (input.delivery_date === null || input.delivery_date === '') {
+    patch.delivery_date = null
+  } else if (typeof input.delivery_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.delivery_date)) {
+    patch.delivery_date = input.delivery_date
+  } else {
+    return { ok: false, error: 'تاريخ التسليم غير صالح.' }
+  }
+
+  const notes = (input.notes ?? '').trim()
+  patch.notes = notes ? notes : null
+
+  const { error } = await svc
+    .from('dsb_cases')
+    .update(patch)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'case_fields_edited',
+    actor_user_id: caller.userId,
+    notes: 'تم تعديل بيانات الطلب.',
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  revalidatePath('/app/disbursements/documents')
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // requestSignedDocumentUploadUrl — direct-to-Storage signed URL for the
 // owner's manually-signed PDF. Mirrors the developer-side direct-upload
 // pattern so we bypass Vercel's 4.5MB request body limit. The client PUTs the

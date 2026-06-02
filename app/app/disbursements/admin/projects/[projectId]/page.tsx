@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FolderKanban, FileText, Plus } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
+import { EditProjectInfo } from './EditProjectInfo'
 
 export const dynamic = 'force-dynamic'
 
@@ -145,6 +146,28 @@ export default async function ProjectDetailPage({
     assignedEmployeeName = (empRow?.full_name as string | null) ?? null
   }
 
+  // Lists for the edit form: tenant clients + all staff.
+  const { data: clientsForEdit } = await svc
+    .from('dsb_developers')
+    .select('id, company_name_ar')
+    .eq('tenant_id', tenantId)
+    .order('company_name_ar', { ascending: true })
+  const clientOptions = ((clientsForEdit ?? []) as { id: string; company_name_ar: string }[])
+    .map((c) => ({ id: c.id, company_name_ar: c.company_name_ar }))
+
+  const { data: staffForEdit } = await svc
+    .from('users')
+    .select('id, full_name, dsb_role')
+    .eq('tenant_id', tenantId)
+    .in('dsb_role', ['employee', 'supervisor', 'owner'])
+    .order('full_name', { ascending: true })
+  const staffOptions = ((staffForEdit ?? []) as { id: string; full_name: string | null; dsb_role: string | null }[])
+    .map((u) => ({
+      id: u.id,
+      full_name: u.full_name ?? '—',
+      role_label: u.dsb_role === 'owner' ? 'مدير' : u.dsb_role === 'supervisor' ? 'مشرف' : 'مراجع',
+    }))
+
   // Fetch cases for this project.
   const { data: casesData } = await svc
     .from('dsb_cases')
@@ -208,6 +231,19 @@ export default async function ProjectDetailPage({
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
               سند صرف جديد
             </Link>
+            <EditProjectInfo
+              project={{
+                id: project.id,
+                code: project.code,
+                name_ar: project.name_ar,
+                developer_id: project.developer_id ?? '',
+                assigned_employee_id: project.assigned_employee_id ?? null,
+                notes: project.notes ?? null,
+                status: project.status ?? null,
+              }}
+              clients={clientOptions}
+              staff={staffOptions}
+            />
             {dsbRole === 'owner' && (
               <DeleteProjectButton
                 projectId={project.id}

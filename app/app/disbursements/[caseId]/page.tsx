@@ -10,6 +10,7 @@ import { PdfOpener } from './PdfOpener'
 import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
+import { EditCaseInfo } from './EditCaseInfo'
 
 export const dynamic = 'force-dynamic'
 
@@ -254,7 +255,20 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
-            <h2 className="serif font-bold text-lg text-slate-900">بيانات الطلب</h2>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h2 className="serif font-bold text-lg text-slate-900">بيانات الطلب</h2>
+              <EditCaseInfo
+                kase={{
+                  id: kase.id,
+                  voucher_number_text: kase.voucher_number_text,
+                  voucher_date: kase.voucher_date,
+                  amount_sar: kase.amount_sar,
+                  delivery_date: kase.delivery_date,
+                  notes: kase.notes,
+                }}
+                canEdit={dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'}
+              />
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <Detail label="رقم السند" value={kase.voucher_number_text ?? '—'} />
               <Detail label="تاريخ السند" value={fmtDate(kase.voucher_date)} />
