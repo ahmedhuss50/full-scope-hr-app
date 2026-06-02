@@ -50,15 +50,23 @@ export default async function NewProjectPage({
   const existingCodes = ((existing ?? []) as { code: string }[]).map((r) => r.code)
   const suggested = suggestNextCode(existingCodes)
 
-  // List potential assigned employees (anyone in tenant tagged dsb_role='employee').
+  // List potential assignees — any staff role (employee / supervisor / owner).
+  // The case workflow still gates each transition by role, but the assignee
+  // can act at the "with_employee" stage regardless of their role (see
+  // approveCase in [caseId]/actions.ts) so a supervisor or owner running a
+  // small client themselves works.
   const { data: empRows } = await svc
     .from('users')
-    .select('id, full_name')
+    .select('id, full_name, dsb_role')
     .eq('tenant_id', tenantId)
-    .eq('dsb_role', 'employee')
+    .in('dsb_role', ['employee', 'supervisor', 'owner'])
     .order('full_name', { ascending: true })
-  const employees: EmployeeOption[] = ((empRows ?? []) as { id: string; full_name: string | null }[])
-    .map((r) => ({ id: r.id, full_name: r.full_name ?? '—' }))
+  const employees: EmployeeOption[] = ((empRows ?? []) as { id: string; full_name: string | null; dsb_role: string | null }[])
+    .map((r) => ({
+      id: r.id,
+      full_name: r.full_name ?? '—',
+      role_label: r.dsb_role === 'owner' ? 'مدير' : r.dsb_role === 'supervisor' ? 'مشرف' : 'مراجع',
+    }))
 
   // List clients (developers) for this tenant — required dropdown on the form.
   const { data: devRows } = await svc

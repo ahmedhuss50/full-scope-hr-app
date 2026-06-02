@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createProject } from './actions'
 
-export type EmployeeOption = { id: string; full_name: string }
+export type EmployeeOption = { id: string; full_name: string; role_label?: string }
 export type DeveloperOption = { id: string; company_name_ar: string }
 
 export function NewProjectForm({
@@ -125,7 +125,9 @@ export function NewProjectForm({
         >
           <option value="">— غير محدد —</option>
           {employees.map((emp) => (
-            <option key={emp.id} value={emp.id}>{emp.full_name}</option>
+            <option key={emp.id} value={emp.id}>
+              {emp.role_label ? `${emp.full_name} — ${emp.role_label}` : emp.full_name}
+            </option>
           ))}
         </select>
       </div>

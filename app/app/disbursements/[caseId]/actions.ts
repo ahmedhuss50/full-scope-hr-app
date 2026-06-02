@@ -194,7 +194,12 @@ export async function approveCase(input: { case_id: string }): Promise<{ ok: tru
 
   let nextStatus: CaseStatus
   if (kase.status === 'with_employee') {
-    if (caller.dsbRole !== 'employee') return { ok: false, error: 'لا تملك صلاحية الاعتماد.' }
+    // At the "with_employee" stage, the assigned user must act — regardless of
+    // their role. This lets supervisors / owners run small clients themselves
+    // without needing a separate employee account in the middle.
+    if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+      return { ok: false, error: 'لا تملك صلاحية الاعتماد.' }
+    }
     if (project?.assigned_employee_id !== caller.userId) {
       return { ok: false, error: 'هذا الطلب غير مُسند إليك.' }
     }
