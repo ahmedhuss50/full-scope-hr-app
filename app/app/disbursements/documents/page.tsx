@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FileText, Download } from 'lucide-react'
+import { fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,19 +16,6 @@ function fmtSar(amount: number | null): string {
     }).format(amount)
   } catch {
     return `${amount} ر.س`
-  }
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  try {
-    return new Intl.DateTimeFormat('ar-SA', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    }).format(new Date(s))
-  } catch {
-    return s
   }
 }
 
@@ -176,7 +164,7 @@ export default async function DeliveryDocumentsRegisterPage() {
                       <Td>
                         <span className="font-mono">{fmtSar(c.amount_sar)}</span>
                       </Td>
-                      <Td>{fmtDate(c.signed_at)}</Td>
+                      <Td>{fmtDateTime(c.signed_at)}</Td>
                       <Td>{signer}</Td>
                       <Td>
                         <Link

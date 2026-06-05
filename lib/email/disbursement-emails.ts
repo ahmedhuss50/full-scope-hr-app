@@ -156,24 +156,31 @@ export interface WelcomeEmailContext {
 export function sendWelcomeEmail(ctx: WelcomeEmailContext) {
   const safeName = (ctx.fullName ?? '').replace(/</g, '&lt;')
   const safeRole = (ctx.roleLabelAr ?? '').replace(/</g, '&lt;')
+  // ctx.loginUrl is expected to be like `<base>/login`. Build the forgot-
+  // password URL on the same base so the user can set their first password.
+  const setupUrl = ctx.loginUrl.replace(/\/login\/?$/, '/forgot-password')
   const body = html(`
     <h2 style="margin:0 0 12px;">مرحبًا بك في Full Scope</h2>
     <p>أهلًا ${safeName}،</p>
     <p>تم إنشاء حسابك في منصّة <strong>مراجعة المستندات</strong> بدور <strong>${safeRole}</strong>.</p>
-    <p>للدخول إلى المنصّة، اضغط على الزرّ التالي وأدخل بريدك الإلكتروني للحصول على رابط دخول فوري:</p>
+    <p>الخطوة الأولى: قم بإعداد كلمة المرور الخاصة بك. اضغط على الزرّ التالي وأدخل بريدك الإلكتروني، وسنرسل لك رابطًا لاختيار كلمة المرور:</p>
     <p style="margin:20px 0;">
-      <a href="${ctx.loginUrl}" style="display:inline-block;padding:12px 22px;background:#0d9488;color:#fff;border-radius:8px;text-decoration:none;font-weight:700;">
-        تسجيل الدخول
+      <a href="${setupUrl}" style="display:inline-block;padding:12px 22px;background:#0d9488;color:#fff;border-radius:8px;text-decoration:none;font-weight:700;">
+        إعداد كلمة المرور
       </a>
+    </p>
+    <p>بعد إعداد كلمة المرور، يمكنك تسجيل الدخول مباشرة من:</p>
+    <p style="margin:12px 0;">
+      <a href="${ctx.loginUrl}" style="color:#0d9488;font-weight:700;">${ctx.loginUrl}</a>
     </p>
     <p style="font-size:13px;color:#475569;">إن واجهت أي مشكلة، تواصل مع فريق Full Scope.</p>
     <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;" />
-    <p style="font-size:12px;color:#64748b;">رابط الدخول: <a href="${ctx.loginUrl}" style="color:#0d9488;">${ctx.loginUrl}</a></p>
+    <p style="font-size:12px;color:#64748b;">رابط إعداد كلمة المرور: <a href="${setupUrl}" style="color:#0d9488;">${setupUrl}</a></p>
   `)
   return withTimeout(sendEmail({
     to: ctx.to,
     from: DSB_FROM,
-    subject: 'مرحبًا بك في Full Scope — رابط الدخول',
+    subject: 'مرحبًا بك في Full Scope — إعداد كلمة المرور',
     html: body,
     locale: 'ar',
   }))

@@ -12,6 +12,7 @@ import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
 import { EditExtractedFields } from './EditExtractedFields'
+import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,14 +24,7 @@ function fmtSar(amount: number | null): string {
     return `${amount} ر.س`
   }
 }
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  try {
-    return new Intl.DateTimeFormat('ar-SA', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(s))
-  } catch {
-    return s
-  }
-}
+
 function statusPill(status: string): { cls: string; label: string } {
   switch (status) {
     case 'with_employee':   return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار الموظف' }
@@ -275,8 +269,8 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <Detail label="تاريخ السند" value={fmtDate(kase.voucher_date)} />
               <Detail label="المبلغ" value={fmtSar(kase.amount_sar)} />
               <Detail label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
-              <Detail label="وقت الإرسال" value={fmtDate(kase.submitted_at)} />
-              {kase.signed_at && <Detail label="وقت التوقيع" value={fmtDate(kase.signed_at)} />}
+              <Detail label="وقت الإرسال" value={fmtDateTime(kase.submitted_at)} />
+              {kase.signed_at && <Detail label="وقت التوقيع" value={fmtDateTime(kase.signed_at)} />}
             </div>
             {kase.notes && (
               <div className="pt-3 border-t border-slate-100">

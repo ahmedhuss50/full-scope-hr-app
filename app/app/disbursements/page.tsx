@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FileText, Plus, Settings, LayoutDashboard, Activity, UploadCloud, ArrowRightCircle, RotateCcw, CheckCircle2, XCircle, Move } from 'lucide-react'
+import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,15 +44,6 @@ function fmtSar(amount: number | null): string {
     return `${amount} ر.س`
   }
 }
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  try {
-    return new Intl.DateTimeFormat('ar-SA', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(s))
-  } catch {
-    return s
-  }
-}
-
 function timeAgoAr(s: string | null): string {
   if (!s) return '—'
   const then = new Date(s).getTime()
@@ -409,7 +401,7 @@ export default async function DisbursementsDashboardPage() {
                                   {fmtSar(c.amount_sar)}
                                 </div>
                                 <div className="text-[11px] text-slate-400 mt-0.5">
-                                  {fmtDate(c.submitted_at ?? c.created_at)}
+                                  {fmtDateTime(c.submitted_at ?? c.created_at)}
                                 </div>
                               </Link>
                             )
