@@ -45,7 +45,7 @@ export default async function NewChecklistItemPage() {
         </Link>
         <h1 className="serif font-black text-3xl tracking-tight text-slate-900">بند جديد</h1>
         <p className="text-sm text-slate-600">
-          أضف بندًا مخصصًا لمكتبك ليظهر في قائمة مراجعة كل قضية.
+          أضف بندًا مخصصًا لمكتبك ليظهر في قائمة مراجعة كل طلب.
         </p>
       </header>
 

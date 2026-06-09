@@ -322,7 +322,7 @@ export function DecisionBar({
       {moveOpen && (
         <form onSubmit={doMove} className="space-y-3 pt-2 border-t border-slate-100">
           <div className="space-y-2">
-            <div className="text-sm font-semibold text-slate-700">نقل القضية إلى…</div>
+            <div className="text-sm font-semibold text-slate-700">نقل الطلب إلى…</div>
             <div className="space-y-1.5">
               {moveOptions.map((opt) => (
                 <label key={opt} className="flex items-center gap-2 cursor-pointer">

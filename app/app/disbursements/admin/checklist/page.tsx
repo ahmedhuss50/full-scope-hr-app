@@ -67,7 +67,7 @@ export default async function ChecklistAdminPage() {
               إعدادات قائمة المراجعة
             </h1>
             <p className="text-sm text-slate-600 mt-1">
-              إدارة البنود التي تظهر في قائمة مراجعة كل قضية.
+              إدارة البنود التي تظهر في قائمة مراجعة كل طلب.
             </p>
           </div>
           {isOwner && (

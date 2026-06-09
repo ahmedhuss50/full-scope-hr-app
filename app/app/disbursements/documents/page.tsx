@@ -119,7 +119,7 @@ export default async function DeliveryDocumentsRegisterPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr className="text-right">
-                  <Th>رقم القضية</Th>
+                  <Th>رقم الطلب</Th>
                   <Th>المشروع</Th>
                   <Th>العميل</Th>
                   <Th>رقم السند</Th>

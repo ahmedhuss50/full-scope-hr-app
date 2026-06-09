@@ -199,7 +199,7 @@ export default async function DeliveryDocumentPage({
 
           {/* Facts grid */}
           <section className="space-y-3 text-sm">
-            <FactRow label="رقم القضية" value={kase.case_number} mono />
+            <FactRow label="رقم الطلب" value={kase.case_number} mono />
             <FactRow label="تاريخ الإصدار" value={fmtDate(today)} />
             <FactRow
               label="المشروع"

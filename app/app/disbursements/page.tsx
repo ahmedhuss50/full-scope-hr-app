@@ -101,7 +101,7 @@ function describeEvent(event: string, toStatus: string | null): EventDescriptor 
     return { Icon: CheckCircle2, iconCls: 'text-green-700 bg-green-50', label: 'وقّع المدير نهائيًا' }
   }
   if (event === 'cancelled') {
-    return { Icon: XCircle, iconCls: 'text-slate-500 bg-slate-100', label: 'أُلغيت القضية' }
+    return { Icon: XCircle, iconCls: 'text-slate-500 bg-slate-100', label: 'أُلغي الطلب' }
   }
   if (event === 'manual_move') {
     if (toStatus === 'with_supervisor') {
@@ -116,7 +116,7 @@ function describeEvent(event: string, toStatus: string | null): EventDescriptor 
     if (toStatus === 'signed') {
       return { Icon: CheckCircle2, iconCls: 'text-green-700 bg-green-50', label: 'وقّع المدير نهائيًا' }
     }
-    return { Icon: Move, iconCls: 'text-slate-600 bg-slate-100', label: 'تم نقل القضية يدويًا' }
+    return { Icon: Move, iconCls: 'text-slate-600 bg-slate-100', label: 'تم نقل الطلب يدويًا' }
   }
   return { Icon: Activity, iconCls: 'text-slate-600 bg-slate-100', label: event }
 }
