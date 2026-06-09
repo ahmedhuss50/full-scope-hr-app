@@ -61,6 +61,9 @@ type CaseRow = {
   signed_document_path: string | null
   signed_document_filename: string | null
   extracted_fields: ExtractedFields | null
+  extraction_cost_usd: number | null
+  extraction_model: string | null
+  extracted_at: string | null
   project: { id: string; code: string; name_ar: string; assigned_employee_id: string | null } | { id: string; code: string; name_ar: string; assigned_employee_id: string | null }[] | null
   developer: { id: string; company_name_ar: string } | { id: string; company_name_ar: string }[] | null
 }
@@ -89,7 +92,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`)
     .eq('tenant_id', tenantId)
@@ -271,6 +274,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <Detail label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
               <Detail label="وقت الإرسال" value={fmtDateTime(kase.submitted_at)} />
               {kase.signed_at && <Detail label="وقت التوقيع" value={fmtDateTime(kase.signed_at)} />}
+              {kase.extraction_cost_usd != null && (
+                <Detail
+                  label="تكلفة الاستخراج"
+                  value={`$${Number(kase.extraction_cost_usd).toFixed(4)}${kase.extraction_model ? ` · ${kase.extraction_model.includes('haiku') ? 'Haiku' : kase.extraction_model.includes('sonnet') ? 'Sonnet' : kase.extraction_model}` : ''}`}
+                />
+              )}
             </div>
             {kase.notes && (
               <div className="pt-3 border-t border-slate-100">

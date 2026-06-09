@@ -339,12 +339,55 @@ export async function POST(req: Request) {
 
     const claudeJson = (await claudeResp.json()) as {
       content?: Array<{ type: string; text?: string }>
+      model?: string
+      usage?: {
+        input_tokens?: number
+        output_tokens?: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+      }
     }
     const firstTextBlock = (claudeJson.content || []).find(
       (b) => b.type === 'text' && typeof b.text === 'string',
     )
     const claudeText = firstTextBlock?.text || ''
     if (!claudeText) throw new Error('Claude returned no text content')
+
+    // ----- 3.5 Compute cost from usage stats -----
+    // Rates per million tokens, in USD. Keep in sync with Anthropic pricing:
+    //   https://docs.anthropic.com/en/docs/about-claude/pricing
+    const PRICING: Record<string, {
+      input: number
+      output: number
+      cacheRead: number
+      cacheWrite: number
+    }> = {
+      'claude-haiku-4-5-20251001': {
+        input: 0.80,
+        output: 4.00,
+        cacheRead: 0.08,
+        cacheWrite: 1.00,
+      },
+      'claude-sonnet-4-5-20250929': {
+        input: 3.00,
+        output: 15.00,
+        cacheRead: 0.30,
+        cacheWrite: 3.75,
+      },
+    }
+    const usedModel = (claudeJson.model as string | undefined) || claudeBody.model
+    const u = claudeJson.usage ?? {}
+    const inputTok = u.input_tokens ?? 0
+    const outputTok = u.output_tokens ?? 0
+    const cacheReadTok = u.cache_read_input_tokens ?? 0
+    const cacheWriteTok = u.cache_creation_input_tokens ?? 0
+    const rate = PRICING[usedModel] ?? PRICING['claude-haiku-4-5-20251001']!
+    const costUsd =
+      (inputTok * rate.input +
+        outputTok * rate.output +
+        cacheReadTok * rate.cacheRead +
+        cacheWriteTok * rate.cacheWrite) /
+      1_000_000
 
     // ----- 4. Parse JSON -----
     const parsed = extractJson(claudeText) as ClaudeJson
@@ -436,6 +479,16 @@ export async function POST(req: Request) {
     const updateBody = {
       ...metadataUpdate,
       extracted_fields: extractedBlob,
+      // Cost tracking — written on every extraction. extracted_at lets us
+      // tell "extracted but cost not yet captured" (legacy rows) apart from
+      // "extracted just now."
+      extraction_model: usedModel,
+      extraction_input_tokens: inputTok,
+      extraction_output_tokens: outputTok,
+      extraction_cache_read_tokens: cacheReadTok,
+      extraction_cache_write_tokens: cacheWriteTok,
+      extraction_cost_usd: Number(costUsd.toFixed(6)),
+      extracted_at: new Date().toISOString(),
     }
 
     // ----- 8. Insert breakdown rows -----
@@ -466,6 +519,14 @@ export async function POST(req: Request) {
       ok: true,
       sections: rows.length,
       autofilled: autofilledKeys,
+      cost_usd: Number(costUsd.toFixed(6)),
+      model: usedModel,
+      tokens: {
+        input: inputTok,
+        output: outputTok,
+        cache_read: cacheReadTok,
+        cache_write: cacheWriteTok,
+      },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
