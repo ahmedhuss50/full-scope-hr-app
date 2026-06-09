@@ -1,7 +1,8 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -105,6 +106,21 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
   const pathname = usePathname() ?? '/app'
   const { t } = useLocale()
   const currentModule = moduleFor(pathname)
+  // Mobile drawer state. On desktop (md+) the sidebar is always visible and
+  // this state is ignored. On mobile, it's a slide-in drawer triggered by the
+  // hamburger button rendered next to the brand on the page header.
+  const [mobileOpen, setMobileOpen] = useState(false)
+  // Auto-close the drawer whenever the route changes so navigating in mobile
+  // doesn't leave the drawer covering the page.
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
+  // Lock body scroll while the drawer is open so iOS doesn't double-scroll.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.style.overflow = mobileOpen ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [mobileOpen])
 
   // The picker page (/app) gets a slimmer sidebar — no module nav, just the
   // brand header + sign-out. The user is choosing a module, not navigating
@@ -132,20 +148,59 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
   }
 
   return (
-    <aside
-      className="w-64 shrink-0 min-h-screen bg-white border-e border-slate-200 flex flex-col"
-      aria-label="Primary"
-    >
+    <>
+      {/* Mobile-only hamburger toggle. Fixed at the top-start corner (right
+          in RTL, left in LTR) so it stays accessible while scrolling. Hidden
+          when the drawer is open (the drawer has its own close X inside). */}
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={() => setMobileOpen(true)}
+        className={`md:hidden fixed top-3 start-3 z-50 inline-flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 shadow-sm text-slate-700 ${
+          mobileOpen ? 'hidden' : ''
+        }`}
+      >
+        <Menu className="w-5 h-5" aria-hidden="true" />
+      </button>
+
+      {/* Backdrop — only on mobile when drawer is open. Click anywhere to close. */}
+      {mobileOpen && (
+        <div
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden fixed inset-0 z-40 bg-black/40"
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={`bg-white border-e border-slate-200 flex flex-col
+          fixed md:static inset-y-0 start-0 z-50 w-72 md:w-64 md:shrink-0 md:min-h-screen
+          transition-transform duration-200 ease-out
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full rtl:translate-x-full'}
+          md:translate-x-0 rtl:md:translate-x-0`}
+        aria-label="Primary"
+      >
       {/* Brand + module switcher */}
       <div className="px-5 py-5 border-b border-slate-200 space-y-3">
-        <Link href="/app" className="flex items-center gap-2 group" aria-label={t('app.module.switcher.back')}>
-          <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-slate-900 text-white font-black text-sm">
-            F
-          </span>
-          <span className="font-bold text-slate-900 group-hover:text-slate-700">
-            {t('app.module.switcher.firm')}
-          </span>
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/app" className="flex items-center gap-2 group" aria-label={t('app.module.switcher.back')}>
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-slate-900 text-white font-black text-sm">
+              F
+            </span>
+            <span className="font-bold text-slate-900 group-hover:text-slate-700">
+              {t('app.module.switcher.firm')}
+            </span>
+          </Link>
+          {/* Mobile-only close button */}
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close navigation"
+            className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-slate-500 hover:bg-slate-100"
+          >
+            <X className="w-5 h-5" aria-hidden="true" />
+          </button>
+        </div>
         {currentModule !== 'picker' && (
           <div className="flex items-center justify-between gap-2">
             <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200">
@@ -217,5 +272,6 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
         <SignOutButton />
       </div>
     </aside>
+    </>
   )
 }

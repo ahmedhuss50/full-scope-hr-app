@@ -130,8 +130,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           user={{ full_name: profile.full_name as string | null, email: user.email ?? null }}
         />
         <div className="flex-1 min-w-0 flex flex-col">
-          <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
-            <div className="px-6 py-3 flex items-center justify-between gap-4">
+          <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+            {/* ps-16 reserves room for the mobile-only hamburger button (40px
+                + edge padding). md:ps-6 reverts to normal padding on desktop. */}
+            <div className="ps-16 pe-4 py-3 md:px-6 flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-slate-700 truncate">
                 {tenant?.name ?? 'Unknown tenant'}
               </div>
@@ -140,7 +142,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </div>
             </div>
           </header>
-          <main className="flex-1 p-6 min-w-0">{children}</main>
+          <main className="flex-1 p-4 md:p-6 min-w-0">{children}</main>
         </div>
       </div>
     </LocaleProvider>
