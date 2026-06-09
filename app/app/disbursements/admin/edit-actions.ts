@@ -176,6 +176,10 @@ export interface UpdateProjectInput {
   assigned_employee_id?: string | null
   notes?: string | null
   status?: 'active' | 'archived' | 'inactive'
+  // Project-level bank (حساب المشروع / حساب الضمان).
+  bank_name?: string | null
+  bank_account?: string | null
+  bank_iban?: string | null
 }
 
 export async function updateProject(
@@ -225,6 +229,9 @@ export async function updateProject(
       developer_id: developerId,
       assigned_employee_id: assignedId,
       notes: (input.notes ?? '').trim() || null,
+      bank_name: (input.bank_name ?? '').trim() || null,
+      bank_account: (input.bank_account ?? '').trim() || null,
+      bank_iban: (input.bank_iban ?? '').trim().toUpperCase() || null,
       ...(input.status ? { status: input.status } : {}),
     })
     .eq('id', input.project_id)

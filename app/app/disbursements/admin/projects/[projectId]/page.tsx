@@ -16,6 +16,9 @@ type ProjectRow = {
   notes: string | null
   developer_id: string | null
   assigned_employee_id: string | null
+  bank_name: string | null
+  bank_account: string | null
+  bank_iban: string | null
 }
 
 type DeveloperLite = {
@@ -111,7 +114,7 @@ export default async function ProjectDetailPage({
   // Fetch the project + tenant-scope.
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -240,6 +243,9 @@ export default async function ProjectDetailPage({
                 assigned_employee_id: project.assigned_employee_id ?? null,
                 notes: project.notes ?? null,
                 status: project.status ?? null,
+                bank_name: project.bank_name,
+                bank_account: project.bank_account,
+                bank_iban: project.bank_iban,
               }}
               clients={clientOptions}
               staff={staffOptions}
