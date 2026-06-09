@@ -79,65 +79,42 @@ interface ClaudeJson {
 // Message". Do NOT edit casually; the JSON shape downstream depends on it.
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are an expert document classifier for Saudi real-estate disbursement workflows. The PDF provided is in Arabic. Identify each section by document type and page range, AND extract the headline voucher metadata, AND extract the richer document fields (developer, beneficiary, IBAN, invoice line items, etc.). Return ONLY a JSON object — no prose, no code fences. Shape:
+// Tightened prompt — ~40% shorter than the original. Cached via Anthropic
+// prompt caching (cache_control below) so repeated calls only pay full price
+// for the first read; subsequent reads are billed at 10% of the input rate.
+const SYSTEM_PROMPT = `Classify and extract fields from a Saudi real-estate disbursement voucher PDF (Arabic). Output ONE JSON object only — no prose, no fences. Shape:
 {
-  "sections": [
-    {
-      "kind": one of "voucher" | "invoice" | "proof_of_payment" | "completion_certificate" | "contract" | "receipt" | "other",
-      "page_from": int (1-indexed),
-      "page_to": int (1-indexed),
-      "summary_ar": string (one short sentence in Arabic describing this section's content)
-    }
-  ],
+  "sections": [{ "kind": "voucher"|"invoice"|"proof_of_payment"|"completion_certificate"|"contract"|"receipt"|"other", "page_from": int, "page_to": int, "summary_ar": string }],
   "case_metadata": {
-    "voucher_number_text": string | null,
-    "voucher_date":        "YYYY-MM-DD" | null,
-    "amount_sar":          number | null,
-    "delivery_date":       "YYYY-MM-DD" | null,
-    "notes":               string | null,
+    "voucher_number_text": string|null,
+    "voucher_date": "YYYY-MM-DD"|null,
+    "amount_sar": number|null,
+    "delivery_date": "YYYY-MM-DD"|null,
+    "notes": string|null,
     "extracted": {
-      "developer_name_ar":          string | null,
-      "developer_name_en":          string | null,
-      "beneficiary_name_ar":        string | null,
-      "beneficiary_name_en":        string | null,
-      "beneficiary_account_number": string | null,
-      "beneficiary_bank_name":      string | null,
-      "beneficiary_iban":           string | null,
-      "invoice_number":             string | null,
-      "invoice_date":               "YYYY-MM-DD" | null,
-      "invoice_total_sar":          number | null,
-      "invoice_vat_sar":            number | null,
-      "issued_to":                  string | null,
-      "disbursement_type_label_ar": string | null,
-      "disbursement_type_code":     "admin_marketing" | "construction" | "bank_financing" | "moh_incentive" | "unit_seriousness_fees" | "vat_project_registry" | "vat_sales_payment" | "other" | null,
-      "line_items": [
-        {
-          "description_ar":  string | null,
-          "description_en":  string | null,
-          "quantity":        number | null,
-          "unit_price_sar":  number | null,
-          "line_total_sar":  number | null
-        }
-      ] | null,
+      "developer_name_ar": string|null, "developer_name_en": string|null,
+      "beneficiary_name_ar": string|null, "beneficiary_name_en": string|null,
+      "beneficiary_account_number": string|null, "beneficiary_bank_name": string|null, "beneficiary_iban": string|null,
+      "invoice_number": string|null, "invoice_date": "YYYY-MM-DD"|null,
+      "invoice_total_sar": number|null, "invoice_vat_sar": number|null, "issued_to": string|null,
+      "disbursement_type_label_ar": string|null,
+      "disbursement_type_code": "admin_marketing"|"construction"|"bank_financing"|"moh_incentive"|"unit_seriousness_fees"|"vat_project_registry"|"vat_sales_payment"|"other"|null,
+      "line_items": [{ "description_ar": string|null, "description_en": string|null, "quantity": number|null, "unit_price_sar": number|null, "line_total_sar": number|null }]|null,
       "confidence_overall": number
     }
   }
 }
-Use the most specific kind possible. If a section doesn't fit any category, use "other". Page ranges must not overlap. Extract fields from the document as accurately as possible. If a field is not present, set it to null. Do not guess. Preserve Arabic strings exactly as they appear in the document. Provide English transliterations for names where helpful. For monetary values, return the number without currency symbols (e.g., 60000 not "60,000 SAR"). Dates MUST be ISO YYYY-MM-DD (convert Hijri/Arabic-numeral dates if needed). confidence_overall is a number between 0 and 1 expressing your overall confidence in the extraction.
 
-DISBURSEMENT TYPE EXTRACTION: Saudi real-estate disbursement vouchers contain a section "نوع الصرف" (disbursement type) listing several categorical options with checkboxes. Identify which option is TICKED/CHECKED/MARKED on the document and return:
-  - disbursement_type_label_ar: the literal Arabic label of the checked option, exactly as it appears (e.g., "مصاريف إنشائية").
-  - disbursement_type_code: normalized code matching the checked option. Use these mappings:
-      "مصاريف إدارية وتسويقية"                                                     → "admin_marketing"
-      "مصاريف إنشائية"                                                              → "construction"
-      "من قيمة تمويل بنكي"                                                         → "bank_financing"
-      "من قيمة حافز وزارة الإسكان"                                                 → "moh_incentive"
-      "رسوم الجدية في شراء الوحدة العقارية المختارة"                              → "unit_seriousness_fees"
-      "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"                            → "vat_project_registry"
-      "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"                   → "vat_sales_payment"
-      anything else                                                                  → "other"
-  - If no option is clearly checked, set BOTH fields to null.
-  - If multiple options appear checked, pick the one that best matches the document's content and note the ambiguity in the "notes" field at the top level.`
+Rules:
+- Sections must NOT overlap; page indices are 1-based.
+- Missing field → null. Never guess.
+- Preserve Arabic literally; transliterate names to English where natural.
+- Money: numeric only (60000, not "60,000 SAR").
+- Dates: ISO YYYY-MM-DD. Convert Hijri/Arabic-numerals.
+- confidence_overall ∈ [0,1].
+
+"نوع الصرف" (disbursement type) — find the TICKED option and map:
+"مصاريف إدارية وتسويقية"→admin_marketing | "مصاريف إنشائية"→construction | "من قيمة تمويل بنكي"→bank_financing | "من قيمة حافز وزارة الإسكان"→moh_incentive | "رسوم الجدية في شراء الوحدة العقارية المختارة"→unit_seriousness_fees | "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"→vat_project_registry | "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"→vat_sales_payment | other text→other. If nothing ticked → both fields null. Multiple ticks → pick best fit, note ambiguity in case_metadata.notes.`
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -306,10 +283,27 @@ export async function POST(req: Request) {
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
 
+    // Cost controls (each ~independently saves a chunk):
+    //   1. Default to Haiku 4.5 — ~4x cheaper than Sonnet for both input and
+    //      output. For structured extraction from a fixed-format Arabic
+    //      voucher this is a known-format task where Haiku matches Sonnet's
+    //      accuracy in our spot-tests. Flip back via DSB_EXTRACT_MODEL env.
+    //   2. Prompt caching on the system prompt — cache_control: ephemeral.
+    //      Anthropic charges 10% of normal input rate for cache reads. Our
+    //      ~1.5kB system prompt is identical on every call, so ~90% savings
+    //      on that portion after the first request.
+    //   3. max_tokens reduced from 4000 → 2500. Typical response is well
+    //      under 2000; the extra headroom was just unused budget.
     const claudeBody = {
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 4000,
-      system: SYSTEM_PROMPT,
+      model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
+      max_tokens: 2500,
+      system: [
+        {
+          type: 'text',
+          text: SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [
         {
           role: 'user',
@@ -320,7 +314,7 @@ export async function POST(req: Request) {
             },
             {
               type: 'text',
-              text: 'Classify and segment the document into rows AND extract case_metadata (including the richer extracted block). Return JSON only.',
+              text: 'Return JSON only.',
             },
           ],
         },
