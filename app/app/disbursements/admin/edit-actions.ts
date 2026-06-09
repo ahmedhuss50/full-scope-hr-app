@@ -39,6 +39,78 @@ async function resolveStaff(): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// changeEmployeeRole — owner-only. Promote / demote any staff member among
+// the three staff roles (employee / supervisor / owner).
+//
+// Safety rails:
+//   - Caller must be an owner.
+//   - Caller cannot change their own role (avoids accidental self-lockout).
+//   - We refuse to demote the LAST owner — otherwise nobody could ever
+//     re-promote anyone. There must always be at least one owner per tenant.
+//   - Target user must belong to the same tenant.
+// ---------------------------------------------------------------------------
+
+type StaffOnlyRole = 'employee' | 'supervisor' | 'owner'
+
+export interface ChangeEmployeeRoleInput {
+  user_id: string
+  new_role: StaffOnlyRole
+}
+
+export async function changeEmployeeRole(
+  input: ChangeEmployeeRoleInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveStaff()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'تغيير الأدوار متاح للمدير فقط.' }
+  }
+  if (!input.user_id) return { ok: false, error: 'بيانات ناقصة.' }
+  if (input.user_id === caller.userId) {
+    return { ok: false, error: 'لا يمكنك تغيير دورك الخاص.' }
+  }
+  if (!['employee', 'supervisor', 'owner'].includes(input.new_role)) {
+    return { ok: false, error: 'دور غير صالح.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: target } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.user_id)
+    .maybeSingle()
+  if (!target) return { ok: false, error: 'الموظف غير موجود.' }
+  const currentRole = (target.dsb_role as StaffOnlyRole | null) ?? null
+  if (currentRole === input.new_role) {
+    return { ok: false, error: 'الدور الحالي مطابق للدور الجديد.' }
+  }
+
+  // Don't allow demoting the last owner in the tenant — otherwise nobody can
+  // re-promote anyone afterwards.
+  if (currentRole === 'owner' && input.new_role !== 'owner') {
+    const { count } = await svc
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', caller.tenantId)
+      .eq('dsb_role', 'owner')
+    if ((count ?? 0) <= 1) {
+      return { ok: false, error: 'لا يمكن تغيير دور آخر مدير في النظام.' }
+    }
+  }
+
+  const { error } = await svc
+    .from('users')
+    .update({ dsb_role: input.new_role })
+    .eq('id', input.user_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin')
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // updateClient
 // ---------------------------------------------------------------------------
 

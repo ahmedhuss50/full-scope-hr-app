@@ -7,6 +7,7 @@ import {
   SendWelcomeToUserButton,
   SendWelcomeToAllStaffButton,
 } from './WelcomeEmailButtons'
+import { ChangeRoleButton } from './ChangeRoleButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -303,6 +304,13 @@ export default async function DisbursementsAdminPage({
                           userId={e.id}
                           fullName={e.full_name ?? e.email ?? '—'}
                         />
+                        {canDelete && e.dsb_role && (
+                          <ChangeRoleButton
+                            userId={e.id}
+                            fullName={e.full_name ?? e.email ?? '—'}
+                            currentRole={e.dsb_role}
+                          />
+                        )}
                         {canDelete && (
                           <DeleteEmployeeButton
                             userId={e.id}
