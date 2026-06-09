@@ -12,6 +12,9 @@ type Client = {
   contact_email: string
   notes: string | null
   status: string | null
+  bank_name?: string | null
+  bank_account?: string | null
+  bank_iban?: string | null
 }
 
 const STATUS_OPTIONS: Array<{ value: 'active' | 'archived' | 'inactive'; label: string }> = [
@@ -37,6 +40,9 @@ export function EditClientInfo({ client }: { client: Client }) {
   const [status, setStatus] = useState<'active' | 'archived' | 'inactive'>(
     (client.status as 'active' | 'archived' | 'inactive') ?? 'active',
   )
+  const [bankName, setBankName] = useState(client.bank_name ?? '')
+  const [bankAccount, setBankAccount] = useState(client.bank_account ?? '')
+  const [bankIban, setBankIban] = useState(client.bank_iban ?? '')
 
   function reset() {
     setCompanyName(client.company_name_ar)
@@ -44,6 +50,9 @@ export function EditClientInfo({ client }: { client: Client }) {
     setContactEmail(client.contact_email)
     setNotes(client.notes ?? '')
     setStatus((client.status as 'active' | 'archived' | 'inactive') ?? 'active')
+    setBankName(client.bank_name ?? '')
+    setBankAccount(client.bank_account ?? '')
+    setBankIban(client.bank_iban ?? '')
     setError(null)
   }
 
@@ -57,6 +66,9 @@ export function EditClientInfo({ client }: { client: Client }) {
       contact_email: contactEmail,
       notes: notes || null,
       status,
+      bank_name: bankName || null,
+      bank_account: bankAccount || null,
+      bank_iban: bankIban || null,
     })
     setSaving(false)
     if (!res.ok) {
@@ -109,6 +121,25 @@ export function EditClientInfo({ client }: { client: Client }) {
         <div className="sm:col-span-2">
           <label className="text-xs font-semibold text-slate-500 mb-1 block">ملاحظات</label>
           <textarea rows={3} className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
+        </div>
+      </div>
+
+      <div className="pt-3 border-t border-slate-100 space-y-2">
+        <h4 className="serif font-bold text-sm text-slate-900">بنك المطور (الجهة الدافعة)</h4>
+        <p className="text-[11px] text-slate-500">معلومات الحساب الذي يتم الصرف منه. هذه بيانات تخص العميل، وليست بيانات المستفيد المستخرجة من كل سند.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-semibold text-slate-500 mb-1 block">اسم البنك</label>
+            <input className={inputCls} value={bankName} onChange={(e) => setBankName(e.target.value)} disabled={saving} placeholder="مثلاً: بنك البلاد" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم الحساب</label>
+            <input className={inputCls} value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} disabled={saving} dir="ltr" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs font-semibold text-slate-500 mb-1 block">الآيبان</label>
+            <input className={inputCls} value={bankIban} onChange={(e) => setBankIban(e.target.value.toUpperCase())} disabled={saving} dir="ltr" placeholder="SA__ ____ ____ ____ ____ ____" />
+          </div>
         </div>
       </div>
       {error && (

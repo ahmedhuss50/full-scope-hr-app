@@ -121,6 +121,10 @@ export interface UpdateClientInput {
   contact_email: string
   notes?: string | null
   status?: 'active' | 'archived' | 'inactive'
+  // Payer-side banking — what bank the developer pays FROM. Null clears.
+  bank_name?: string | null
+  bank_account?: string | null
+  bank_iban?: string | null
 }
 
 export async function updateClient(
@@ -146,6 +150,9 @@ export async function updateClient(
       contact_name: (input.contact_name ?? '').trim() || null,
       contact_email: contactEmail,
       notes: (input.notes ?? '').trim() || null,
+      bank_name: (input.bank_name ?? '').trim() || null,
+      bank_account: (input.bank_account ?? '').trim() || null,
+      bank_iban: (input.bank_iban ?? '').trim().toUpperCase() || null,
       ...(input.status ? { status: input.status } : {}),
     })
     .eq('id', input.client_id)

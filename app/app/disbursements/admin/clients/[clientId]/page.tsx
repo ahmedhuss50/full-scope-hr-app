@@ -17,6 +17,9 @@ type ClientRow = {
   user_id: string | null
   status: string | null
   notes: string | null
+  bank_name: string | null
+  bank_account: string | null
+  bank_iban: string | null
 }
 
 type ProjectRow = {
@@ -108,7 +111,7 @@ export default async function ClientDetailPage({
   // Fetch the client — must belong to this tenant or 404.
   const { data: clientData } = await svc
     .from('dsb_developers')
-    .select('id, company_name_ar, contact_name, contact_email, user_id, status, notes, tenant_id')
+    .select('id, company_name_ar, contact_name, contact_email, user_id, status, notes, bank_name, bank_account, bank_iban, tenant_id')
     .eq('id', clientId)
     .maybeSingle()
   if (!clientData || (clientData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -230,6 +233,9 @@ export default async function ClientDetailPage({
                 contact_email: client.contact_email ?? '',
                 notes: client.notes,
                 status: client.status,
+                bank_name: client.bank_name,
+                bank_account: client.bank_account,
+                bank_iban: client.bank_iban,
               }}
             />
             {dsbRole === 'owner' && (
@@ -274,6 +280,31 @@ export default async function ClientDetailPage({
           <div className="pt-3 border-t border-slate-100">
             <div className="text-xs text-slate-500 mb-1">ملاحظات</div>
             <div className="text-sm text-slate-700 whitespace-pre-wrap">{client.notes}</div>
+          </div>
+        )}
+        {(client.bank_name || client.bank_account || client.bank_iban) && (
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="text-xs font-semibold text-slate-500">بنك المطور (الجهة الدافعة)</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              {client.bank_name && (
+                <div>
+                  <div className="text-xs text-slate-500 mb-0.5">اسم البنك</div>
+                  <div className="font-semibold text-slate-900">{client.bank_name}</div>
+                </div>
+              )}
+              {client.bank_account && (
+                <div>
+                  <div className="text-xs text-slate-500 mb-0.5">رقم الحساب</div>
+                  <div className="font-mono text-slate-900" dir="ltr">{client.bank_account}</div>
+                </div>
+              )}
+              {client.bank_iban && (
+                <div className="sm:col-span-2">
+                  <div className="text-xs text-slate-500 mb-0.5">الآيبان</div>
+                  <div className="font-mono text-slate-900" dir="ltr">{client.bank_iban}</div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

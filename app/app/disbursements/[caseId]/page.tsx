@@ -65,7 +65,10 @@ type CaseRow = {
   extraction_model: string | null
   extracted_at: string | null
   project: { id: string; code: string; name_ar: string; assigned_employee_id: string | null } | { id: string; code: string; name_ar: string; assigned_employee_id: string | null }[] | null
-  developer: { id: string; company_name_ar: string } | { id: string; company_name_ar: string }[] | null
+  developer:
+    | { id: string; company_name_ar: string; bank_name: string | null; bank_account: string | null; bank_iban: string | null }
+    | { id: string; company_name_ar: string; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
+    | null
 }
 
 function single<T>(maybe: T | T[] | null | undefined): T | null {
@@ -94,7 +97,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     .from('dsb_cases')
     .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
-             developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`)
+             developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban)`)
     .eq('tenant_id', tenantId)
     .eq('id', params.caseId)
     .maybeSingle()
@@ -288,6 +291,56 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               </div>
             )}
           </section>
+
+          {(developer?.bank_name || developer?.bank_account || developer?.bank_iban ||
+            extractedFields?.beneficiary_bank_name || extractedFields?.beneficiary_account_number || extractedFields?.beneficiary_iban) && (
+            <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+              <h2 className="serif font-bold text-lg text-slate-900 mb-3">مسار التحويل المالي</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">من (الجهة الدافعة)</div>
+                  <div className="text-sm font-semibold text-slate-900">{developer?.company_name_ar ?? '—'}</div>
+                  {developer?.bank_name && (
+                    <div className="text-xs text-slate-700">
+                      <span className="text-slate-500">البنك:</span> {developer.bank_name}
+                    </div>
+                  )}
+                  {developer?.bank_account && (
+                    <div className="text-xs text-slate-700 font-mono" dir="ltr">
+                      <span className="font-sans text-slate-500">الحساب: </span>{developer.bank_account}
+                    </div>
+                  )}
+                  {developer?.bank_iban && (
+                    <div className="text-xs text-slate-700 font-mono" dir="ltr">
+                      <span className="font-sans text-slate-500">IBAN: </span>{developer.bank_iban}
+                    </div>
+                  )}
+                  {!developer?.bank_name && !developer?.bank_account && !developer?.bank_iban && (
+                    <div className="text-xs text-slate-500 italic">لم يتم تسجيل بيانات بنك المطور بعد.</div>
+                  )}
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-1.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">إلى (المستفيد)</div>
+                  <div className="text-sm font-semibold text-slate-900">{(extractedFields?.beneficiary_name_ar as string | null) ?? '—'}</div>
+                  {extractedFields?.beneficiary_bank_name && (
+                    <div className="text-xs text-slate-700">
+                      <span className="text-slate-500">البنك:</span> {extractedFields.beneficiary_bank_name}
+                    </div>
+                  )}
+                  {extractedFields?.beneficiary_account_number && (
+                    <div className="text-xs text-slate-700 font-mono" dir="ltr">
+                      <span className="font-sans text-slate-500">الحساب: </span>{extractedFields.beneficiary_account_number}
+                    </div>
+                  )}
+                  {extractedFields?.beneficiary_iban && (
+                    <div className="text-xs text-slate-700 font-mono" dir="ltr">
+                      <span className="font-sans text-slate-500">IBAN: </span>{extractedFields.beneficiary_iban}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
 
           {kase.signed_document_path && (
             <SignedDocumentCard
