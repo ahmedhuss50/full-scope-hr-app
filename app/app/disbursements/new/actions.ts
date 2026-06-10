@@ -40,13 +40,26 @@ async function resolveStaff(): Promise<
   }
 }
 
+/**
+ * Compute the next case number by looking at the highest existing
+ * `case_number` for this tenant and incrementing — NOT by counting rows,
+ * because deletes would drop the count and let us re-collide on a number
+ * we already used.
+ */
 async function nextCaseNumber(tenantId: string): Promise<string> {
   const svc = createSupabaseService()
-  const { count } = await svc
+  const { data } = await svc
     .from('dsb_cases')
-    .select('id', { count: 'exact', head: true })
+    .select('case_number')
     .eq('tenant_id', tenantId)
-  const n = (count ?? 0) + 1
+    .order('case_number', { ascending: false })
+    .limit(1)
+  const last = (data?.[0]?.case_number as string | undefined) ?? null
+  let n = 1
+  if (last) {
+    const m = /(\d+)\s*$/.exec(last)
+    if (m) n = parseInt(m[1], 10) + 1
+  }
   return `DSB-${String(n).padStart(4, '0')}`
 }
 
