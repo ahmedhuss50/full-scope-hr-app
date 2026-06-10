@@ -12,6 +12,7 @@ import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
 import { EditExtractedFields } from './EditExtractedFields'
+import { AiReviewButton } from './AiReviewButton'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -404,6 +405,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             </div>
             <BreakdownEditor caseId={kase.id} items={breakdownItems} readOnly={!breakdownEditable} />
           </section>
+
+          {canEditChecklist && (
+            <div className="flex items-center justify-end">
+              <AiReviewButton caseId={kase.id} />
+            </div>
+          )}
 
           <ChecklistEditor
             caseId={kase.id}
