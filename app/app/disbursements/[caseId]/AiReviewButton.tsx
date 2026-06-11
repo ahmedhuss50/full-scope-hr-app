@@ -75,8 +75,8 @@ export function AiReviewButton({ caseId }: { caseId: string }) {
               : 'border-amber-200 bg-amber-50 text-amber-800'
           }`}>
             {result.verdicts === result.total_items
-              ? `✓ تم تقييم ${result.verdicts} من ${result.total_items} بند — التكلفة $${result.cost_usd.toFixed(4)}`
-              : `⚠ تم تقييم ${result.verdicts} من ${result.total_items} بند فقط (تخطّى ${result.missed_codes.length}) — التكلفة $${result.cost_usd.toFixed(4)}. شغّل المراجعة مرة أخرى لإكمالها.`}
+              ? `✓ تمت المراجعة`
+              : `⚠ تمت المراجعة جزئيًا (${result.verdicts} من ${result.total_items} بند). شغّل المراجعة مرة أخرى لإكمالها.`}
           </div>
         )}
         {result && !result.ok && (
