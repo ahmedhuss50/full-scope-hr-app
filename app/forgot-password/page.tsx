@@ -24,9 +24,13 @@ function ForgotInner() {
     try {
       const supabase = createSupabaseBrowser()
       const siteUrl = process.env.NEXT_PUBLIC_APP_URL ?? window.location.origin
+      // Route the email link through /auth/callback so Supabase's PKCE code
+      // is exchanged for a real session before the user lands on
+      // /reset-password (otherwise updateUser({password}) fails with
+      // "Auth session missing").
       const { error: resetErr } = await supabase.auth.resetPasswordForEmail(
         email.trim().toLowerCase(),
-        { redirectTo: `${siteUrl}/reset-password` },
+        { redirectTo: `${siteUrl}/auth/callback?next=/reset-password` },
       )
       if (resetErr) {
         console.error(resetErr)

@@ -30,19 +30,46 @@ function ResetInner() {
 
   useEffect(() => {
     const supabase = createSupabaseBrowser()
-    // Subscribe to detect the PASSWORD_RECOVERY event after Supabase parses
-    // the URL fragment. If we're already signed in (warm session, e.g. user
-    // wanted to change their password while logged in), just allow it.
+    let cancelled = false
+
+    // If an older reset email link landed us here directly with a `?code=`
+    // in the URL (i.e. it skipped /auth/callback), exchange it ourselves so
+    // updateUser({password}) below has a real session to write against.
+    async function tryExchangeFromUrl() {
+      if (typeof window === 'undefined') return
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+      if (!code) return
+      try {
+        await supabase.auth.exchangeCodeForSession(code)
+      } catch {
+        /* fall through; getSession below will catch the missing-session case */
+      } finally {
+        // Tidy the URL so a refresh doesn't try to re-exchange a used code.
+        if (!cancelled) {
+          const cleaned = window.location.pathname + window.location.hash
+          window.history.replaceState(null, '', cleaned)
+        }
+      }
+    }
+
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
         setReady(true)
       }
     })
-    // Also check current session right away — covers the warm-session case.
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setReady(true)
+
+    tryExchangeFromUrl().then(() => {
+      if (cancelled) return
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) setReady(true)
+      })
     })
-    return () => sub.subscription.unsubscribe()
+
+    return () => {
+      cancelled = true
+      sub.subscription.unsubscribe()
+    }
   }, [])
 
   async function onSubmit(e: React.FormEvent) {
