@@ -42,21 +42,96 @@ const PRICING: Record<string, { input: number; output: number; cacheRead: number
   'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 },
 }
 
+/**
+ * Robust JSON extractor — handles:
+ *   - raw JSON
+ *   - ```json … ``` fenced blocks with arbitrary whitespace/newlines
+ *   - prose preambles before the JSON
+ *   - TRUNCATED arrays (max_tokens hit mid-object) — repair by trimming the
+ *     last incomplete element and closing the bracket so we keep whatever
+ *     verdicts the AI managed to write before running out of room.
+ */
 function extractJson(text: string): unknown {
-  const stripped = text.trim().replace(/^```(json)?/i, '').replace(/```$/i, '').trim()
-  try { return JSON.parse(stripped) } catch { /* fall through */ }
+  // 1. Remove all ```language fences anywhere in the text, not just at edges.
+  const stripped = text
+    .replace(/```(?:json|jsonc)?\s*/gi, '')
+    .replace(/```/g, '')
+    .trim()
+  try {
+    return JSON.parse(stripped)
+  } catch {
+    /* fall through */
+  }
+
+  // 2. Find the JSON array (preferred for ai-review output).
+  const firstA = stripped.indexOf('[')
+  if (firstA >= 0) {
+    const lastA = stripped.lastIndexOf(']')
+    if (lastA > firstA) {
+      try {
+        return JSON.parse(stripped.slice(firstA, lastA + 1))
+      } catch {
+        /* might be truncated — fall through to repair */
+      }
+    }
+    // 3. Repair a truncated array: walk objects, keep complete ones, close `]`.
+    const repaired = repairTruncatedArray(stripped.slice(firstA))
+    if (repaired) {
+      try {
+        return JSON.parse(repaired)
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  // 4. Object form fallback (in case the AI ignored the array spec).
   const first = stripped.indexOf('{')
   const last = stripped.lastIndexOf('}')
   if (first >= 0 && last > first) {
-    try { return JSON.parse(stripped.slice(first, last + 1)) } catch { /* fall through */ }
+    try {
+      return JSON.parse(stripped.slice(first, last + 1))
+    } catch {
+      /* fall through */
+    }
   }
-  // Try array form
-  const firstA = stripped.indexOf('[')
-  const lastA = stripped.lastIndexOf(']')
-  if (firstA >= 0 && lastA > firstA) {
-    try { return JSON.parse(stripped.slice(firstA, lastA + 1)) } catch { /* fall through */ }
+
+  throw new Error('Claude returned non-JSON: ' + text.slice(0, 300))
+}
+
+/**
+ * Given a string starting with `[` that may be truncated, walk through it
+ * tracking string/brace depth and return a string that ends at the boundary
+ * of the last COMPLETE object inside the array — closed with `]`.
+ */
+function repairTruncatedArray(s: string): string | null {
+  let depth = 0
+  let inString = false
+  let escape = false
+  let lastCompleteObjectEnd = -1
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inString) {
+      if (escape) {
+        escape = false
+      } else if (ch === '\\') {
+        escape = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) lastCompleteObjectEnd = i
+    }
   }
-  throw new Error('Claude returned non-JSON: ' + text.slice(0, 200))
+  if (lastCompleteObjectEnd === -1) return null
+  return s.slice(0, lastCompleteObjectEnd + 1) + ']'
 }
 
 function jsonError(error: string, status = 400) {
@@ -141,13 +216,13 @@ export async function POST(req: Request) {
 PROTOCOL — REPEAT FOR EVERY ITEM IN ORDER:
   STEP A — READ: Re-read the Arabic prompt of the current item carefully so you know exactly what is being asked.
   STEP B — SEARCH: Scan the PDF looking for the specific section, signature, value, date, calculation, or attachment that would satisfy this item. Note the page number(s) where evidence appears (or note that nothing was found).
-  STEP C — RECORD EVIDENCE: Write down what you observed in the PDF for this item — even if nothing — in the "evidence_ar" field. This must be factual ("ظهر التوقيع في الصفحة ٣", "لم أجد المبلغ في أي صفحة", etc.), NOT a conclusion.
+  STEP C — RECORD EVIDENCE: Write down what you observed in the PDF for this item — even if nothing — in the "evidence_ar" field. Keep this CONCISE (≤ 15 Arabic words). Be factual ("ظهر التوقيع في الصفحة ٣"), not a conclusion.
   STEP D — DECIDE VERDICT:
      - "verified"      — clearly satisfied / present in the document with the expected value, format, date, or signature.
      - "issue"         — addressed but flawed: wrong value, missing field, mismatched name, expired date, calculation error, illegible signature, etc.
      - "not_mentioned" — the document does not address this item at all.
      - "not_attached"  — the item references a supporting document (invoice/receipt/certificate/contract/proof) that is NOT present in the PDF.
-  STEP E — RATIONALE: One brief Arabic sentence (≤ 30 words) explaining WHY you chose this verdict, citing the page number when applicable.
+  STEP E — RATIONALE: One brief Arabic sentence (≤ 15 words) explaining WHY you chose this verdict.
 
 After finishing one item, move to the next. Do NOT batch items. Do NOT skip items. Do NOT change the order. Do NOT invent evidence — if you can't find something, say so honestly.
 
@@ -175,10 +250,12 @@ Reminder: return JSON array only — no prose, no markdown.`
 
     const claudeBody = {
       model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
-      // Larger ceiling than extraction because each item now carries
-      // evidence + page_ref + rationale (≈ 80 tokens × 19 items ≈ 1.5k output)
-      // plus padding for longer documents with many sections.
-      max_tokens: 4000,
+      // Each item carries 5 fields (code, evidence_ar, page_ref, status,
+      // rationale_ar). With 19 items and Arabic verbosity that's typically
+      // 2-3k output tokens; 6000 gives comfortable headroom so we don't
+      // truncate mid-array. extractJson also self-heals truncated arrays as
+      // a safety net.
+      max_tokens: 6000,
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages: [
         {
