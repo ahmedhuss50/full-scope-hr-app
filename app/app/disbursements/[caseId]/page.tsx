@@ -13,6 +13,7 @@ import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
 import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
+import { ReplaceDocumentButton } from './ReplaceDocumentButton'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -117,9 +118,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   const developer = single(kase.developer)
   const pill = statusPill(kase.status)
 
+  // Include version-tracking fields: superseded_at filters CURRENT (active) vs
+  // historical uploads. We display the most recent NON-superseded one as the
+  // primary PDF; historical rows show in the version-history list.
   const { data: uploads } = await svc
     .from('dsb_uploads')
-    .select('id, filename, storage_path, storage_bucket, uploaded_at, file_size_bytes')
+    .select('id, filename, storage_path, storage_bucket, uploaded_at, file_size_bytes, superseded_at, replaced_by_user_id, replacement_reason')
     .eq('tenant_id', tenantId)
     .eq('case_id', params.caseId)
     .order('uploaded_at', { ascending: false })
@@ -204,7 +208,23 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     (kase.status === 'with_supervisor' && dsbRole === 'supervisor') ||
     (kase.status === 'with_owner' && dsbRole === 'owner')
 
-  const upload = (uploads ?? [])[0] as { id: string; filename: string; storage_path: string | null; storage_bucket: string | null; uploaded_at: string; file_size_bytes: number | null } | undefined
+  // Find the CURRENT (non-superseded) upload — that's the active PDF reviewers
+  // should see. Historical versions still live in `uploads`; we surface them
+  // in the document-history card below the main PDF section.
+  type UploadRow = {
+    id: string
+    filename: string
+    storage_path: string | null
+    storage_bucket: string | null
+    uploaded_at: string
+    file_size_bytes: number | null
+    superseded_at: string | null
+    replaced_by_user_id: string | null
+    replacement_reason: string | null
+  }
+  const allUploads = (uploads ?? []) as UploadRow[]
+  const upload = allUploads.find((u) => !u.superseded_at)
+  const supersededUploads = allUploads.filter((u) => u.superseded_at)
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
@@ -379,7 +399,19 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           )}
 
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
-            <h2 className="serif font-bold text-lg text-slate-900">ملف PDF</h2>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h2 className="serif font-bold text-lg text-slate-900">ملف PDF</h2>
+              {upload && (dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner') && (
+                <ReplaceDocumentButton caseId={kase.id} />
+              )}
+            </div>
+
+            {supersededUploads.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 leading-relaxed">
+                ⚠ تم استبدال الوثيقة الأصلية. النسخة الحالية هي أحدث نسخة مرفوعة. النسخ السابقة محفوظة في السجل أدناه.
+              </div>
+            )}
+
             {!upload ? (
               <div className="text-sm text-slate-500">لا يوجد ملف مرفوع.</div>
             ) : (
@@ -388,11 +420,36 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-slate-900 truncate">{upload.filename}</div>
                   <div className="text-[11px] text-slate-500 font-mono">
-                    {upload.file_size_bytes ? `${(upload.file_size_bytes / 1024 / 1024).toFixed(2)} MB · ` : ''}{fmtDate(upload.uploaded_at)}
+                    {upload.file_size_bytes ? `${(upload.file_size_bytes / 1024 / 1024).toFixed(2)} MB · ` : ''}{fmtDateTime(upload.uploaded_at)}
                   </div>
                 </div>
                 <PdfOpener caseId={kase.id} uploadId={upload.id} />
               </div>
+            )}
+
+            {supersededUploads.length > 0 && (
+              <details className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <summary className="text-xs font-semibold text-slate-700 cursor-pointer">
+                  سجل النسخ السابقة ({supersededUploads.length})
+                </summary>
+                <ul className="mt-2 space-y-2">
+                  {supersededUploads.map((u) => (
+                    <li key={u.id} className="flex items-center gap-3 p-2 rounded-md border border-slate-200 bg-white">
+                      <FileText className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-slate-700 truncate">{u.filename}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          رُفعت {fmtDateTime(u.uploaded_at)} · استُبدلت {u.superseded_at ? fmtDateTime(u.superseded_at) : '—'}
+                        </div>
+                        {u.replacement_reason && (
+                          <div className="text-[11px] text-slate-600 mt-0.5 leading-snug">السبب: {u.replacement_reason}</div>
+                        )}
+                      </div>
+                      <PdfOpener caseId={kase.id} uploadId={u.id} />
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
           </section>
 

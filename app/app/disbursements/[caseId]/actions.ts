@@ -828,6 +828,154 @@ export async function updateCaseFields(
 }
 
 // ----------------------------------------------------------------------------
+// Document replacement — staff can swap the case's PDF for an updated
+// version during review (developer sent wrong file, scan was unclear, etc.).
+// Old version stays in Storage; superseded_at marks it as historical. The
+// new version becomes the current upload (one current per case enforced by
+// a partial unique index). Any staff role can do this.
+// ----------------------------------------------------------------------------
+
+export interface RequestReplacementUploadUrlInput {
+  case_id: string
+  filename: string
+  size: number
+}
+
+export type RequestReplacementUploadUrlResult =
+  | { ok: true; signed_url: string; storage_path: string }
+  | { ok: false; error: string }
+
+export async function requestReplacementUploadUrl(
+  input: RequestReplacementUploadUrlInput,
+): Promise<RequestReplacementUploadUrlResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+  if (input.size > 50 * 1024 * 1024) {
+    return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const uuid = crypto.randomUUID()
+  const safe = (input.filename || `replacement-${uuid}.pdf`).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180)
+  const storagePath = `dsb/${caller.tenantId}/${input.case_id}/${uuid}-${safe}`
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath)
+  if (error || !data) {
+    console.error('[dsb.requestReplacementUploadUrl] failed', error)
+    return { ok: false, error: 'تعذّر إنشاء رابط الرفع.' }
+  }
+  return { ok: true, signed_url: data.signedUrl, storage_path: data.path ?? storagePath }
+}
+
+export interface FinalizeReplacementInput {
+  case_id: string
+  storage_path: string
+  filename: string
+  size: number
+  mime: string
+  reason: string | null
+}
+
+export type FinalizeReplacementResult =
+  | { ok: true; new_upload_id: string; superseded_count: number }
+  | { ok: false; error: string }
+
+export async function finalizeReplacementUpload(
+  input: FinalizeReplacementInput,
+): Promise<FinalizeReplacementResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id || !input.storage_path) {
+    return { ok: false, error: 'بيانات ناقصة.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, case_number')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const now = new Date().toISOString()
+  const reason = (input.reason ?? '').trim().slice(0, 500) || null
+
+  // Step 1: mark every currently-active upload for this case as superseded.
+  // The partial unique index would otherwise reject the new INSERT.
+  const { data: currentRows, error: supErr } = await svc
+    .from('dsb_uploads')
+    .update({
+      superseded_at: now,
+      replaced_by_user_id: caller.userId,
+      replacement_reason: reason,
+    })
+    .eq('tenant_id', caller.tenantId)
+    .eq('case_id', input.case_id)
+    .is('superseded_at', null)
+    .select('id')
+  if (supErr) {
+    console.error('[dsb.finalizeReplacementUpload] supersede failed', supErr)
+    return { ok: false, error: supErr.message }
+  }
+  const supersededCount = (currentRows ?? []).length
+
+  // Step 2: insert the new upload as the new current version.
+  const safeName = (input.filename ?? '').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180)
+  const { data: newRow, error: insErr } = await svc
+    .from('dsb_uploads')
+    .insert({
+      tenant_id: caller.tenantId,
+      case_id: input.case_id,
+      filename: safeName || 'replacement.pdf',
+      storage_path: input.storage_path,
+      storage_bucket: STORAGE_BUCKET,
+      file_size_bytes: input.size,
+      mime_type: input.mime || 'application/pdf',
+      uploaded_by_user_id: caller.userId,
+    })
+    .select('id')
+    .single()
+  if (insErr || !newRow) {
+    console.error('[dsb.finalizeReplacementUpload] insert failed', insErr)
+    return { ok: false, error: insErr?.message ?? 'تعذّر تسجيل النسخة الجديدة.' }
+  }
+
+  // Step 3: audit log (single row capturing the swap).
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'document_replaced',
+    actor_user_id: caller.userId,
+    notes:
+      `تم استبدال الوثيقة (${supersededCount} نسخة سابقة → نسخة جديدة)` +
+      (reason ? `. السبب: ${reason}` : ''),
+    occurred_at: now,
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true, new_upload_id: newRow.id as string, superseded_count: supersededCount }
+}
+
+// ----------------------------------------------------------------------------
 // requestSignedDocumentUploadUrl — direct-to-Storage signed URL for the
 // owner's manually-signed PDF. Mirrors the developer-side direct-upload
 // pattern so we bypass Vercel's 4.5MB request body limit. The client PUTs the
