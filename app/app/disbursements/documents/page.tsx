@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FileText, Download } from 'lucide-react'
 import { fmtDateTime } from '@/lib/dsb/datetime'
+import { CaseFiltersBar } from '../CaseFiltersBar'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,7 +39,19 @@ function single<T>(maybe: T | T[] | null | undefined): T | null {
   return Array.isArray(maybe) ? (maybe[0] ?? null) : maybe
 }
 
-export default async function DeliveryDocumentsRegisterPage() {
+export default async function DeliveryDocumentsRegisterPage({
+  searchParams,
+}: {
+  searchParams?: {
+    client?: string
+    project?: string
+    employee?: string
+    status?: string
+    from?: string
+    to?: string
+    q?: string
+  }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -58,7 +71,54 @@ export default async function DeliveryDocumentsRegisterPage() {
 
   const tenantId = profile.tenant_id as string
 
-  const { data: casesData } = await svc
+  // ---------- Filters from URL ----------
+  const f = searchParams ?? {}
+  const fClient   = (f.client   ?? '').trim() || null
+  const fProject  = (f.project  ?? '').trim() || null
+  const fEmployee = (f.employee ?? '').trim() || null
+  const fFrom     = (f.from     ?? '').trim() || null
+  const fTo       = (f.to       ?? '').trim() || null
+  const fQ        = (f.q        ?? '').trim() || null
+
+  // If filtering by employee, resolve their assigned projects first.
+  let projectIdsForEmployee: string[] | null = null
+  if (fEmployee) {
+    const { data: empProjects } = await svc
+      .from('dsb_projects')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('assigned_employee_id', fEmployee)
+    projectIdsForEmployee = ((empProjects ?? []) as { id: string }[]).map((p) => p.id)
+  }
+
+  // ---------- Dropdown options for the filter bar ----------
+  const [clientOptsRes, projectOptsRes, employeeOptsRes] = await Promise.all([
+    svc
+      .from('dsb_developers')
+      .select('id, company_name_ar')
+      .eq('tenant_id', tenantId)
+      .order('company_name_ar', { ascending: true }),
+    svc
+      .from('dsb_projects')
+      .select('id, code, name_ar, developer_id')
+      .eq('tenant_id', tenantId)
+      .order('code', { ascending: true }),
+    svc
+      .from('users')
+      .select('id, full_name')
+      .eq('tenant_id', tenantId)
+      .in('dsb_role', ['employee', 'supervisor', 'owner'])
+      .order('full_name', { ascending: true }),
+  ])
+  const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
+    .map((c) => ({ id: c.id, label: c.company_name_ar }))
+  const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
+    .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
+  const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
+    .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
+
+  // ---------- Build the cases query with filters applied ----------
+  let casesQuery = svc
     .from('dsb_cases')
     .select(
       `id, case_number, voucher_number_text, amount_sar, signed_at, signed_by_user_id,
@@ -67,7 +127,23 @@ export default async function DeliveryDocumentsRegisterPage() {
     )
     .eq('tenant_id', tenantId)
     .eq('status', 'signed')
-    .order('signed_at', { ascending: false })
+  if (fClient) casesQuery = casesQuery.eq('developer_id', fClient)
+  if (fProject) casesQuery = casesQuery.eq('project_id', fProject)
+  // The register is signed-only; "from" / "to" here filter by signed_at.
+  if (fFrom) casesQuery = casesQuery.gte('signed_at', `${fFrom}T00:00:00+03`)
+  if (fTo) casesQuery = casesQuery.lte('signed_at', `${fTo}T23:59:59+03`)
+  if (fQ) casesQuery = casesQuery.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+  // Employee filter: if they have zero projects, force a no-match by using
+  // an impossible UUID list. Supabase's .in() with an empty array returns
+  // everything, which would be the wrong semantic here.
+  if (projectIdsForEmployee !== null) {
+    const projectFilterIds =
+      projectIdsForEmployee.length === 0
+        ? ['00000000-0000-0000-0000-000000000000']
+        : projectIdsForEmployee
+    casesQuery = casesQuery.in('project_id', projectFilterIds)
+  }
+  const { data: casesData } = await casesQuery.order('signed_at', { ascending: false })
   const cases = (casesData ?? []) as SignedCaseRow[]
 
   // Resolve signer names in bulk.
@@ -108,6 +184,12 @@ export default async function DeliveryDocumentsRegisterPage() {
           كل الطلبات الموقّعة نهائياً — جاهزة لإصدار وثيقة التسليم.
         </p>
       </header>
+
+      <CaseFiltersBar
+        clients={clientOptions}
+        projects={projectOptions}
+        employees={employeeOptions}
+      />
 
       {cases.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500 shadow-sm">
