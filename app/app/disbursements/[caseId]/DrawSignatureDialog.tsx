@@ -4,6 +4,10 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { PenLine, X, Eraser, Check, Undo2 } from 'lucide-react'
 import { signCaseWithDrawnSignature } from './actions'
+// Type-only import — the runtime module is loaded dynamically inside
+// useEffect so it stays out of the SSR bundle. Importing the type here
+// just gives us proper inference on the ref.
+import type SignaturePad from 'signature_pad'
 
 /**
  * In-app draw-to-sign for the owner.
@@ -24,14 +28,9 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const [hasDrawn, setHasDrawn] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   // The pad lives in a ref so the React render cycle doesn't recreate it.
-  // We also use toData/fromData to support per-stroke undo.
-  const padRef = useRef<{
-    clear: () => void
-    isEmpty: () => boolean
-    toDataURL: (mime?: string) => string
-    toData: () => unknown[]
-    fromData: (data: unknown[]) => void
-  } | null>(null)
+  // We use signature_pad's own type so toData/fromData stay strongly typed
+  // for the undo flow.
+  const padRef = useRef<SignaturePad | null>(null)
 
   // Load + bind signature_pad after the canvas mounts.
   useEffect(() => {
