@@ -12,6 +12,7 @@ import {
   DollarSign,
   CheckCircle2,
   TrendingUp,
+  type LucideIcon,
 } from 'lucide-react'
 import { fmtDate } from '@/lib/dsb/datetime'
 
@@ -545,7 +546,7 @@ function Kpi({
   value,
   hint,
 }: {
-  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
+  icon: LucideIcon
   label: string
   value: string
   hint?: string
@@ -568,7 +569,7 @@ function Card({
   children,
 }: {
   title: string
-  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
+  icon: LucideIcon
   children: React.ReactNode
 }) {
   return (
