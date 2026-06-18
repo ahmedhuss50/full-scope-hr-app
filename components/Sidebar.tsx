@@ -25,6 +25,7 @@ export type SidebarCounts = {
 export type SidebarUser = {
   full_name: string | null
   email: string | null
+  dsb_role?: 'employee' | 'supervisor' | 'owner' | 'developer' | null
 }
 
 type Item = {
@@ -73,12 +74,22 @@ const ESCROW_ITEMS: Item[] = [
 ]
 
 // Disbursements (الصرف) — the active workflow module after the pivot.
+// `Reports` is appended below at render time for owner users only; building
+// it conditionally keeps the rest of the static list cacheable.
 const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements',           labelKey: 'dsb.nav.home',      icon: LayoutDashboard },
   { href: '/app/disbursements/board',     labelKey: 'dsb.nav.board',     icon: Inbox },
   { href: '/app/disbursements/documents', labelKey: 'dsb.nav.documents', icon: FileText },
   { href: '/app/disbursements/admin',     labelKey: 'dsb.nav.admin',     icon: Settings },
 ]
+// Owner-only addition. Using a plain Arabic label because we don't have a
+// translation key for "reports" yet; the rest of the module already mixes
+// keyed and inline strings.
+const DSB_REPORTS_ITEM: Item = {
+  href: '/app/disbursements/reports',
+  labelKey: 'dsb.nav.reports' as StringKey,
+  icon: BarChart3,
+}
 
 function isActive(pathname: string, href: string) {
   // Strip query strings — nav items may include ?tab=… for tabbed sub-pages.
@@ -126,10 +137,15 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
   // brand header + sign-out. The user is choosing a module, not navigating
   // inside one.
   const showModuleNav = currentModule === 'hr' || currentModule === 'dms' || currentModule === 'crm' || currentModule === 'dsb'
+  // Append the Reports item to DSB nav only for managers. Plays nice with
+  // the static base list — non-owners never see the link or get a chance
+  // to navigate to /reports.
+  const dsbItemsForUser =
+    user.dsb_role === 'owner' ? [...DSB_ITEMS, DSB_REPORTS_ITEM] : DSB_ITEMS
   const items =
     currentModule === 'dms'    ? DMS_ITEMS :
     currentModule === 'crm'    ? CRM_ITEMS :
-    currentModule === 'dsb'    ? DSB_ITEMS :
+    currentModule === 'dsb'    ? dsbItemsForUser :
     currentModule === 'escrow' ? ESCROW_ITEMS :
     HR_ITEMS
 

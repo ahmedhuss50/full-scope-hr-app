@@ -14,7 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const svc = createSupabaseService()
   const { data: profile } = await svc
     .from('users')
-    .select('id, tenant_id, full_name, locale, tenants(name, slug)')
+    .select('id, tenant_id, full_name, locale, dsb_role, tenants(name, slug)')
     .eq('email', user.email!)
     .maybeSingle()
 
@@ -127,7 +127,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="app-shell flex min-h-screen">
         <Sidebar
           counts={counts}
-          user={{ full_name: profile.full_name as string | null, email: user.email ?? null }}
+          user={{
+            full_name: profile.full_name as string | null,
+            email: user.email ?? null,
+            dsb_role: (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | null) ?? null,
+          }}
         />
         <div className="flex-1 min-w-0 flex flex-col">
           <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">

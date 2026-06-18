@@ -1725,6 +1725,7 @@ export const strings = {
   // Disbursements admin (Full Scope staff: manage clients + projects)
   // -----------------------------------------------------------------
   'dsb.nav.admin':                     { en: 'Admin',                ar: 'إدارة' },
+  'dsb.nav.reports':                   { en: 'Reports',              ar: 'تقرير' },
 
   'dsb.admin.title':                   { en: 'Document review admin',  ar: 'إدارة مراجعة المستندات' },
   'dsb.admin.subtitle':                { en: 'Manage clients and projects.',
