@@ -1248,6 +1248,41 @@ export async function signCaseWithUploadedDocument(
 }
 
 // ----------------------------------------------------------------------------
+// getCurrentSignerInfo — name + role label for prefilling the signature
+// block (الاسم / المنصب). Caller-scoped, owner only (matches sign permission).
+// ----------------------------------------------------------------------------
+
+export async function getCurrentSignerInfo(): Promise<
+  | { ok: true; full_name: string; position_ar: string; email: string }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'التوقيع متاح للمدير فقط.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data } = await svc
+    .from('users')
+    .select('full_name')
+    .eq('id', caller.userId)
+    .maybeSingle()
+  const positionAr =
+    caller.dsbRole === 'owner'
+      ? 'مدير'
+      : caller.dsbRole === 'supervisor'
+        ? 'مشرف'
+        : 'مراجع'
+  return {
+    ok: true,
+    full_name: (data?.full_name as string | null) ?? caller.email,
+    position_ar: positionAr,
+    email: caller.email,
+  }
+}
+
+// ----------------------------------------------------------------------------
 // getCurrentUploadSignedUrl — short-lived signed URL to fetch the case's
 // current (non-superseded) PDF for in-app preview (used by the click-to-place
 // signature dialog). Any staff role.
@@ -1431,24 +1466,6 @@ export async function signCaseWithDrawnSignature(
       y: imgY,
       width: pngDims.width,
       height: pngDims.height,
-    })
-
-    // Add timestamp + signer text directly under the signature.
-    const ts = new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })
-    const helvetica = await pdfDoc.embedFont('Helvetica')
-    const captionY1 = Math.max(14, imgY - 10)
-    const captionY2 = Math.max(4, imgY - 20)
-    targetPage.drawText(`Signed by Full Scope (${caller.email})`, {
-      x: imgX,
-      y: captionY1,
-      size: 7,
-      font: helvetica,
-    })
-    targetPage.drawText(`At: ${ts} (AST)`, {
-      x: imgX,
-      y: captionY2,
-      size: 7,
-      font: helvetica,
     })
 
     outputPdfBytes = await pdfDoc.save()

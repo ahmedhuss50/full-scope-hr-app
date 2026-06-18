@@ -3,8 +3,59 @@
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft } from 'lucide-react'
-import { signCaseWithDrawnSignature, getCurrentUploadSignedUrl } from './actions'
+import {
+  signCaseWithDrawnSignature,
+  getCurrentUploadSignedUrl,
+  getCurrentSignerInfo,
+} from './actions'
 import type SignaturePad from 'signature_pad'
+
+// Aref Ruqaa — Google Font, handwritten-style Arabic. Loaded once and cached
+// in the browser. Falls back gracefully to system fonts if blocked.
+const AREF_RUQAA_CSS = `
+@font-face {
+  font-family: 'Aref Ruqaa';
+  font-style: normal;
+  font-weight: 400;
+  src: url(https://fonts.gstatic.com/s/arefruqaa/v25/WwkbxPW1E165rajQKDulKDwNcNIS2N_8AcQ.woff2) format('woff2');
+}
+`
+
+let arefRuqaaLoaded: Promise<void> | null = null
+function loadArefRuqaa(): Promise<void> {
+  if (arefRuqaaLoaded) return arefRuqaaLoaded
+  arefRuqaaLoaded = (async () => {
+    if (typeof document === 'undefined') return
+    if (!document.getElementById('aref-ruqaa-css')) {
+      const style = document.createElement('style')
+      style.id = 'aref-ruqaa-css'
+      style.textContent = AREF_RUQAA_CSS
+      document.head.appendChild(style)
+    }
+    try {
+      await document.fonts.load('24px "Aref Ruqaa"')
+    } catch {
+      /* swallow — fallback fonts will be used */
+    }
+  })()
+  return arefRuqaaLoaded
+}
+
+const AR_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩']
+function toArabicDigits(s: string): string {
+  return s.replace(/\d/g, (d) => AR_DIGITS[Number(d)] ?? d)
+}
+function todayArabic(): string {
+  const now = new Date()
+  // Saudi locale, long month name, Riyadh time zone.
+  const dt = new Intl.DateTimeFormat('ar-SA', {
+    timeZone: 'Asia/Riyadh',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(now)
+  return toArabicDigits(dt)
+}
 
 /**
  * In-app draw-to-sign with click-to-place positioning.
@@ -33,6 +84,13 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Signer block fields. Pre-fill name/position from getCurrentSignerInfo on
+  // first open; user can edit either before saving. Date is auto-today and
+  // not editable (the system records WHEN you signed).
+  const [signerName, setSignerName] = useState('')
+  const [signerPosition, setSignerPosition] = useState('')
+  const [signerDate, setSignerDate] = useState('')
+
   // PDF state
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [pdfDoc, setPdfDoc] = useState<{
@@ -52,7 +110,7 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
 
-  // ----- Fetch the case PDF (signed URL) when dialog opens -----
+  // ----- Fetch the case PDF + signer info when dialog opens -----
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -62,14 +120,25 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     setPageIndex(0)
     setMarker(null)
     setHasDrawn(false)
+    setSignerDate(todayArabic())
+    // Preload the handwritten-style Arabic font so it's ready when we render
+    // the composite canvas later.
+    void loadArefRuqaa()
     ;(async () => {
-      const res = await getCurrentUploadSignedUrl({ case_id: caseId })
+      const [pdfRes, signerRes] = await Promise.all([
+        getCurrentUploadSignedUrl({ case_id: caseId }),
+        getCurrentSignerInfo(),
+      ])
       if (cancelled) return
-      if (!res.ok) {
-        setError(res.error)
+      if (!pdfRes.ok) {
+        setError(pdfRes.error)
         return
       }
-      setPdfUrl(res.url)
+      setPdfUrl(pdfRes.url)
+      if (signerRes.ok) {
+        setSignerName(signerRes.full_name)
+        setSignerPosition(signerRes.position_ar)
+      }
     })()
     return () => { cancelled = true }
   }, [open, caseId])
@@ -175,26 +244,120 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     setHasDrawn(data.length > 0)
   }
 
+  /**
+   * Build a composite signature image (PNG data URL) that contains the
+   * three labels (الاسم / المنصب / التاريخ) rendered in a handwritten-style
+   * Arabic font + the drawn signature underneath. Composite is what gets
+   * embedded in the PDF, so position/sizing of the whole block is consistent.
+   */
+  async function buildCompositeSignature(): Promise<string> {
+    await loadArefRuqaa()
+    const pad = padRef.current
+    if (!pad) throw new Error('signature pad missing')
+    const signatureDataUrl = pad.toDataURL('image/png')
+    const sigImg = new Image()
+    sigImg.src = signatureDataUrl
+    await new Promise<void>((resolve, reject) => {
+      sigImg.onload = () => resolve()
+      sigImg.onerror = () => reject(new Error('signature load failed'))
+    })
+
+    // Use a high-DPI canvas so the composite stays crisp when the PDF is
+    // viewed at high zoom levels.
+    const ratio = 3
+    const W = 520
+    const H = 280
+    const canvas = document.createElement('canvas')
+    canvas.width = W * ratio
+    canvas.height = H * ratio
+    const ctx = canvas.getContext('2d')!
+    ctx.scale(ratio, ratio)
+    // Transparent background — the PDF page color shows through.
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = '#0f172a'
+    ctx.direction = 'rtl'
+    ctx.textAlign = 'right'
+
+    const fontStack = '"Aref Ruqaa", "Amiri", "Times New Roman", serif'
+    const labelSize = 20
+    const valueSize = 22
+
+    function drawRow(labelAr: string, value: string, y: number) {
+      // Label in bold-ish smaller; value larger to feel more handwritten.
+      ctx.font = `${labelSize}px ${fontStack}`
+      ctx.fillStyle = '#475569'
+      ctx.fillText(labelAr, W - 12, y)
+      const labelW = ctx.measureText(labelAr).width
+      ctx.font = `${valueSize}px ${fontStack}`
+      ctx.fillStyle = '#0f172a'
+      ctx.fillText(value, W - 12 - labelW - 6, y)
+    }
+
+    drawRow('الاسم:',   signerName  || '—',     32)
+    drawRow('المنصب:',  signerPosition || '—',  62)
+    drawRow('التاريخ:', signerDate || todayArabic(), 92)
+
+    // Signature label + image.
+    ctx.font = `${labelSize}px ${fontStack}`
+    ctx.fillStyle = '#475569'
+    ctx.fillText('التوقيع:', W - 12, 124)
+
+    // Place signature image at top-right, leaving room for label.
+    const sigBoxW = 320
+    const sigBoxH = 130
+    const sigBoxX = W - 12 - sigBoxW
+    const sigBoxY = 130
+    // Letter-box the signature inside (preserve aspect).
+    const sw = sigImg.width
+    const sh = sigImg.height
+    const scale = Math.min(sigBoxW / sw, sigBoxH / sh)
+    const drawW = sw * scale
+    const drawH = sh * scale
+    const drawX = sigBoxX + (sigBoxW - drawW) / 2
+    const drawY = sigBoxY + (sigBoxH - drawH) / 2
+    ctx.drawImage(sigImg, drawX, drawY, drawW, drawH)
+
+    return canvas.toDataURL('image/png')
+  }
+
   async function onSign() {
     setError(null)
     if (!padRef.current || padRef.current.isEmpty()) {
       setError('يرجى رسم التوقيع أولًا.')
       return
     }
+    if (!signerName.trim()) {
+      setError('يرجى إدخال الاسم.')
+      return
+    }
+    if (!signerPosition.trim()) {
+      setError('يرجى إدخال المنصب.')
+      return
+    }
     if (!marker) {
       setError('يرجى تحديد مكان التوقيع بالضغط على الوثيقة أولًا.')
       return
     }
-    const dataUrl = padRef.current.toDataURL('image/png')
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
+
     setBusy(true)
+    let compositeDataUrl: string
+    try {
+      compositeDataUrl = await buildCompositeSignature()
+    } catch (err) {
+      setBusy(false)
+      setError(err instanceof Error ? err.message : 'تعذّر بناء صورة التوقيع.')
+      return
+    }
+    const base64 = compositeDataUrl.replace(/^data:image\/png;base64,/, '')
+
     const res = await signCaseWithDrawnSignature({
       case_id: caseId,
       signature_png_base64: base64,
       page_index: marker.page,
       x_frac: marker.xFrac,
       y_frac: marker.yFrac,
-      width_frac: 0.22,
+      // Larger width because the block now includes labels + signature.
+      width_frac: 0.32,
     })
     setBusy(false)
     if (!res.ok) {
@@ -305,6 +468,40 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Signer block fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 mb-1 block">الاسم</label>
+              <input
+                type="text"
+                value={signerName}
+                onChange={(e) => setSignerName(e.target.value)}
+                disabled={busy}
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 mb-1 block">المنصب</label>
+              <input
+                type="text"
+                value={signerPosition}
+                onChange={(e) => setSignerPosition(e.target.value)}
+                disabled={busy}
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 mb-1 block">التاريخ</label>
+              <input
+                type="text"
+                value={signerDate}
+                onChange={(e) => setSignerDate(e.target.value)}
+                disabled={busy}
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
+              />
             </div>
           </div>
 
