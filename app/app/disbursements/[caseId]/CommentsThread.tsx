@@ -73,7 +73,7 @@ export function CommentsThread({
   }
 
   async function onDelete(commentId: string) {
-    if (!confirm('حذف هذا التعليق؟')) return
+    if (!confirm('حذف هذه الملاحظة؟')) return
     const res = await deleteCaseComment({ comment_id: commentId })
     if (!res.ok) {
       alert(res.error)
@@ -87,7 +87,7 @@ export function CommentsThread({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="serif font-bold text-lg text-slate-900 inline-flex items-center gap-2">
           <MessageSquare className="w-4 h-4 text-slate-500" aria-hidden="true" />
-          نقاش الطلب
+          ملاحظات
           {comments.length > 0 && (
             <span className="text-xs font-mono text-slate-400">({comments.length})</span>
           )}
@@ -96,7 +96,7 @@ export function CommentsThread({
 
       {comments.length === 0 ? (
         <div className="text-sm text-slate-500 text-center py-4 border border-dashed border-slate-200 rounded-md">
-          لا توجد تعليقات بعد — كن أوّل من يضيف ملاحظة على هذا الطلب.
+          لا توجد ملاحظات بعد — أضف أوّل ملاحظة على هذا الطلب.
         </div>
       ) : (
         <ul className="space-y-3">
@@ -123,7 +123,7 @@ export function CommentsThread({
                     <button
                       type="button"
                       onClick={() => onDelete(c.id)}
-                      title="حذف التعليق"
+                      title="حذف الملاحظة"
                       className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
                     >
                       <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -146,7 +146,7 @@ export function CommentsThread({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             disabled={posting}
-            placeholder="اكتب تعليقًا أو ملاحظة للزملاء…"
+            placeholder="اكتب ملاحظة للزملاء…"
             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -169,7 +169,7 @@ export function CommentsThread({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" aria-hidden="true" />
-              {posting ? 'جارٍ الإرسال…' : 'إرسال التعليق'}
+              {posting ? 'جارٍ الإرسال…' : 'إرسال الملاحظة'}
             </button>
           </div>
         </div>
