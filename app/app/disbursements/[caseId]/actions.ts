@@ -1248,6 +1248,43 @@ export async function signCaseWithUploadedDocument(
 }
 
 // ----------------------------------------------------------------------------
+// getCurrentUploadSignedUrl — short-lived signed URL to fetch the case's
+// current (non-superseded) PDF for in-app preview (used by the click-to-place
+// signature dialog). Any staff role.
+// ----------------------------------------------------------------------------
+
+export async function getCurrentUploadSignedUrl(
+  input: { case_id: string },
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: row } = await svc
+    .from('dsb_uploads')
+    .select('storage_path, storage_bucket')
+    .eq('tenant_id', caller.tenantId)
+    .eq('case_id', input.case_id)
+    .is('superseded_at', null)
+    .order('uploaded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!row?.storage_path) return { ok: false, error: 'لا يوجد ملف PDF.' }
+
+  const bucket = (row.storage_bucket as string) || STORAGE_BUCKET
+  const { data, error } = await svc.storage
+    .from(bucket)
+    .createSignedUrl(row.storage_path as string, 60 * 10)
+  if (error || !data?.signedUrl) {
+    return { ok: false, error: 'تعذّر إنشاء الرابط.' }
+  }
+  return { ok: true, url: data.signedUrl }
+}
+
+// ----------------------------------------------------------------------------
 // signCaseWithDrawnSignature — owner draws a signature in-app, server
 // embeds it into the case's PDF and marks the case signed.
 //
@@ -1264,6 +1301,14 @@ export async function signCaseWithUploadedDocument(
 export interface SignCaseWithDrawnSignatureInput {
   case_id: string
   signature_png_base64: string // raw PNG bytes, base64 — without data URI prefix
+  // Optional positioning. If omitted, signature defaults to bottom-right of
+  // the last page (legacy behavior). When provided, page_index is 0-based
+  // and (x_frac, y_frac) are 0-1 fractions where (0,0) is the top-left of
+  // the page (matches how clicks are reported in the browser).
+  page_index?: number
+  x_frac?: number
+  y_frac?: number
+  width_frac?: number // signature width as fraction of page width; default 0.28
 }
 
 export type SignCaseWithDrawnSignatureResult =
@@ -1334,40 +1379,77 @@ export async function signCaseWithDrawnSignature(
     const pdfDoc = await PDFDocument.load(pdfBytes)
     const pngImage = await pdfDoc.embedPng(signatureBytes)
     const pages = pdfDoc.getPages()
-    const lastPage = pages[pages.length - 1]
-    const { width: pageW, height: pageH } = lastPage.getSize()
 
-    // Scale signature to ~28% of page width, preserve aspect ratio. Anchor
-    // bottom-right with a small margin.
-    const targetW = pageW * 0.28
-    const pngDims = pngImage.scaleToFit(targetW, pageH * 0.18)
-    const x = pageW - pngDims.width - 36
-    const y = 36 + pngDims.height
-    lastPage.drawImage(pngImage, {
-      x,
-      y: 36,
+    // Resolve target page: client-supplied page_index OR last page fallback.
+    const requestedPageIdx =
+      typeof input.page_index === 'number' && Number.isFinite(input.page_index)
+        ? Math.trunc(input.page_index)
+        : pages.length - 1
+    const safePageIdx = Math.max(0, Math.min(pages.length - 1, requestedPageIdx))
+    const targetPage = pages[safePageIdx]!
+    const { width: pageW, height: pageH } = targetPage.getSize()
+
+    // Resolve signature width: client-supplied fraction OR 28% default.
+    const widthFrac =
+      typeof input.width_frac === 'number' && Number.isFinite(input.width_frac)
+        ? Math.max(0.05, Math.min(0.9, input.width_frac))
+        : 0.28
+    const targetW = pageW * widthFrac
+    const pngDims = pngImage.scaleToFit(targetW, pageH * 0.4)
+
+    // Resolve anchor position. We treat the client coordinates as the CENTER
+    // of the signature, and convert from browser-style top-left origin to
+    // PDF's bottom-left origin. If no coords were supplied, fall back to
+    // the legacy bottom-right placement.
+    let imgX: number
+    let imgY: number
+    const haveCoords =
+      typeof input.x_frac === 'number' &&
+      Number.isFinite(input.x_frac) &&
+      typeof input.y_frac === 'number' &&
+      Number.isFinite(input.y_frac)
+    if (haveCoords) {
+      const xFrac = Math.max(0, Math.min(1, input.x_frac as number))
+      const yFracTopOrigin = Math.max(0, Math.min(1, input.y_frac as number))
+      // Click point in PDF coords (bottom-left origin):
+      const centerX = xFrac * pageW
+      const centerY = pageH - yFracTopOrigin * pageH
+      // Bottom-left of the image (pdf-lib drawImage anchor).
+      imgX = centerX - pngDims.width / 2
+      imgY = centerY - pngDims.height / 2
+      // Keep inside page with a small safety margin.
+      imgX = Math.max(8, Math.min(pageW - pngDims.width - 8, imgX))
+      imgY = Math.max(28, Math.min(pageH - pngDims.height - 8, imgY))
+    } else {
+      // Legacy: bottom-right.
+      imgX = pageW - pngDims.width - 36
+      imgY = 36
+    }
+
+    targetPage.drawImage(pngImage, {
+      x: imgX,
+      y: imgY,
       width: pngDims.width,
       height: pngDims.height,
     })
 
-    // Add timestamp + signer text under the signature.
+    // Add timestamp + signer text directly under the signature.
     const ts = new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })
     const helvetica = await pdfDoc.embedFont('Helvetica')
-    lastPage.drawText(`Signed by Full Scope (${caller.email})`, {
-      x,
-      y: 22,
-      size: 7,
-      font: helvetica,
-      // Black text
-    })
-    lastPage.drawText(`At: ${ts} (AST)`, {
-      x,
-      y: 12,
+    const captionY1 = Math.max(14, imgY - 10)
+    const captionY2 = Math.max(4, imgY - 20)
+    targetPage.drawText(`Signed by Full Scope (${caller.email})`, {
+      x: imgX,
+      y: captionY1,
       size: 7,
       font: helvetica,
     })
-    // Mark variables as used (helper above could be inlined; keeping for clarity)
-    void y
+    targetPage.drawText(`At: ${ts} (AST)`, {
+      x: imgX,
+      y: captionY2,
+      size: 7,
+      font: helvetica,
+    })
 
     outputPdfBytes = await pdfDoc.save()
   } catch (err) {

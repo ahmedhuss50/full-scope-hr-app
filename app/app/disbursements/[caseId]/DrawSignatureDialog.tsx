@@ -2,54 +2,141 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check, Undo2 } from 'lucide-react'
-import { signCaseWithDrawnSignature } from './actions'
-// Type-only import — the runtime module is loaded dynamically inside
-// useEffect so it stays out of the SSR bundle. Importing the type here
-// just gives us proper inference on the ref.
+import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft } from 'lucide-react'
+import { signCaseWithDrawnSignature, getCurrentUploadSignedUrl } from './actions'
 import type SignaturePad from 'signature_pad'
 
 /**
- * In-app draw-to-sign for the owner.
+ * In-app draw-to-sign with click-to-place positioning.
  *
- * Opens a modal with a signature canvas (mouse, trackpad, finger, or stylus).
- * The drawn PNG is sent to the server which uses pdf-lib to embed it at the
- * bottom-right of the case's last PDF page, then marks the case signed.
+ * Flow:
+ *   1. Modal opens; we fetch a signed URL for the case's PDF.
+ *   2. PDF.js renders pages to canvases the user can navigate (next / prev).
+ *   3. User clicks anywhere on a page to drop a signature marker (red box
+ *      showing where the signature will end up).
+ *   4. They draw the signature in the pad below; "تراجع" pops the last
+ *      stroke, "مسح" clears.
+ *   5. "توقيع وحفظ" sends signature PNG + page index + (x_frac, y_frac) in
+ *      browser coords (top-left origin) to the server, which embeds via
+ *      pdf-lib at the chosen location.
  *
- * We dynamically import signature_pad inside useEffect so it stays out of the
- * SSR bundle and only loads when the dialog actually opens.
+ * If the user skips picking a spot, the server falls back to bottom-right
+ * of the last page.
  */
+type Marker = { page: number; xFrac: number; yFrac: number }
+
 export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
+
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // PDF state
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [pdfDoc, setPdfDoc] = useState<{
+    numPages: number
+    getPage: (n: number) => Promise<{
+      getViewport: (o: { scale: number }) => { width: number; height: number }
+      render: (o: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => { promise: Promise<void> }
+    }>
+  } | null>(null)
+  const [pageIndex, setPageIndex] = useState(0) // 0-based
+  const [pageDims, setPageDims] = useState<{ width: number; height: number } | null>(null)
+  const [marker, setMarker] = useState<Marker | null>(null)
   const [hasDrawn, setHasDrawn] = useState(false)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  // The pad lives in a ref so the React render cycle doesn't recreate it.
-  // We use signature_pad's own type so toData/fromData stay strongly typed
-  // for the undo flow.
+
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const pdfContainerRef = useRef<HTMLDivElement | null>(null)
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
 
-  // Load + bind signature_pad after the canvas mounts.
+  // ----- Fetch the case PDF (signed URL) when dialog opens -----
   useEffect(() => {
-    if (!open || !canvasRef.current) return
+    if (!open) return
+    let cancelled = false
+    setError(null)
+    setPdfUrl(null)
+    setPdfDoc(null)
+    setPageIndex(0)
+    setMarker(null)
+    setHasDrawn(false)
+    ;(async () => {
+      const res = await getCurrentUploadSignedUrl({ case_id: caseId })
+      if (cancelled) return
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      setPdfUrl(res.url)
+    })()
+    return () => { cancelled = true }
+  }, [open, caseId])
+
+  // ----- Load PDF.js + open the document -----
+  useEffect(() => {
+    if (!pdfUrl) return
     let cancelled = false
     ;(async () => {
-      const SignaturePad = (await import('signature_pad')).default
-      if (cancelled || !canvasRef.current) return
+      // pdfjs-dist ships a worker we have to point the lib at. Using a CDN
+      // build keeps us from having to configure webpack worker loaders.
+      const pdfjsLib = await import('pdfjs-dist')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lib = pdfjsLib as any
+      lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version}/pdf.worker.min.mjs`
+      try {
+        const loadingTask = lib.getDocument(pdfUrl)
+        const doc = await loadingTask.promise
+        if (cancelled) return
+        setPdfDoc(doc)
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'فشل تحميل الـPDF')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [pdfUrl])
 
-      // High-DPI scaling so the signature renders crisp on retina screens.
-      const canvas = canvasRef.current
+  // ----- Render the current page -----
+  useEffect(() => {
+    if (!pdfDoc) return
+    let cancelled = false
+    ;(async () => {
+      const page = await pdfDoc.getPage(pageIndex + 1) // pdfjs is 1-indexed
+      if (cancelled || !pdfCanvasRef.current) return
+      const containerW = pdfContainerRef.current?.clientWidth ?? 600
+      // Render at a scale that fits the container while staying readable.
+      const base = page.getViewport({ scale: 1 })
+      const scale = Math.min(containerW / base.width, 1.8)
+      const viewport = page.getViewport({ scale })
+      const canvas = pdfCanvasRef.current
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      canvas.style.width = `${viewport.width}px`
+      canvas.style.height = `${viewport.height}px`
+      const ctx = canvas.getContext('2d')!
+      await page.render({ canvasContext: ctx, viewport }).promise
+      if (cancelled) return
+      setPageDims({ width: viewport.width, height: viewport.height })
+    })()
+    return () => { cancelled = true }
+  }, [pdfDoc, pageIndex])
+
+  // ----- Bind signature_pad to the signing canvas -----
+  useEffect(() => {
+    if (!open || !signatureCanvasRef.current) return
+    let cancelled = false
+    ;(async () => {
+      const SP = (await import('signature_pad')).default
+      if (cancelled || !signatureCanvasRef.current) return
+      const canvas = signatureCanvasRef.current
       const ratio = Math.max(window.devicePixelRatio || 1, 1)
       const rect = canvas.getBoundingClientRect()
       canvas.width = rect.width * ratio
       canvas.height = rect.height * ratio
-      const ctx = canvas.getContext('2d')
-      ctx?.scale(ratio, ratio)
-
-      const pad = new SignaturePad(canvas, {
+      canvas.getContext('2d')?.scale(ratio, ratio)
+      const pad = new SP(canvas, {
         backgroundColor: 'rgba(255,255,255,0)',
         penColor: '#0f172a',
         minWidth: 1,
@@ -58,22 +145,26 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
       pad.addEventListener('endStroke', () => setHasDrawn(!pad.isEmpty()))
       padRef.current = pad
     })()
-    return () => {
-      cancelled = true
-      padRef.current = null
-    }
+    return () => { cancelled = true; padRef.current = null }
   }, [open])
+
+  function onPdfClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = e.currentTarget
+    const rect = canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setMarker({
+      page: pageIndex,
+      xFrac: x / rect.width,
+      yFrac: y / rect.height,
+    })
+  }
 
   function clearPad() {
     padRef.current?.clear()
     setHasDrawn(false)
   }
 
-  /**
-   * Pop the most recently drawn stroke. signature_pad stores each pen-down
-   * to pen-up as a single entry in `toData()`, so removing the last entry
-   * gives us natural per-stroke undo.
-   */
   function undoLastStroke() {
     const pad = padRef.current
     if (!pad) return
@@ -90,13 +181,20 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
       setError('يرجى رسم التوقيع أولًا.')
       return
     }
-    // PNG with transparent background — flatter to embed on the PDF.
+    if (!marker) {
+      setError('يرجى تحديد مكان التوقيع بالضغط على الوثيقة أولًا.')
+      return
+    }
     const dataUrl = padRef.current.toDataURL('image/png')
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
     setBusy(true)
     const res = await signCaseWithDrawnSignature({
       case_id: caseId,
       signature_png_base64: base64,
+      page_index: marker.page,
+      x_frac: marker.xFrac,
+      y_frac: marker.yFrac,
+      width_frac: 0.22,
     })
     setBusy(false)
     if (!res.ok) {
@@ -111,7 +209,7 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     return (
       <button
         type="button"
-        onClick={() => { setHasDrawn(false); setError(null); setOpen(true) }}
+        onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold shadow-sm hover:bg-violet-700 transition"
       >
         <PenLine className="w-4 h-4" aria-hidden="true" />
@@ -120,10 +218,18 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     )
   }
 
+  // Compute marker pixel position over the PDF canvas.
+  const markerOnThisPage = marker && marker.page === pageIndex && pageDims
+    ? {
+        left: marker.xFrac * pageDims.width,
+        top: marker.yFrac * pageDims.height,
+      }
+    : null
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl overflow-hidden" dir="rtl">
-        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-200">
+      <div className="w-full max-w-4xl max-h-[95vh] flex flex-col bg-white rounded-2xl shadow-xl overflow-hidden" dir="rtl">
+        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-200 shrink-0">
           <h3 className="serif font-bold text-base text-slate-900 inline-flex items-center gap-2">
             <PenLine className="w-4 h-4 text-violet-600" aria-hidden="true" />
             التوقيع الإلكتروني
@@ -139,47 +245,110 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
           </button>
         </div>
 
-        <div className="p-5 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
           <p className="text-xs text-slate-600 leading-relaxed">
-            ارسم توقيعك في الإطار أدناه (يمكنك استخدام الفأرة أو شاشة اللمس أو القلم الرقمي). سيتم إضافة التوقيع تلقائيًا أسفل الصفحة الأخيرة من ملف PDF وحفظ النسخة الموقّعة في الطلب.
+            تصفّح الصفحات واضغط على المكان الذي تريد وضع التوقيع فيه، ثم ارسم توقيعك في الأسفل واحفظ.
           </p>
 
-          <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
-            <canvas
-              ref={canvasRef}
-              style={{ width: '100%', height: 220, touchAction: 'none' }}
-              className="block w-full bg-white"
-            />
-            {!hasDrawn && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-400">
-                ارسم التوقيع هنا
+          {/* PDF viewer */}
+          <div ref={pdfContainerRef} className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+            {pdfDoc ? (
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setPageIndex((i) => Math.max(0, i - 1)); setMarker(null) }}
+                  disabled={pageIndex === 0}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                  السابقة
+                </button>
+                <div className="text-xs font-mono text-slate-600">
+                  صفحة {pageIndex + 1} من {pdfDoc.numPages}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setPageIndex((i) => Math.min(pdfDoc.numPages - 1, i + 1)); setMarker(null) }}
+                  disabled={pageIndex >= pdfDoc.numPages - 1}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                >
+                  التالية
+                  <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            ) : (
+              <div className="px-4 py-6 text-center text-sm text-slate-500">
+                جارٍ تحميل الوثيقة…
               </div>
             )}
+
+            <div className="relative max-h-[55vh] overflow-auto">
+              <div className="relative inline-block" dir="ltr">
+                <canvas
+                  ref={pdfCanvasRef}
+                  onClick={onPdfClick}
+                  className="block cursor-crosshair"
+                />
+                {markerOnThisPage && (
+                  <div
+                    className="pointer-events-none absolute border-2 border-violet-500 bg-violet-500/10 rounded-sm"
+                    style={{
+                      left: markerOnThisPage.left - 60,
+                      top: markerOnThisPage.top - 24,
+                      width: 120,
+                      height: 48,
+                    }}
+                  >
+                    <div className="absolute -top-5 right-0 text-[10px] font-semibold bg-violet-600 text-white px-1.5 py-0.5 rounded">
+                      هنا
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="inline-flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={undoLastStroke}
-                disabled={busy || !hasDrawn}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-              >
-                <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
-                تراجع
-              </button>
-              <button
-                type="button"
-                onClick={clearPad}
-                disabled={busy || !hasDrawn}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-              >
-                <Eraser className="w-3.5 h-3.5" aria-hidden="true" />
-                مسح
-              </button>
+          {/* Signature pad */}
+          <div>
+            <div className="text-xs font-semibold text-slate-700 mb-1.5">ارسم توقيعك</div>
+            <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
+              <canvas
+                ref={signatureCanvasRef}
+                style={{ width: '100%', height: 180, touchAction: 'none' }}
+                className="block w-full bg-white"
+              />
+              {!hasDrawn && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-400">
+                  ارسم التوقيع هنا
+                </div>
+              )}
             </div>
-            <div className="text-[11px] text-slate-500">
-              سيُحفظ التوقيع في أسفل الصفحة الأخيرة من ملف الـPDF
+            <div className="flex items-center justify-between gap-2 flex-wrap mt-2">
+              <div className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={undoLastStroke}
+                  disabled={busy || !hasDrawn}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  تراجع
+                </button>
+                <button
+                  type="button"
+                  onClick={clearPad}
+                  disabled={busy || !hasDrawn}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  <Eraser className="w-3.5 h-3.5" aria-hidden="true" />
+                  مسح
+                </button>
+              </div>
+              <div className="text-[11px] text-slate-500">
+                {marker
+                  ? `سيُوضع التوقيع في الصفحة ${marker.page + 1} عند المكان المختار`
+                  : 'اضغط على الوثيقة لتحديد مكان التوقيع'}
+              </div>
             </div>
           </div>
 
@@ -188,26 +357,26 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
               {error}
             </div>
           )}
+        </div>
 
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              disabled={busy}
-              className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              إلغاء
-            </button>
-            <button
-              type="button"
-              onClick={onSign}
-              disabled={busy || !hasDrawn}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
-            >
-              <Check className="w-4 h-4" aria-hidden="true" />
-              {busy ? 'جاري التوقيع…' : 'توقيع وحفظ'}
-            </button>
-          </div>
+        <div className="shrink-0 px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            disabled={busy}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            إلغاء
+          </button>
+          <button
+            type="button"
+            onClick={onSign}
+            disabled={busy || !hasDrawn || !marker}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
+          >
+            <Check className="w-4 h-4" aria-hidden="true" />
+            {busy ? 'جاري التوقيع…' : 'توقيع وحفظ'}
+          </button>
         </div>
       </div>
     </div>
