@@ -14,6 +14,7 @@ import { EditCaseInfo } from './EditCaseInfo'
 import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
+import { CommentsThread, type CommentRow } from './CommentsThread'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -127,6 +128,37 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     .eq('tenant_id', tenantId)
     .eq('case_id', params.caseId)
     .order('uploaded_at', { ascending: false })
+
+  // Per-case comments thread. Soft-deleted comments are hidden.
+  const { data: commentsRaw } = await svc
+    .from('dsb_case_comments')
+    .select('id, body, created_at, author:users!dsb_case_comments_author_user_id_fkey(id, full_name, email, dsb_role)')
+    .eq('tenant_id', tenantId)
+    .eq('case_id', params.caseId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true })
+  const comments: CommentRow[] = ((commentsRaw ?? []) as Array<{
+    id: string
+    body: string
+    created_at: string
+    author:
+      | { id: string; full_name: string | null; email: string | null; dsb_role: string | null }
+      | { id: string; full_name: string | null; email: string | null; dsb_role: string | null }[]
+      | null
+  }>).map((c) => {
+    const a = Array.isArray(c.author) ? c.author[0] : c.author
+    return {
+      id: c.id,
+      body: c.body,
+      created_at: c.created_at,
+      author: {
+        id: a?.id ?? '',
+        full_name: a?.full_name ?? null,
+        email: a?.email ?? null,
+        dsb_role: (a?.dsb_role as 'employee' | 'supervisor' | 'owner' | null) ?? null,
+      },
+    }
+  })
 
   const { data: breakdownRaw } = await svc
     .from('dsb_breakdown_items')
@@ -474,6 +506,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             items={checklistItems}
             responses={checklistResponses}
             canEdit={canEditChecklist}
+          />
+
+          <CommentsThread
+            caseId={kase.id}
+            currentUserId={userId}
+            currentUserRole={(dsbRole as 'employee' | 'supervisor' | 'owner' | null) ?? null}
+            comments={comments}
           />
 
           <div className="space-y-3">

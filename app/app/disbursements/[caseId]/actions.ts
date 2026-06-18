@@ -828,6 +828,110 @@ export async function updateCaseFields(
 }
 
 // ----------------------------------------------------------------------------
+// Case comments — internal thread for the review team. Any staff role can
+// post or read; users can delete their own comments; owners can delete any.
+// Comments are SOFT-deleted (deleted_at) so the audit trail survives.
+// ----------------------------------------------------------------------------
+
+export interface AddCaseCommentInput {
+  case_id: string
+  body: string
+}
+
+export async function addCaseComment(
+  input: AddCaseCommentInput,
+): Promise<{ ok: true; comment_id: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية إضافة تعليق.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  const body = (input.body ?? '').trim()
+  if (!body) return { ok: false, error: 'لا يمكن إضافة تعليق فارغ.' }
+  if (body.length > 5000) return { ok: false, error: 'التعليق طويل جدًا (الحد ٥٠٠٠ حرف).' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const { data: row, error } = await svc
+    .from('dsb_case_comments')
+    .insert({
+      tenant_id: caller.tenantId,
+      case_id: input.case_id,
+      author_user_id: caller.userId,
+      body,
+    })
+    .select('id')
+    .single()
+  if (error || !row) return { ok: false, error: error?.message ?? 'فشل حفظ التعليق.' }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'comment_added',
+    actor_user_id: caller.userId,
+    notes: body.slice(0, 200),
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true, comment_id: row.id as string }
+}
+
+export async function deleteCaseComment(
+  input: { comment_id: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!input.comment_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: comment } = await svc
+    .from('dsb_case_comments')
+    .select('id, tenant_id, case_id, author_user_id, deleted_at')
+    .eq('id', input.comment_id)
+    .maybeSingle()
+  if (!comment) return { ok: false, error: 'التعليق غير موجود.' }
+  if ((comment.tenant_id as string) !== caller.tenantId) {
+    return { ok: false, error: 'التعليق لا يخص مكتبك.' }
+  }
+  if (comment.deleted_at) return { ok: false, error: 'التعليق محذوف بالفعل.' }
+
+  // Author can delete their own; owners can delete anyone's.
+  const isAuthor = comment.author_user_id === caller.userId
+  const isOwner = caller.dsbRole === 'owner'
+  if (!isAuthor && !isOwner) {
+    return { ok: false, error: 'لا تملك صلاحية حذف هذا التعليق.' }
+  }
+
+  const { error } = await svc
+    .from('dsb_case_comments')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', input.comment_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: comment.case_id as string,
+    event: 'comment_deleted',
+    actor_user_id: caller.userId,
+    notes: `تم حذف تعليق (${isAuthor ? 'بواسطة المؤلف' : 'بواسطة المدير'})`,
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${comment.case_id as string}`)
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // Document replacement — staff can swap the case's PDF for an updated
 // version during review (developer sent wrong file, scan was unclear, etc.).
 // Old version stays in Storage; superseded_at marks it as historical. The
