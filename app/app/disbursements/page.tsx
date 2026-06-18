@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { FileText, Plus, Settings, LayoutDashboard, Activity, UploadCloud, ArrowRightCircle, RotateCcw, CheckCircle2, XCircle, Move } from 'lucide-react'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
+import { CaseFiltersBar } from './CaseFiltersBar'
 
 export const dynamic = 'force-dynamic'
 
@@ -126,7 +127,19 @@ function startOfMonthIso(): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0)).toISOString()
 }
 
-export default async function DisbursementsDashboardPage() {
+export default async function DisbursementsDashboardPage({
+  searchParams,
+}: {
+  searchParams?: {
+    client?: string
+    project?: string
+    employee?: string
+    status?: string
+    from?: string
+    to?: string
+    q?: string
+  }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -162,6 +175,55 @@ export default async function DisbursementsDashboardPage() {
     dsbRole === 'owner' ? 'with_owner' :
     null
 
+  // ---------- Filter values from URL (CaseFiltersBar writes these) ----------
+  const f = searchParams ?? {}
+  const fClient   = (f.client   ?? '').trim() || null
+  const fProject  = (f.project  ?? '').trim() || null
+  const fEmployee = (f.employee ?? '').trim() || null
+  const fStatus   = (f.status   ?? '').trim() || null
+  const fFrom     = (f.from     ?? '').trim() || null
+  const fTo       = (f.to       ?? '').trim() || null
+  const fQ        = (f.q        ?? '').trim() || null
+
+  // If filtering by assigned employee, we must first resolve the projects
+  // assigned to them — assignment lives on dsb_projects, not on dsb_cases.
+  let projectIdsForEmployee: string[] | null = null
+  if (fEmployee) {
+    const { data: empProjects } = await svc
+      .from('dsb_projects')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('assigned_employee_id', fEmployee)
+    projectIdsForEmployee = ((empProjects ?? []) as { id: string }[]).map((p) => p.id)
+    // If they have no projects, no cases will match — short-circuit later.
+  }
+
+  // ---------- Dropdown options for the filter bar ----------
+  const [clientOptsRes, projectOptsRes, employeeOptsRes] = await Promise.all([
+    svc
+      .from('dsb_developers')
+      .select('id, company_name_ar')
+      .eq('tenant_id', tenantId)
+      .order('company_name_ar', { ascending: true }),
+    svc
+      .from('dsb_projects')
+      .select('id, code, name_ar, developer_id')
+      .eq('tenant_id', tenantId)
+      .order('code', { ascending: true }),
+    svc
+      .from('users')
+      .select('id, full_name')
+      .eq('tenant_id', tenantId)
+      .in('dsb_role', ['employee', 'supervisor', 'owner'])
+      .order('full_name', { ascending: true }),
+  ])
+  const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
+    .map((c) => ({ id: c.id, label: c.company_name_ar }))
+  const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
+    .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
+  const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
+    .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
+
   // For employee role, my-inbox needs filtering by assigned_employee_id on project.
   // Run all queries in parallel.
   const [
@@ -173,17 +235,38 @@ export default async function DisbursementsDashboardPage() {
     avgCycleRes,
     auditRes,
   ] = await Promise.all([
-    svc
-      .from('dsb_cases')
-      .select(
-        `id, case_number, voucher_number_text, amount_sar, status, submitted_at, signed_at, created_at,
-         project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
-         developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
-      )
-      .eq('tenant_id', tenantId)
-      .order('submitted_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(500),
+    (async () => {
+      // Build the cases query with all active filters applied. We layer them
+      // on a base query because Supabase's PostgREST builder is chainable.
+      let q = svc
+        .from('dsb_cases')
+        .select(
+          `id, case_number, voucher_number_text, amount_sar, status, submitted_at, signed_at, created_at,
+           project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
+           developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
+        )
+        .eq('tenant_id', tenantId)
+      if (fClient) q = q.eq('developer_id', fClient)
+      if (fProject) q = q.eq('project_id', fProject)
+      if (fStatus) q = q.eq('status', fStatus)
+      if (fFrom) q = q.gte('submitted_at', `${fFrom}T00:00:00+03`)
+      if (fTo) q = q.lte('submitted_at', `${fTo}T23:59:59+03`)
+      if (fQ) {
+        // Match against case_number OR voucher_number_text (free-text search).
+        q = q.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+      }
+      if (projectIdsForEmployee !== null) {
+        if (projectIdsForEmployee.length === 0) {
+          // Employee filter active but they own zero projects → no matches.
+          return { data: [], error: null } as { data: unknown[]; error: null }
+        }
+        q = q.in('project_id', projectIdsForEmployee)
+      }
+      return q
+        .order('submitted_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(500)
+    })(),
     svc
       .from('dsb_cases')
       .select('id', { count: 'exact', head: true })
@@ -311,6 +394,14 @@ export default async function DisbursementsDashboardPage() {
           </Link>
         </div>
       </header>
+
+      {/* Filters — URL-driven; affects the cases query above and the
+          inline-kanban / list below. KPIs stay tenant-wide for context. */}
+      <CaseFiltersBar
+        clients={clientOptions}
+        projects={projectOptions}
+        employees={employeeOptions}
+      />
 
       {/* KPI strip */}
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
