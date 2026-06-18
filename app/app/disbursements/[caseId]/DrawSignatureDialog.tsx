@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check } from 'lucide-react'
+import { PenLine, X, Eraser, Check, Undo2 } from 'lucide-react'
 import { signCaseWithDrawnSignature } from './actions'
 
 /**
@@ -24,10 +24,13 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const [hasDrawn, setHasDrawn] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   // The pad lives in a ref so the React render cycle doesn't recreate it.
+  // We also use toData/fromData to support per-stroke undo.
   const padRef = useRef<{
     clear: () => void
     isEmpty: () => boolean
     toDataURL: (mime?: string) => string
+    toData: () => unknown[]
+    fromData: (data: unknown[]) => void
   } | null>(null)
 
   // Load + bind signature_pad after the canvas mounts.
@@ -65,6 +68,21 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   function clearPad() {
     padRef.current?.clear()
     setHasDrawn(false)
+  }
+
+  /**
+   * Pop the most recently drawn stroke. signature_pad stores each pen-down
+   * to pen-up as a single entry in `toData()`, so removing the last entry
+   * gives us natural per-stroke undo.
+   */
+  function undoLastStroke() {
+    const pad = padRef.current
+    if (!pad) return
+    const data = pad.toData()
+    if (!data.length) return
+    data.pop()
+    pad.fromData(data)
+    setHasDrawn(data.length > 0)
   }
 
   async function onSign() {
@@ -141,15 +159,26 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
           </div>
 
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={clearPad}
-              disabled={busy || !hasDrawn}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              <Eraser className="w-3.5 h-3.5" aria-hidden="true" />
-              مسح
-            </button>
+            <div className="inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={undoLastStroke}
+                disabled={busy || !hasDrawn}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+              >
+                <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+                تراجع
+              </button>
+              <button
+                type="button"
+                onClick={clearPad}
+                disabled={busy || !hasDrawn}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+              >
+                <Eraser className="w-3.5 h-3.5" aria-hidden="true" />
+                مسح
+              </button>
+            </div>
             <div className="text-[11px] text-slate-500">
               سيُحفظ التوقيع في أسفل الصفحة الأخيرة من ملف الـPDF
             </div>

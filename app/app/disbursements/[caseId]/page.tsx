@@ -15,6 +15,7 @@ import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
 import { CommentsThread, type CommentRow } from './CommentsThread'
+import { RevertSignatureButton } from './RevertSignatureButton'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -292,6 +293,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ring-1 ring-inset ${pill.cls}`}>
               {pill.label}
             </span>
+            {kase.status === 'signed' && dsbRole === 'owner' && (
+              <RevertSignatureButton caseId={kase.id} />
+            )}
             {dsbRole === 'owner' && (
               <DeleteCaseButton
                 caseId={kase.id}

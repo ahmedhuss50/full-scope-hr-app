@@ -1449,6 +1449,69 @@ export async function signCaseWithDrawnSignature(
 }
 
 // ----------------------------------------------------------------------------
+// revertSignature — owner-only undo of a signed case.
+//
+// Sets status back to with_owner, clears signed_at / signed_by_user_id /
+// signed_document_path / signed_document_filename. The previously-saved
+// signed PDF stays in Storage as historical evidence but is no longer the
+// active signed document on the case. Audit log captures the revert.
+// ----------------------------------------------------------------------------
+
+export interface RevertSignatureInput {
+  case_id: string
+  reason?: string | null
+}
+
+export async function revertSignature(
+  input: RevertSignatureInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'إلغاء التوقيع متاح للمدير فقط.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  if (kase.status !== 'signed') {
+    return { ok: false, error: 'هذا الطلب غير موقّع.' }
+  }
+
+  const reason = (input.reason ?? '').trim().slice(0, 500) || null
+
+  const { error } = await svc
+    .from('dsb_cases')
+    .update({
+      status: 'with_owner',
+      signed_at: null,
+      signed_by_user_id: null,
+      signed_document_path: null,
+      signed_document_filename: null,
+    })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'signature_reverted',
+    actor_user_id: caller.userId,
+    from_status: 'signed',
+    to_status: 'with_owner',
+    notes: reason ? `إلغاء التوقيع. السبب: ${reason}` : 'تم إلغاء التوقيع.',
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  revalidatePath('/app/disbursements/documents')
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // getSignedDocumentUrl — short-lived signed URL to view/download the owner's
 // uploaded signed PDF.
 // ----------------------------------------------------------------------------
