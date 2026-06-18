@@ -10,6 +10,7 @@ import {
   requestSignedDocumentUploadUrl,
   signCaseWithUploadedDocument,
 } from './actions'
+import { DrawSignatureDialog } from './DrawSignatureDialog'
 
 type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner' | null
 type CaseStatus =
@@ -264,6 +265,9 @@ export function DecisionBar({
                 e.target.value = ''
               }}
             />
+            {/* Third path: draw-to-sign in app. Server embeds the drawn
+                signature image onto the PDF and saves it as the signed doc. */}
+            <DrawSignatureDialog caseId={caseId} />
           </>
         )}
         {canSendBack && !sendBackOpen && (

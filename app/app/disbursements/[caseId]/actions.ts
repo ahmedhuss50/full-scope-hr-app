@@ -1248,6 +1248,207 @@ export async function signCaseWithUploadedDocument(
 }
 
 // ----------------------------------------------------------------------------
+// signCaseWithDrawnSignature — owner draws a signature in-app, server
+// embeds it into the case's PDF and marks the case signed.
+//
+// Flow:
+//   1. Client sends signature_png_base64 (the drawn signature as a PNG).
+//   2. Server downloads the current PDF.
+//   3. pdf-lib embeds the PNG at the bottom-right of the LAST page.
+//   4. Modified PDF is uploaded to Storage at signed/<tenant>/<case>/<file>.
+//   5. Case is marked signed (status, signed_at, signed_by_user_id,
+//      signed_document_path, signed_document_filename).
+//   6. Audit + notification emails fire like signCase.
+// ----------------------------------------------------------------------------
+
+export interface SignCaseWithDrawnSignatureInput {
+  case_id: string
+  signature_png_base64: string // raw PNG bytes, base64 — without data URI prefix
+}
+
+export type SignCaseWithDrawnSignatureResult =
+  | { ok: true; storage_path: string }
+  | { ok: false; error: string }
+
+export async function signCaseWithDrawnSignature(
+  input: SignCaseWithDrawnSignatureInput,
+): Promise<SignCaseWithDrawnSignatureResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'التوقيع متاح للمدير فقط.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  // Strip optional data URI prefix.
+  const b64 = input.signature_png_base64.replace(/^data:image\/[a-z]+;base64,/, '').trim()
+  if (!b64) return { ok: false, error: 'لم يتم رسم توقيع.' }
+
+  let signatureBytes: Buffer
+  try {
+    signatureBytes = Buffer.from(b64, 'base64')
+  } catch {
+    return { ok: false, error: 'صيغة التوقيع غير صحيحة.' }
+  }
+  if (signatureBytes.length < 100) {
+    return { ok: false, error: 'لم يتم رسم توقيع.' }
+  }
+
+  const svc = createSupabaseService()
+
+  // Load case + current PDF upload.
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  if (kase.status === 'cancelled') {
+    return { ok: false, error: 'لا يمكن توقيع طلب ملغى.' }
+  }
+
+  const { data: uploadRow } = await svc
+    .from('dsb_uploads')
+    .select('id, storage_path, storage_bucket, filename')
+    .eq('tenant_id', caller.tenantId)
+    .eq('case_id', input.case_id)
+    .is('superseded_at', null)
+    .order('uploaded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!uploadRow?.storage_path) {
+    return { ok: false, error: 'لا يوجد ملف PDF لتوقيعه.' }
+  }
+  const bucket = (uploadRow.storage_bucket as string) || STORAGE_BUCKET
+
+  // Download PDF.
+  const { data: signed } = await svc.storage
+    .from(bucket)
+    .createSignedUrl(uploadRow.storage_path as string, 600)
+  if (!signed?.signedUrl) return { ok: false, error: 'تعذّر تحميل الملف الأصلي.' }
+  const pdfResp = await fetch(signed.signedUrl, { signal: AbortSignal.timeout(30_000) })
+  if (!pdfResp.ok) return { ok: false, error: 'فشل تحميل الملف الأصلي.' }
+  const pdfBytes = new Uint8Array(await pdfResp.arrayBuffer())
+
+  // Embed signature using pdf-lib.
+  let outputPdfBytes: Uint8Array
+  try {
+    // Dynamic import so this only pulls into the bundle when needed.
+    const { PDFDocument } = await import('pdf-lib')
+    const pdfDoc = await PDFDocument.load(pdfBytes)
+    const pngImage = await pdfDoc.embedPng(signatureBytes)
+    const pages = pdfDoc.getPages()
+    const lastPage = pages[pages.length - 1]
+    const { width: pageW, height: pageH } = lastPage.getSize()
+
+    // Scale signature to ~28% of page width, preserve aspect ratio. Anchor
+    // bottom-right with a small margin.
+    const targetW = pageW * 0.28
+    const pngDims = pngImage.scaleToFit(targetW, pageH * 0.18)
+    const x = pageW - pngDims.width - 36
+    const y = 36 + pngDims.height
+    lastPage.drawImage(pngImage, {
+      x,
+      y: 36,
+      width: pngDims.width,
+      height: pngDims.height,
+    })
+
+    // Add timestamp + signer text under the signature.
+    const ts = new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })
+    const helvetica = await pdfDoc.embedFont('Helvetica')
+    lastPage.drawText(`Signed by Full Scope (${caller.email})`, {
+      x,
+      y: 22,
+      size: 7,
+      font: helvetica,
+      // Black text
+    })
+    lastPage.drawText(`At: ${ts} (AST)`, {
+      x,
+      y: 12,
+      size: 7,
+      font: helvetica,
+    })
+    // Mark variables as used (helper above could be inlined; keeping for clarity)
+    void y
+
+    outputPdfBytes = await pdfDoc.save()
+  } catch (err) {
+    console.error('[dsb.signCaseWithDrawnSignature] pdf-lib failed', err)
+    return { ok: false, error: 'تعذّر إضافة التوقيع إلى الملف.' }
+  }
+
+  // Upload to Storage.
+  const baseName = (uploadRow.filename as string | null) || 'document.pdf'
+  const safeBase = baseName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120)
+  const newPath = `signed/${caller.tenantId}/${input.case_id}/${crypto.randomUUID()}-${safeBase}-signed.pdf`
+  const { error: upErr } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .upload(newPath, outputPdfBytes, {
+      contentType: 'application/pdf',
+      upsert: false,
+    })
+  if (upErr) {
+    console.error('[dsb.signCaseWithDrawnSignature] upload failed', upErr)
+    return { ok: false, error: 'تعذّر حفظ الملف الموقّع.' }
+  }
+
+  // Update the case row.
+  const wasAlreadySigned = kase.status === 'signed'
+  const updatePayload: Record<string, string | null> = {
+    signed_document_path: newPath,
+    signed_document_filename: `${safeBase}-signed.pdf`,
+  }
+  if (!wasAlreadySigned) {
+    updatePayload.status = 'signed'
+    updatePayload.signed_at = new Date().toISOString()
+    updatePayload.signed_by_user_id = caller.userId
+  }
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update(updatePayload)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: wasAlreadySigned ? 'signature_redrawn' : 'signed_with_drawn_signature',
+    actor_user_id: caller.userId,
+    from_status: kase.status,
+    to_status: 'signed',
+    notes: 'تم التوقيع إلكترونيًا بقلم رقمي وحفظ النسخة الموقّعة.',
+    occurred_at: new Date().toISOString(),
+  })
+
+  // Emails on first-time sign only.
+  if (!wasAlreadySigned) {
+    const project = single(kase.project)
+    const developer = single(kase.developer)
+    const devEmail =
+      (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
+    const ctx = {
+      caseNumber: kase.case_number,
+      projectName: project?.name_ar ?? '—',
+      developerName: developer?.company_name_ar ?? '—',
+      amountSar: kase.amount_sar,
+      caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
+    }
+    if (devEmail) {
+      sendSignedEmail({ to: devEmail, ...ctx, caseUrl: appUrl(`/developer/${input.case_id}`) })
+        .catch((e) => console.error('[dsb] email failed', e))
+    }
+    const empEmail = await userEmail(svc, project?.assigned_employee_id)
+    if (empEmail) {
+      sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
+  }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  revalidatePath('/app/disbursements/documents')
+  return { ok: true, storage_path: newPath }
+}
+
+// ----------------------------------------------------------------------------
 // getSignedDocumentUrl — short-lived signed URL to view/download the owner's
 // uploaded signed PDF.
 // ----------------------------------------------------------------------------
