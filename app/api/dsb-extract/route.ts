@@ -334,6 +334,14 @@ export async function POST(req: Request) {
 
     if (!claudeResp.ok) {
       const errBody = await claudeResp.text().catch(() => '')
+      if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
+        throw new Error(
+          'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة) لمعالجة الذكاء الاصطناعي. يرجى تقسيم الوثيقة إلى ملفات أصغر.',
+        )
+      }
+      if (errBody.includes('document') && errBody.includes('size')) {
+        throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
+      }
       throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
     }
 

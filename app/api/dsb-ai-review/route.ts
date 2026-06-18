@@ -280,6 +280,16 @@ Reminder: return JSON array only — no prose, no markdown.`
     })
     if (!claudeResp.ok) {
       const errBody = await claudeResp.text().catch(() => '')
+      // Translate the common "PDF too large" error into something the
+      // Arabic-speaking reviewer can act on.
+      if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
+        throw new Error(
+          'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة). يرجى تقسيم الوثيقة إلى ملفات أصغر وإعادة رفعها، أو استبدالها بنسخة مختصرة.',
+        )
+      }
+      if (errBody.includes('document') && errBody.includes('size')) {
+        throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
+      }
       throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
     }
 
