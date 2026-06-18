@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { PrintButton } from './PrintButton'
+import { SignDeliveryDocButton } from './SignDeliveryDocButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,6 +68,8 @@ type CaseRow = {
   notes: string | null
   signed_at: string | null
   signed_by_user_id: string | null
+  delivery_doc_signature_path: string | null
+  delivery_doc_signed_at: string | null
   project:
     | { id: string; code: string; name_ar: string }
     | { id: string; code: string; name_ar: string }[]
@@ -100,11 +103,12 @@ export default async function DeliveryDocumentPage({
   if (!profile) redirect('/login')
 
   const tenantId = profile.tenant_id as string
+  const dsbRole = (profile.dsb_role as string | null) ?? null
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
     .select(
-      `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, signed_at, signed_by_user_id,
+      `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, signed_at, signed_by_user_id, delivery_doc_signature_path, delivery_doc_signed_at,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -151,6 +155,15 @@ export default async function DeliveryDocumentPage({
   }
 
   const today = new Date().toISOString()
+
+  // Resolve a signed URL for the embedded signature image if one exists.
+  let deliverySignatureUrl: string | null = null
+  if (kase.delivery_doc_signature_path) {
+    const { data: signed } = await svc.storage
+      .from('Document submission')
+      .createSignedUrl(kase.delivery_doc_signature_path, 60 * 10)
+    deliverySignatureUrl = signed?.signedUrl ?? null
+  }
   const signedDisplay = kase.signed_at
     ? `${signedByName ?? '—'} · ${fmtDateTime(kase.signed_at)}`
     : (signedByName ?? '—')
@@ -229,13 +242,29 @@ export default async function DeliveryDocumentPage({
           )}
 
           {/* Signature block */}
-          <section className="mt-20 pt-8">
+          <section className="mt-16 pt-8">
             <div className="flex justify-end">
               <div className="text-center">
-                <div className="text-sm font-semibold text-slate-700 mb-12">
+                <div className="text-sm font-semibold text-slate-700 mb-3">
                   توقيع الإدارة
                 </div>
-                <div className="border-t border-slate-400 w-56" />
+                {deliverySignatureUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={deliverySignatureUrl}
+                    alt="توقيع الإدارة"
+                    className="block max-w-[280px] max-h-[160px] object-contain mx-auto"
+                  />
+                ) : (
+                  <>
+                    <div className="border-t border-slate-400 w-56 mt-12" />
+                    {dsbRole === 'owner' && (
+                      <div className="mt-4">
+                        <SignDeliveryDocButton caseId={kase.id} />
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </section>

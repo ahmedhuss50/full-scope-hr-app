@@ -1248,6 +1248,104 @@ export async function signCaseWithUploadedDocument(
 }
 
 // ----------------------------------------------------------------------------
+// signDeliveryDocument — owner stores a composite signature image
+// (الاسم/المنصب/التاريخ/التوقيع) for the delivery certificate. The image
+// gets rendered inline in the delivery-document page wherever the signature
+// line used to be.
+// ----------------------------------------------------------------------------
+
+export async function signDeliveryDocument(
+  input: { case_id: string; signature_png_base64: string },
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'توقيع وثيقة التسليم متاح للمدير فقط.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const b64 = input.signature_png_base64.replace(/^data:image\/[a-z]+;base64,/, '').trim()
+  if (!b64) return { ok: false, error: 'لم يتم رسم توقيع.' }
+  let pngBytes: Buffer
+  try {
+    pngBytes = Buffer.from(b64, 'base64')
+  } catch {
+    return { ok: false, error: 'صيغة التوقيع غير صحيحة.' }
+  }
+  if (pngBytes.length < 100) return { ok: false, error: 'لم يتم رسم توقيع.' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, status')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  if (kase.status !== 'signed') {
+    return { ok: false, error: 'يمكن توقيع وثيقة التسليم فقط بعد التوقيع النهائي على الطلب.' }
+  }
+
+  const path = `delivery-signed/${caller.tenantId}/${input.case_id}/${crypto.randomUUID()}.png`
+  const { error: upErr } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, pngBytes, { contentType: 'image/png', upsert: false })
+  if (upErr) return { ok: false, error: upErr.message }
+
+  const now = new Date().toISOString()
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update({
+      delivery_doc_signature_path: path,
+      delivery_doc_signed_at: now,
+      delivery_doc_signed_by_user_id: caller.userId,
+    })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'delivery_doc_signed',
+    actor_user_id: caller.userId,
+    notes: 'تم توقيع وثيقة التسليم.',
+    occurred_at: now,
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}/delivery-document`)
+  return { ok: true, path }
+}
+
+/**
+ * Short-lived signed URL for the delivery-doc signature image so the
+ * server-rendered delivery-document page can show it inline.
+ */
+export async function getDeliverySignatureUrl(
+  input: { case_id: string },
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('delivery_doc_signature_path')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase?.delivery_doc_signature_path) {
+    return { ok: false, error: 'لم يتم توقيع وثيقة التسليم بعد.' }
+  }
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(kase.delivery_doc_signature_path as string, 60 * 10)
+  if (error || !data?.signedUrl) {
+    return { ok: false, error: 'تعذّر إنشاء الرابط.' }
+  }
+  return { ok: true, url: data.signedUrl }
+}
+
+// ----------------------------------------------------------------------------
 // getCurrentSignerInfo — name + role label for prefilling the signature
 // block (الاسم / المنصب). Caller-scoped, owner only (matches sign permission).
 // ----------------------------------------------------------------------------
