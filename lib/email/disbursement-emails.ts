@@ -105,8 +105,28 @@ export function sendSupervisorApprovedEmail(ctx: CaseEmailContext) {
   }))
 }
 
+/**
+ * Should we email the developer (client) at all?
+ *
+ * Defaults to OFF (developers don't receive transactional emails). Set
+ * `DSB_NOTIFY_DEVELOPER=true` in Vercel env when you want to flip this
+ * back on without touching code.
+ *
+ * This gate applies to:
+ *   - sendSentBackToDeveloperEmail (whole email is for the developer)
+ *   - sendSignedEmail when its recipient is the developer (we gate the
+ *     "to developer" call sites; "to employee" copies still send).
+ */
+export function isDeveloperNotificationEnabled(): boolean {
+  const v = (process.env.DSB_NOTIFY_DEVELOPER ?? '').trim().toLowerCase()
+  return v === 'true' || v === '1' || v === 'yes' || v === 'on'
+}
+
 /** Anyone in the review chain sent the case back to the developer. */
 export function sendSentBackToDeveloperEmail(ctx: CaseEmailContext) {
+  if (!isDeveloperNotificationEnabled()) {
+    return Promise.resolve({ sent: false, reason: 'developer-notifications-disabled' } as const)
+  }
   const body = html(`
     <h2 style="margin:0 0 12px;">أُعيد إليك طلب الصرف لإجراء تعديلات</h2>
     <p>تمت إعادة طلب الصرف <strong>${ctx.caseNumber}</strong> (مشروع ${ctx.projectName}) إليك لإجراء تعديلات.</p>

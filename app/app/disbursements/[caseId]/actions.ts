@@ -8,6 +8,7 @@ import {
   sendSupervisorApprovedEmail,
   sendSentBackToDeveloperEmail,
   sendSignedEmail,
+  isDeveloperNotificationEnabled,
 } from '@/lib/email/disbursement-emails'
 
 type CaseStatus =
@@ -387,7 +388,7 @@ export async function signCase(input: { case_id: string }): Promise<{ ok: true }
     amountSar: kase.amount_sar,
     caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
   }
-  if (devEmail) {
+  if (devEmail && isDeveloperNotificationEnabled()) {
     sendSignedEmail({ to: devEmail, ...ctx, caseUrl: appUrl(`/developer/${input.case_id}`) })
       .catch((e) => console.error('[dsb] email failed', e))
   }
@@ -660,7 +661,7 @@ export async function moveCaseToStage(
     }
   } else if (input.target_status === 'signed') {
     const devEmail = (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
-    if (devEmail) {
+    if (devEmail && isDeveloperNotificationEnabled()) {
       sendSignedEmail({ ...ctx, to: devEmail, caseUrl: appUrl(`/developer/${input.case_id}`) })
         .catch((e) => console.error('[dsb] email failed', e))
     }
