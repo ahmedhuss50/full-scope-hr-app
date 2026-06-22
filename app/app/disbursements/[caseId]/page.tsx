@@ -16,6 +16,7 @@ import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
 import { CommentsThread, type CommentRow } from './CommentsThread'
 import { RevertSignatureButton } from './RevertSignatureButton'
+import { DeliverDocumentButton } from './DeliverDocumentButton'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,7 @@ function statusPill(status: string): { cls: string; label: string } {
     case 'with_owner':      return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار التوقيع' }
     case 'sent_back_to_developer': return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'أُعيدت إلى المطوّر' }
     case 'signed':          return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'موقَّعة' }
+    case 'delivered':       return { cls: 'bg-blue-50 text-blue-700 ring-blue-200',     label: 'مسلَّمة (مؤرشفة)' }
     case 'cancelled':       return { cls: 'bg-slate-100 text-slate-500 ring-slate-200', label: 'ملغاة' }
     case 'draft':           return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: 'مسودة' }
     default:                return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: status }
@@ -49,6 +51,7 @@ type CaseStatus =
   | 'with_owner'
   | 'sent_back_to_developer'
   | 'signed'
+  | 'delivered'
   | 'cancelled'
 
 type CaseRow = {
@@ -68,6 +71,13 @@ type CaseRow = {
   extraction_cost_usd: number | null
   extraction_model: string | null
   extracted_at: string | null
+  delivered_at: string | null
+  delivered_by_user_id: string | null
+  recipient_name: string | null
+  recipient_id_number: string | null
+  recipient_phone: string | null
+  recipient_notes: string | null
+  delivery_notes: string | null
   project:
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
@@ -102,7 +112,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban)`)
     .eq('tenant_id', tenantId)
@@ -296,6 +306,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             {kase.status === 'signed' && dsbRole === 'owner' && (
               <RevertSignatureButton caseId={kase.id} />
             )}
+            {kase.status === 'signed' && (dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner') && (
+              <DeliverDocumentButton caseId={kase.id} />
+            )}
             {dsbRole === 'owner' && (
               <DeleteCaseButton
                 caseId={kase.id}
@@ -432,6 +445,39 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               caseId={kase.id}
               filename={kase.signed_document_filename ?? 'signed.pdf'}
             />
+          )}
+
+          {kase.status === 'delivered' && (
+            <section className="bg-white border border-blue-200 rounded-xl p-6 shadow-sm space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="serif font-bold text-lg text-slate-900">معلومات التسليم</h2>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-200">
+                  مؤرشفة
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <Detail label="اسم المستلم" value={kase.recipient_name ?? '—'} />
+                <Detail label="وقت التسليم" value={fmtDateTime(kase.delivered_at)} />
+                {kase.recipient_id_number && (
+                  <Detail label="رقم الهوية" value={kase.recipient_id_number} />
+                )}
+                {kase.recipient_phone && (
+                  <Detail label="رقم الجوال" value={kase.recipient_phone} />
+                )}
+              </div>
+              {kase.recipient_notes && (
+                <div className="pt-3 border-t border-slate-100">
+                  <div className="text-xs font-semibold text-slate-500 mb-1">ملاحظات عن المستلم</div>
+                  <div className="text-sm text-slate-800 whitespace-pre-wrap">{kase.recipient_notes}</div>
+                </div>
+              )}
+              {kase.delivery_notes && (
+                <div className="pt-3 border-t border-slate-100">
+                  <div className="text-xs font-semibold text-slate-500 mb-1">ملاحظات عن التسليم</div>
+                  <div className="text-sm text-slate-800 whitespace-pre-wrap">{kase.delivery_notes}</div>
+                </div>
+              )}
+            </section>
           )}
 
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">

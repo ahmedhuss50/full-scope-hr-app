@@ -18,6 +18,7 @@ type CaseStatus =
   | 'with_owner'
   | 'sent_back_to_developer'
   | 'signed'
+  | 'delivered'
   | 'cancelled'
 
 type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner'
@@ -1241,6 +1242,104 @@ export async function signCaseWithUploadedDocument(
       sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
     }
   }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements')
+  revalidatePath('/app/disbursements/documents')
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
+// deliverCase — mark a signed case as delivered to the recipient.
+//
+// Any staff role can deliver. We record:
+//   - delivered_at   (when the physical handoff actually happened — defaults
+//     to now but the operator can backdate if they're entering after the fact)
+//   - delivered_by_user_id (who marked it)
+//   - recipient_name / recipient_id_number / recipient_phone / recipient_notes
+//   - delivery_notes (free-form notes about the handoff)
+//
+// Sets status to 'delivered' which acts as the archival state — these cases
+// drop out of the active inbox but remain queryable from the documents
+// register / reports.
+// ----------------------------------------------------------------------------
+
+export interface DeliverCaseInput {
+  case_id: string
+  delivered_at: string | null         // ISO timestamp; null = now
+  recipient_name: string
+  recipient_id_number?: string | null
+  recipient_phone?: string | null
+  recipient_notes?: string | null
+  delivery_notes?: string | null
+}
+
+export async function deliverCase(
+  input: DeliverCaseInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية تسليم الوثيقة.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  const recipientName = (input.recipient_name ?? '').trim()
+  if (!recipientName) return { ok: false, error: 'اسم المستلم مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, status')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  if (kase.status !== 'signed') {
+    return { ok: false, error: 'يمكن تسليم الوثيقة فقط بعد التوقيع النهائي.' }
+  }
+
+  // Validate delivered_at: accept ISO string OR fall back to now.
+  let deliveredAt: string
+  if (input.delivered_at && typeof input.delivered_at === 'string') {
+    const d = new Date(input.delivered_at)
+    if (Number.isNaN(d.getTime())) {
+      return { ok: false, error: 'تاريخ التسليم غير صحيح.' }
+    }
+    deliveredAt = d.toISOString()
+  } else {
+    deliveredAt = new Date().toISOString()
+  }
+
+  const fromStatus = kase.status
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update({
+      status: 'delivered',
+      delivered_at: deliveredAt,
+      delivered_by_user_id: caller.userId,
+      recipient_name: recipientName,
+      recipient_id_number: (input.recipient_id_number ?? '').trim() || null,
+      recipient_phone: (input.recipient_phone ?? '').trim() || null,
+      recipient_notes: (input.recipient_notes ?? '').trim() || null,
+      delivery_notes: (input.delivery_notes ?? '').trim() || null,
+    })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'delivered',
+    actor_user_id: caller.userId,
+    from_status: fromStatus,
+    to_status: 'delivered',
+    notes:
+      `تم تسليم الوثيقة إلى: ${recipientName}` +
+      (input.recipient_id_number ? ` (هوية: ${input.recipient_id_number})` : '') +
+      (input.delivery_notes ? `. ملاحظات: ${input.delivery_notes}` : ''),
+    occurred_at: deliveredAt,
+  })
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
   revalidatePath('/app/disbursements')
