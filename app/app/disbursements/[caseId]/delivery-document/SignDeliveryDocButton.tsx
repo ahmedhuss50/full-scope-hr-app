@@ -117,7 +117,8 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
       canvas.getContext('2d')?.scale(ratio, ratio)
       const pad = new SP(canvas, {
         backgroundColor: 'rgba(255,255,255,0)',
-        penColor: '#0f172a',
+        // Blue-ink color — same value as the case-PDF signature pad.
+        penColor: '#1e3a8a',
         minWidth: 1,
         maxWidth: 2.5,
       })

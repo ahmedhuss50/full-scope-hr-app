@@ -226,7 +226,10 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
       canvas.getContext('2d')?.scale(ratio, ratio)
       const pad = new SP(canvas, {
         backgroundColor: 'rgba(255,255,255,0)',
-        penColor: '#0f172a',
+        // Blue-ink color — matches a classic ballpoint pen rather than the
+        // slate near-black we used before. The composite labels stay dark
+        // slate; only the signature strokes are blue.
+        penColor: '#1e3a8a',
         minWidth: 1,
         maxWidth: 2.5,
       })
