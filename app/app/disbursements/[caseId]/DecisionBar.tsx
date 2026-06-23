@@ -20,6 +20,7 @@ type CaseStatus =
   | 'with_owner'
   | 'sent_back_to_developer'
   | 'signed'
+  | 'delivered'
   | 'cancelled'
 
 type MoveTargetStatus =
