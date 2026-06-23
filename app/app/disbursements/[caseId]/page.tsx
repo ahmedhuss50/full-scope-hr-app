@@ -481,9 +481,6 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <Detail label="اسم المستلم" value={kase.recipient_name ?? '—'} />
                 <Detail label="وقت التسليم" value={fmtDateTime(kase.delivered_at)} />
-                {kase.recipient_id_number && (
-                  <Detail label="رقم الهوية" value={kase.recipient_id_number} />
-                )}
                 {kase.recipient_phone && (
                   <Detail label="رقم الجوال" value={kase.recipient_phone} />
                 )}

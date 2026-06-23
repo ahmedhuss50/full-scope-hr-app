@@ -8,7 +8,7 @@ import { deliverCase } from './actions'
 /**
  * Mark a signed case as delivered to the recipient.
  *
- * Captures: recipient name (required), ID, phone, recipient notes,
+ * Captures: recipient name (required), phone, recipient notes,
  * delivery date/time (defaults to now), and free-form delivery notes.
  * Sets the case to 'delivered' which acts as the archival state — the case
  * leaves the active inbox and lives in the documents register only.
@@ -35,7 +35,6 @@ export function DeliverDocumentButton({ caseId }: { caseId: string }) {
   const [error, setError] = useState<string | null>(null)
 
   const [recipientName, setRecipientName] = useState('')
-  const [recipientId, setRecipientId] = useState('')
   const [recipientPhone, setRecipientPhone] = useState('')
   const [recipientNotes, setRecipientNotes] = useState('')
   const [deliveredAtLocal, setDeliveredAtLocal] = useState(nowLocalForInput())
@@ -43,7 +42,6 @@ export function DeliverDocumentButton({ caseId }: { caseId: string }) {
 
   function reset() {
     setRecipientName('')
-    setRecipientId('')
     setRecipientPhone('')
     setRecipientNotes('')
     setDeliveredAtLocal(nowLocalForInput())
@@ -65,7 +63,6 @@ export function DeliverDocumentButton({ caseId }: { caseId: string }) {
       case_id: caseId,
       delivered_at: isoDelivered,
       recipient_name: recipientName,
-      recipient_id_number: recipientId || null,
       recipient_phone: recipientPhone || null,
       recipient_notes: recipientNotes || null,
       delivery_notes: deliveryNotes || null,
@@ -138,18 +135,7 @@ export function DeliverDocumentButton({ caseId }: { caseId: string }) {
                 placeholder="مثلاً: محمد عبدالله السلمي"
               />
             </div>
-            <div>
-              <label className={labelCls}>رقم الهوية</label>
-              <input
-                className={inputCls}
-                value={recipientId}
-                onChange={(e) => setRecipientId(e.target.value)}
-                disabled={busy}
-                dir="ltr"
-                placeholder="١٠٠٠٠٠٠٠٠٠"
-              />
-            </div>
-            <div>
+            <div className="sm:col-span-2">
               <label className={labelCls}>رقم الجوال</label>
               <input
                 className={inputCls}
