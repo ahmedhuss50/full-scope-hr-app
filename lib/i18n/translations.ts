@@ -2007,6 +2007,7 @@ export const strings = {
   // Disbursements — Documents register
   // -----------------------------------------------------------------
   'dsb.nav.documents':                  { en: 'Documents',                    ar: 'وثائق التسليم' },
+  'dsb.nav.archive':                    { en: 'Archive',                      ar: 'الأرشيف' },
   'dsb.documents.title':                { en: 'Delivery documents register',  ar: 'سجل وثائق التسليم' },
   'dsb.documents.col.case':             { en: 'Case',                         ar: 'رقم الطلب' },
   'dsb.documents.col.project':          { en: 'Project',                      ar: 'المشروع' },

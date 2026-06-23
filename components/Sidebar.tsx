@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -80,6 +80,7 @@ const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements',           labelKey: 'dsb.nav.home',      icon: LayoutDashboard },
   { href: '/app/disbursements/board',     labelKey: 'dsb.nav.board',     icon: Inbox },
   { href: '/app/disbursements/documents', labelKey: 'dsb.nav.documents', icon: FileText },
+  { href: '/app/disbursements/archive',   labelKey: 'dsb.nav.archive',   icon: Archive },
   { href: '/app/disbursements/admin',     labelKey: 'dsb.nav.admin',     icon: Settings },
 ]
 // Owner-only addition. Using a plain Arabic label because we don't have a

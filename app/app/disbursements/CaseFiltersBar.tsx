@@ -41,10 +41,14 @@ export function CaseFiltersBar({
   clients,
   projects,
   employees,
+  hideStatus = false,
 }: {
   clients: FilterOption[]
   projects: Array<FilterOption & { developer_id?: string | null }>
   employees: FilterOption[]
+  /** Hide the status filter (chip + select). Used on pages like the Archive
+   *  where status is already fixed (delivered). Default false. */
+  hideStatus?: boolean
 }) {
   const router = useRouter()
   const pathname = usePathname() ?? '/app/disbursements'
@@ -185,7 +189,7 @@ export function CaseFiltersBar({
               onRemove={() => setParam('employee', null)}
             />
           )}
-          {currentStatus && (
+          {currentStatus && !hideStatus && (
             <Chip
               label={`الحالة: ${STATUS_OPTIONS.find((s) => s.value === currentStatus)?.label ?? currentStatus}`}
               onRemove={() => setParam('status', null)}
@@ -227,13 +231,15 @@ export function CaseFiltersBar({
               {employees.map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
             </select>
           </div>
-          <div>
-            <label className={labelCls}>الحالة</label>
-            <select className={inputCls} value={currentStatus} onChange={(e) => setParam('status', e.target.value || null)}>
-              <option value="">— الكل —</option>
-              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
+          {!hideStatus && (
+            <div>
+              <label className={labelCls}>الحالة</label>
+              <select className={inputCls} value={currentStatus} onChange={(e) => setParam('status', e.target.value || null)}>
+                <option value="">— الكل —</option>
+                {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className={labelCls}>من تاريخ</label>
             <input type="date" className={inputCls} value={currentFrom} onChange={(e) => setParam('from', e.target.value || null)} dir="ltr" />
