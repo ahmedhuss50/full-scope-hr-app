@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft } from 'lucide-react'
+import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft, Stamp } from 'lucide-react'
 import {
   signCaseWithDrawnSignature,
   getCurrentUploadSignedUrl,
   getCurrentSignerInfo,
+  getSavedSignature,
+  saveSignature,
 } from './actions'
 import type SignaturePad from 'signature_pad'
 
@@ -105,6 +107,15 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const [marker, setMarker] = useState<Marker | null>(null)
   const [hasDrawn, setHasDrawn] = useState(false)
 
+  // Saved-signature reuse state.
+  // `savedSignatureDataUrl` is null when the user has no saved signature yet
+  // (we hide the "use saved" pill in that case). `saveForReuse` controls
+  // whether the just-drawn strokes get persisted on submit — defaults to ON
+  // when no signature is on file, OFF when one already exists (so reusing
+  // doesn't accidentally overwrite with the same).
+  const [savedSignatureDataUrl, setSavedSignatureDataUrl] = useState<string | null>(null)
+  const [saveForReuse, setSaveForReuse] = useState(true)
+
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const pdfContainerRef = useRef<HTMLDivElement | null>(null)
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -125,9 +136,10 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     // the composite canvas later.
     void loadArefRuqaa()
     ;(async () => {
-      const [pdfRes, signerRes] = await Promise.all([
+      const [pdfRes, signerRes, savedRes] = await Promise.all([
         getCurrentUploadSignedUrl({ case_id: caseId }),
         getCurrentSignerInfo(),
+        getSavedSignature(),
       ])
       if (cancelled) return
       if (!pdfRes.ok) {
@@ -138,6 +150,13 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
       if (signerRes.ok) {
         setSignerName(signerRes.full_name)
         setSignerPosition(signerRes.position_ar)
+      }
+      if (savedRes.ok) {
+        setSavedSignatureDataUrl(savedRes.data_url)
+        // Already have a saved signature → default the checkbox OFF (reusing
+        // shouldn't silently overwrite). No saved one yet → default ON so
+        // the next time they sign, this one's ready.
+        setSaveForReuse(!savedRes.data_url)
       }
     })()
     return () => { cancelled = true }
@@ -245,6 +264,50 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   }
 
   /**
+   * Paint the user's saved signature PNG onto the pad canvas, letter-boxed
+   * so the aspect ratio is preserved. `pad.toDataURL()` will then include
+   * these pixels at submit time. If the user adds more strokes afterwards
+   * they stack on top — calling "مسح" wipes the canvas (including the
+   * painted image) and starts fresh.
+   */
+  async function useSavedSignature() {
+    if (!savedSignatureDataUrl) return
+    const canvas = signatureCanvasRef.current
+    const pad = padRef.current
+    if (!canvas || !pad) return
+
+    const img = new Image()
+    img.src = savedSignatureDataUrl
+    try {
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('saved signature load failed'))
+      })
+    } catch {
+      setError('تعذّر تحميل التوقيع المحفوظ.')
+      return
+    }
+
+    // Clear both signature_pad's internal stroke data AND the visible canvas
+    // so the painted image lands on a clean slate.
+    pad.clear()
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    // The pad sized this canvas in CSS pixels via getBoundingClientRect
+    // during init; reading it again gives us the same logical drawing area.
+    const rect = canvas.getBoundingClientRect()
+    const W = rect.width
+    const H = rect.height
+    const fit = Math.min(W / img.width, H / img.height) * 0.95
+    const drawW = img.width * fit
+    const drawH = img.height * fit
+    const x = (W - drawW) / 2
+    const y = (H - drawH) / 2
+    ctx.drawImage(img, x, y, drawW, drawH)
+    setHasDrawn(true)
+  }
+
+  /**
    * Build a composite signature image (PNG data URL) that contains the
    * three labels (الاسم / المنصب / التاريخ) rendered in a handwritten-style
    * Arabic font + the drawn signature underneath. Composite is what gets
@@ -340,6 +403,11 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     }
 
     setBusy(true)
+    // Capture the raw drawing BEFORE building the composite. The composite
+    // overlays الاسم/المنصب/التاريخ labels which we don't want persisted
+    // (those should refresh each time the user signs).
+    const rawDataUrl = padRef.current!.toDataURL('image/png')
+
     let compositeDataUrl: string
     try {
       compositeDataUrl = await buildCompositeSignature()
@@ -359,11 +427,22 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
       // Larger width because the block now includes labels + signature.
       width_frac: 0.32,
     })
-    setBusy(false)
     if (!res.ok) {
+      setBusy(false)
       setError(res.error)
       return
     }
+    // Persist the raw drawing for next time, if the user opted in. Failure
+    // here is non-fatal — the case is already signed; just log and move on.
+    if (saveForReuse) {
+      const rawB64 = rawDataUrl.replace(/^data:image\/png;base64,/, '')
+      try {
+        await saveSignature({ signature_png_base64: rawB64 })
+      } catch (err) {
+        console.warn('[DrawSignatureDialog] saveSignature failed', err)
+      }
+    }
+    setBusy(false)
     setOpen(false)
     startTransition(() => router.refresh())
   }
@@ -507,7 +586,21 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
 
           {/* Signature pad */}
           <div>
-            <div className="text-xs font-semibold text-slate-700 mb-1.5">ارسم توقيعك</div>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+              <div className="text-xs font-semibold text-slate-700">ارسم توقيعك</div>
+              {savedSignatureDataUrl && (
+                <button
+                  type="button"
+                  onClick={useSavedSignature}
+                  disabled={busy}
+                  title="استخدم التوقيع الذي حفظته سابقًا"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
+                >
+                  <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
+                  استخدم التوقيع المحفوظ
+                </button>
+              )}
+            </div>
             <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
               <canvas
                 ref={signatureCanvasRef}
@@ -547,6 +640,21 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
                   : 'اضغط على الوثيقة لتحديد مكان التوقيع'}
               </div>
             </div>
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={saveForReuse}
+                onChange={(e) => setSaveForReuse(e.target.checked)}
+                disabled={busy}
+                className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+              />
+              <span>
+                حفظ هذا التوقيع لاستخدامه مرة أخرى في المستقبل
+                {savedSignatureDataUrl && (
+                  <span className="text-slate-400"> · سيستبدل التوقيع المحفوظ الحالي</span>
+                )}
+              </span>
+            </label>
           </div>
 
           {error && (

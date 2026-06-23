@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check, Undo2 } from 'lucide-react'
+import { PenLine, X, Eraser, Check, Undo2, Stamp } from 'lucide-react'
 import type SignaturePad from 'signature_pad'
 import {
   signDeliveryDocument,
   getCurrentSignerInfo,
+  getSavedSignature,
+  saveSignature,
 } from '../actions'
 
 /**
@@ -67,6 +69,10 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
   const [signerPosition, setSignerPosition] = useState('')
   const [signerDate, setSignerDate] = useState(todayArabic())
 
+  // Saved-signature reuse: see DrawSignatureDialog for full rationale.
+  const [savedSignatureDataUrl, setSavedSignatureDataUrl] = useState<string | null>(null)
+  const [saveForReuse, setSaveForReuse] = useState(true)
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
 
@@ -79,11 +85,18 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
     setSignerDate(todayArabic())
     void loadArefRuqaa()
     ;(async () => {
-      const res = await getCurrentSignerInfo()
+      const [signerRes, savedRes] = await Promise.all([
+        getCurrentSignerInfo(),
+        getSavedSignature(),
+      ])
       if (cancelled) return
-      if (res.ok) {
-        setSignerName(res.full_name)
-        setSignerPosition(res.position_ar)
+      if (signerRes.ok) {
+        setSignerName(signerRes.full_name)
+        setSignerPosition(signerRes.position_ar)
+      }
+      if (savedRes.ok) {
+        setSavedSignatureDataUrl(savedRes.data_url)
+        setSaveForReuse(!savedRes.data_url)
       }
     })()
     return () => { cancelled = true }
@@ -123,6 +136,36 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
     data.pop()
     pad.fromData(data)
     setHasDrawn(data.length > 0)
+  }
+
+  /** Paint the user's saved signature onto the pad canvas. Same approach as
+   *  DrawSignatureDialog — letter-box preserving aspect, clear pad first. */
+  async function useSavedSignature() {
+    if (!savedSignatureDataUrl) return
+    const canvas = canvasRef.current
+    const pad = padRef.current
+    if (!canvas || !pad) return
+    const img = new Image()
+    img.src = savedSignatureDataUrl
+    try {
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res()
+        img.onerror = () => rej(new Error('saved signature load failed'))
+      })
+    } catch {
+      setError('تعذّر تحميل التوقيع المحفوظ.')
+      return
+    }
+    pad.clear()
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const rect = canvas.getBoundingClientRect()
+    const W = rect.width, H = rect.height
+    const fit = Math.min(W / img.width, H / img.height) * 0.95
+    const drawW = img.width * fit, drawH = img.height * fit
+    const x = (W - drawW) / 2, y = (H - drawH) / 2
+    ctx.drawImage(img, x, y, drawW, drawH)
+    setHasDrawn(true)
   }
 
   async function buildComposite(): Promise<string> {
@@ -189,6 +232,10 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
       return
     }
     setBusy(true)
+    // Capture raw strokes BEFORE building composite — composite bakes in
+    // الاسم/المنصب/التاريخ labels which we don't want to persist.
+    const rawDataUrl = padRef.current!.toDataURL('image/png')
+
     let composite: string
     try { composite = await buildComposite() } catch (err) {
       setBusy(false)
@@ -197,8 +244,17 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
     }
     const base64 = composite.replace(/^data:image\/png;base64,/, '')
     const res = await signDeliveryDocument({ case_id: caseId, signature_png_base64: base64 })
+    if (!res.ok) { setBusy(false); setError(res.error); return }
+
+    if (saveForReuse) {
+      const rawB64 = rawDataUrl.replace(/^data:image\/png;base64,/, '')
+      try {
+        await saveSignature({ signature_png_base64: rawB64 })
+      } catch (err) {
+        console.warn('[SignDeliveryDocButton] saveSignature failed', err)
+      }
+    }
     setBusy(false)
-    if (!res.ok) { setError(res.error); return }
     setOpen(false)
     startTransition(() => router.refresh())
   }
@@ -270,7 +326,21 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
           </div>
 
           <div>
-            <div className="text-xs font-semibold text-slate-700 mb-1.5">ارسم توقيعك</div>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+              <div className="text-xs font-semibold text-slate-700">ارسم توقيعك</div>
+              {savedSignatureDataUrl && (
+                <button
+                  type="button"
+                  onClick={useSavedSignature}
+                  disabled={busy}
+                  title="استخدم التوقيع الذي حفظته سابقًا"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
+                >
+                  <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
+                  استخدم التوقيع المحفوظ
+                </button>
+              )}
+            </div>
             <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
               <canvas
                 ref={canvasRef}
@@ -303,6 +373,21 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
                 مسح
               </button>
             </div>
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={saveForReuse}
+                onChange={(e) => setSaveForReuse(e.target.checked)}
+                disabled={busy}
+                className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+              />
+              <span>
+                حفظ هذا التوقيع لاستخدامه مرة أخرى في المستقبل
+                {savedSignatureDataUrl && (
+                  <span className="text-slate-400"> · سيستبدل التوقيع المحفوظ الحالي</span>
+                )}
+              </span>
+            </label>
           </div>
 
           {error && (

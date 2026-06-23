@@ -830,6 +830,100 @@ export async function updateCaseFields(
 }
 
 // ----------------------------------------------------------------------------
+// Saved signatures — per-user reusable signature.
+//
+// The drawn strokes (not the composite that adds الاسم/المنصب/التاريخ labels)
+// are persisted as a PNG in Storage. Returned as a data URL so the client
+// can paint it onto the signature pad canvas before the user signs again.
+// One row per user; upsert overwrites.
+// ----------------------------------------------------------------------------
+
+export async function getSavedSignature(): Promise<
+  | { ok: true; data_url: string | null }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: row } = await svc
+    .from('dsb_saved_signatures')
+    .select('storage_path, storage_bucket')
+    .eq('user_id', caller.userId)
+    .maybeSingle()
+  if (!row) return { ok: true, data_url: null }
+
+  const bucket = (row.storage_bucket as string) || STORAGE_BUCKET
+  const { data, error } = await svc.storage
+    .from(bucket)
+    .download(row.storage_path as string)
+  if (error || !data) return { ok: true, data_url: null }
+  const buf = Buffer.from(await data.arrayBuffer())
+  return { ok: true, data_url: `data:image/png;base64,${buf.toString('base64')}` }
+}
+
+export async function saveSignature(
+  input: { signature_png_base64: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!input.signature_png_base64) return { ok: false, error: 'لا يوجد توقيع لحفظه.' }
+
+  const svc = createSupabaseService()
+  let buffer: Buffer
+  try {
+    buffer = Buffer.from(input.signature_png_base64, 'base64')
+  } catch {
+    return { ok: false, error: 'صيغة التوقيع غير صالحة.' }
+  }
+  // Hard cap on saved signature size (2 MB is huge for a PNG of strokes).
+  if (buffer.byteLength > 2 * 1024 * 1024) {
+    return { ok: false, error: 'حجم التوقيع كبير جدًا.' }
+  }
+
+  const path = `signatures/${caller.tenantId}/${caller.userId}.png`
+  const { error: upErr } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, buffer, { contentType: 'image/png', upsert: true })
+  if (upErr) return { ok: false, error: upErr.message }
+
+  const { error: dbErr } = await svc
+    .from('dsb_saved_signatures')
+    .upsert({
+      user_id: caller.userId,
+      tenant_id: caller.tenantId,
+      storage_path: path,
+      storage_bucket: STORAGE_BUCKET,
+      updated_at: new Date().toISOString(),
+    })
+  if (dbErr) return { ok: false, error: dbErr.message }
+  return { ok: true }
+}
+
+export async function deleteSavedSignature(): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  const svc = createSupabaseService()
+  const { data: row } = await svc
+    .from('dsb_saved_signatures')
+    .select('storage_path, storage_bucket')
+    .eq('user_id', caller.userId)
+    .maybeSingle()
+  if (row) {
+    const bucket = (row.storage_bucket as string) || STORAGE_BUCKET
+    try {
+      await svc.storage.from(bucket).remove([row.storage_path as string])
+    } catch {
+      /* file may already be gone — proceed with db delete */
+    }
+    await svc.from('dsb_saved_signatures').delete().eq('user_id', caller.userId)
+  }
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // Supplementary attachments — additional documents attached to a case
 // beyond the primary voucher PDF (e.g., receipts, completion certificates,
 // scanned IDs). Any staff role can attach; uploader OR owner can delete.
