@@ -830,6 +830,213 @@ export async function updateCaseFields(
 }
 
 // ----------------------------------------------------------------------------
+// Supplementary attachments — additional documents attached to a case
+// beyond the primary voucher PDF (e.g., receipts, completion certificates,
+// scanned IDs). Any staff role can attach; uploader OR owner can delete.
+// ----------------------------------------------------------------------------
+
+const ATTACHMENT_MAX_SIZE = 50 * 1024 * 1024 // 50 MB
+
+export interface RequestAttachmentUploadUrlInput {
+  case_id: string
+  filename: string
+  size: number
+}
+
+export type RequestAttachmentUploadUrlResult =
+  | { ok: true; signed_url: string; storage_path: string }
+  | { ok: false; error: string }
+
+export async function requestAttachmentUploadUrl(
+  input: RequestAttachmentUploadUrlInput,
+): Promise<RequestAttachmentUploadUrlResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+  if (input.size > ATTACHMENT_MAX_SIZE) {
+    return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const uuid = crypto.randomUUID()
+  const safe = (input.filename || `attachment-${uuid}`).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180)
+  const storagePath = `attachments/${caller.tenantId}/${input.case_id}/${uuid}-${safe}`
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath)
+  if (error || !data) {
+    console.error('[dsb.requestAttachmentUploadUrl] failed', error)
+    return { ok: false, error: 'تعذّر إنشاء رابط الرفع.' }
+  }
+  return { ok: true, signed_url: data.signedUrl, storage_path: data.path ?? storagePath }
+}
+
+export interface FinalizeAttachmentUploadInput {
+  case_id: string
+  storage_path: string
+  filename: string
+  size: number
+  mime: string
+  label: string | null
+}
+
+export async function finalizeAttachmentUpload(
+  input: FinalizeAttachmentUploadInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id || !input.storage_path) {
+    return { ok: false, error: 'بيانات ناقصة.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const safeName = (input.filename ?? '').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180) || 'attachment'
+  const label = (input.label ?? '').trim().slice(0, 200) || null
+
+  const { data: row, error } = await svc
+    .from('dsb_uploads')
+    .insert({
+      tenant_id: caller.tenantId,
+      case_id: input.case_id,
+      filename: safeName,
+      storage_path: input.storage_path,
+      storage_bucket: STORAGE_BUCKET,
+      file_size_bytes: input.size,
+      mime_type: input.mime || 'application/octet-stream',
+      uploaded_by_user_id: caller.userId,
+      category: 'supplementary',
+      attachment_label: label,
+    })
+    .select('id')
+    .single()
+  if (error || !row) {
+    return { ok: false, error: error?.message ?? 'فشل تسجيل المرفق.' }
+  }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'attachment_added',
+    actor_user_id: caller.userId,
+    notes: label ? `أُرفق مستند: ${label} (${safeName})` : `أُرفق مستند: ${safeName}`,
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true, id: row.id as string }
+}
+
+export async function deleteAttachment(
+  input: { upload_id: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!input.upload_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: row } = await svc
+    .from('dsb_uploads')
+    .select('id, tenant_id, case_id, uploaded_by_user_id, category, filename')
+    .eq('id', input.upload_id)
+    .maybeSingle()
+  if (!row) return { ok: false, error: 'المرفق غير موجود.' }
+  if ((row.tenant_id as string) !== caller.tenantId) {
+    return { ok: false, error: 'المرفق لا يخص مكتبك.' }
+  }
+  if (row.category !== 'supplementary') {
+    return { ok: false, error: 'لا يمكن حذف الملف الرئيسي من هنا.' }
+  }
+  const isUploader = row.uploaded_by_user_id === caller.userId
+  const isOwner = caller.dsbRole === 'owner'
+  if (!isUploader && !isOwner) {
+    return { ok: false, error: 'لا تملك صلاحية حذف هذا المرفق.' }
+  }
+
+  const { error } = await svc
+    .from('dsb_uploads')
+    .delete()
+    .eq('id', input.upload_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: row.case_id as string,
+    event: 'attachment_deleted',
+    actor_user_id: caller.userId,
+    notes: `حذف مرفق: ${row.filename}`,
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${row.case_id as string}`)
+  return { ok: true }
+}
+
+/**
+ * Short-lived signed URL to download a supplementary attachment. Any tenant
+ * staff can fetch.
+ */
+export async function getAttachmentSignedUrl(
+  input: { upload_id: string },
+): Promise<
+  | { ok: true; url: string; filename: string; mime: string | null }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner', 'developer'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: row } = await svc
+    .from('dsb_uploads')
+    .select('id, tenant_id, storage_path, storage_bucket, filename, mime_type')
+    .eq('id', input.upload_id)
+    .maybeSingle()
+  if (!row || (row.tenant_id as string) !== caller.tenantId) {
+    return { ok: false, error: 'المرفق غير موجود.' }
+  }
+  const bucket = (row.storage_bucket as string) || STORAGE_BUCKET
+  const { data, error } = await svc.storage
+    .from(bucket)
+    .createSignedUrl(row.storage_path as string, 60 * 10)
+  if (error || !data?.signedUrl) {
+    return { ok: false, error: 'تعذّر إنشاء الرابط.' }
+  }
+  return {
+    ok: true,
+    url: data.signedUrl,
+    filename: (row.filename as string) ?? 'attachment',
+    mime: (row.mime_type as string | null) ?? null,
+  }
+}
+
+// ----------------------------------------------------------------------------
 // Case comments — internal thread for the review team. Any staff role can
 // post or read; users can delete their own comments; owners can delete any.
 // Comments are SOFT-deleted (deleted_at) so the audit trail survives.
@@ -1025,8 +1232,9 @@ export async function finalizeReplacementUpload(
   const now = new Date().toISOString()
   const reason = (input.reason ?? '').trim().slice(0, 500) || null
 
-  // Step 1: mark every currently-active upload for this case as superseded.
-  // The partial unique index would otherwise reject the new INSERT.
+  // Step 1: mark every currently-active PRIMARY upload for this case as
+  // superseded. Supplementary attachments are NOT affected — they're a
+  // separate category and never participate in versioning.
   const { data: currentRows, error: supErr } = await svc
     .from('dsb_uploads')
     .update({
@@ -1036,6 +1244,7 @@ export async function finalizeReplacementUpload(
     })
     .eq('tenant_id', caller.tenantId)
     .eq('case_id', input.case_id)
+    .eq('category', 'primary')
     .is('superseded_at', null)
     .select('id')
   if (supErr) {
@@ -1057,6 +1266,7 @@ export async function finalizeReplacementUpload(
       file_size_bytes: input.size,
       mime_type: input.mime || 'application/pdf',
       uploaded_by_user_id: caller.userId,
+      category: 'primary',
     })
     .select('id')
     .single()

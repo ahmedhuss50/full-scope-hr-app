@@ -17,6 +17,7 @@ import { ReplaceDocumentButton } from './ReplaceDocumentButton'
 import { CommentsThread, type CommentRow } from './CommentsThread'
 import { RevertSignatureButton } from './RevertSignatureButton'
 import { DeliverDocumentButton } from './DeliverDocumentButton'
+import { AttachmentsSection } from './AttachmentsSection'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 
 export const dynamic = 'force-dynamic'
@@ -133,12 +134,34 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   // Include version-tracking fields: superseded_at filters CURRENT (active) vs
   // historical uploads. We display the most recent NON-superseded one as the
   // primary PDF; historical rows show in the version-history list.
+  // `category` distinguishes the primary voucher from supplementary
+  // attachments — without filtering on it here, attachments would show up
+  // as if they were main PDFs.
   const { data: uploads } = await svc
     .from('dsb_uploads')
     .select('id, filename, storage_path, storage_bucket, uploaded_at, file_size_bytes, superseded_at, replaced_by_user_id, replacement_reason')
     .eq('tenant_id', tenantId)
     .eq('case_id', params.caseId)
+    .eq('category', 'primary')
     .order('uploaded_at', { ascending: false })
+
+  // Supplementary attachments — separate section.
+  const { data: attachmentsRaw } = await svc
+    .from('dsb_uploads')
+    .select('id, filename, attachment_label, file_size_bytes, mime_type, uploaded_at, uploaded_by_user_id')
+    .eq('tenant_id', tenantId)
+    .eq('case_id', params.caseId)
+    .eq('category', 'supplementary')
+    .order('uploaded_at', { ascending: false })
+  const attachments = (attachmentsRaw ?? []) as Array<{
+    id: string
+    filename: string
+    attachment_label: string | null
+    file_size_bytes: number | null
+    mime_type: string | null
+    uploaded_at: string
+    uploaded_by_user_id: string | null
+  }>
 
   // Per-case comments thread. Soft-deleted comments are hidden.
   const { data: commentsRaw } = await svc
@@ -534,6 +557,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               </details>
             )}
           </section>
+
+          <AttachmentsSection
+            caseId={kase.id}
+            attachments={attachments}
+            currentUserId={userId}
+            isOwner={dsbRole === 'owner'}
+          />
 
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
             <div className="flex items-start justify-between gap-3">
