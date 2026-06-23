@@ -262,7 +262,7 @@ export function ChecklistEditor({
               <th className="text-start py-2 px-2">البند</th>
               <th className="text-start py-2 px-2 w-36">اقتراح الذكاء الاصطناعي</th>
               <th className="text-start py-2 px-2 w-44">الحالة النهائية</th>
-              <th className="text-start py-2 px-2 w-56">ملاحظات</th>
+              <th className="text-start py-2 px-2 w-80">ملاحظات</th>
             </tr>
           </thead>
           <tbody>
@@ -320,11 +320,11 @@ export function ChecklistEditor({
                     </div>
                   </td>
                   <td className="py-2 px-2">
-                    <input
-                      type="text"
+                    <textarea
+                      rows={4}
                       disabled={!canEdit || saving}
-                      className={inputCls}
-                      placeholder="ملاحظة قصيرة"
+                      className={inputCls + ' resize-y min-h-[5rem] leading-snug'}
+                      placeholder="اكتب ملاحظتك هنا…"
                       value={row.notes}
                       onChange={(e) => onNotesChange(it.id, e.target.value)}
                     />
