@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft, Stamp, Upload } from 'lucide-react'
+import { PenLine, X, Eraser, Check, Undo2, ChevronRight, ChevronLeft, Stamp } from 'lucide-react'
 import {
   signCaseWithDrawnSignature,
   getCurrentUploadSignedUrl,
@@ -120,12 +120,6 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
   const pdfContainerRef = useRef<HTMLDivElement | null>(null)
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
-  // Hidden file input for the "upload signature image" path. Lets the user
-  // pick an existing scanned/exported signature instead of having to draw on
-  // a trackpad. The image is painted onto the pad AND auto-saved (when the
-  // "save for reuse" checkbox is on), so the next time they sign the saved
-  // pill is ready.
-  const signatureFileRef = useRef<HTMLInputElement | null>(null)
 
   // ----- Fetch the case PDF + signer info when dialog opens -----
   useEffect(() => {
@@ -270,82 +264,6 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
     data.pop()
     pad.fromData(data)
     setHasDrawn(data.length > 0)
-  }
-
-  /**
-   * Pick a signature image file (PNG/JPG) and paint it onto the pad. If
-   * "save for reuse" is on, the image is also persisted as the user's saved
-   * signature in one go — so the next time they sign, the "use saved" pill
-   * is right there.
-   */
-  function openSignatureUpload() {
-    setError(null)
-    signatureFileRef.current?.click()
-  }
-
-  async function onSignatureFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0]
-    e.target.value = '' // reset so picking the same file again re-fires
-    if (!f) return
-    if (!f.type.startsWith('image/')) {
-      setError('يجب اختيار صورة (PNG أو JPG).')
-      return
-    }
-    if (f.size > 2 * 1024 * 1024) {
-      setError('حجم الصورة يتجاوز ٢ ميغابايت.')
-      return
-    }
-
-    // Read the file as a data URL so we can both paint it onto the canvas
-    // AND ship the same bytes off to saveSignature.
-    const reader = new FileReader()
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = () => reject(new Error('file read failed'))
-      reader.readAsDataURL(f)
-    }).catch(() => '')
-    if (!dataUrl) {
-      setError('تعذّر قراءة الملف.')
-      return
-    }
-
-    // Paint onto the pad — same letter-box logic as useSavedSignature.
-    const canvas = signatureCanvasRef.current
-    const pad = padRef.current
-    if (!canvas || !pad) return
-    const img = new Image()
-    img.src = dataUrl
-    try {
-      await new Promise<void>((res, rej) => {
-        img.onload = () => res()
-        img.onerror = () => rej(new Error('image load failed'))
-      })
-    } catch {
-      setError('تعذّر تحميل الصورة.')
-      return
-    }
-    pad.clear()
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const rect = canvas.getBoundingClientRect()
-    const W = rect.width, H = rect.height
-    const fit = Math.min(W / img.width, H / img.height) * 0.95
-    const drawW = img.width * fit, drawH = img.height * fit
-    const x = (W - drawW) / 2, y = (H - drawH) / 2
-    ctx.drawImage(img, x, y, drawW, drawH)
-    setHasDrawn(true)
-
-    // If "save for reuse" is on, persist immediately so the saved-pill
-    // appears next time. We strip the data-URL prefix to get raw base64.
-    if (saveForReuse) {
-      const b64 = dataUrl.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
-      try {
-        const res = await saveSignature({ signature_png_base64: b64 })
-        if (res.ok) setSavedSignatureDataUrl(dataUrl)
-      } catch (err) {
-        console.warn('[DrawSignatureDialog] image-upload saveSignature failed', err)
-      }
-    }
   }
 
   /**
@@ -673,37 +591,18 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
           <div>
             <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
               <div className="text-xs font-semibold text-slate-700">ارسم توقيعك</div>
-              <div className="inline-flex items-center gap-1.5 flex-wrap">
-                {savedSignatureDataUrl && (
-                  <button
-                    type="button"
-                    onClick={useSavedSignature}
-                    disabled={busy}
-                    title="استخدم التوقيع الذي حفظته سابقًا"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
-                  >
-                    <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
-                    استخدم التوقيع المحفوظ
-                  </button>
-                )}
+              {savedSignatureDataUrl && (
                 <button
                   type="button"
-                  onClick={openSignatureUpload}
+                  onClick={useSavedSignature}
                   disabled={busy}
-                  title="ارفع صورة لتوقيعك (PNG أو JPG) بدلًا من الرسم"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+                  title="استخدم التوقيع الذي حفظته سابقًا"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
                 >
-                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  ارفع صورة التوقيع
+                  <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
+                  استخدم التوقيع المحفوظ
                 </button>
-                <input
-                  ref={signatureFileRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg"
-                  className="hidden"
-                  onChange={onSignatureFilePicked}
-                />
-              </div>
+              )}
             </div>
             <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
               <canvas
