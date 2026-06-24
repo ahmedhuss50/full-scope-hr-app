@@ -329,37 +329,18 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
           <div>
             <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
               <div className="text-xs font-semibold text-slate-700">ارسم توقيعك</div>
-              <div className="inline-flex items-center gap-1.5 flex-wrap">
-                {savedSignatureDataUrl && (
-                  <button
-                    type="button"
-                    onClick={useSavedSignature}
-                    disabled={busy}
-                    title="استخدم التوقيع الذي حفظته سابقًا"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
-                  >
-                    <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
-                    استخدم التوقيع المحفوظ
-                  </button>
-                )}
+              {savedSignatureDataUrl && (
                 <button
                   type="button"
-                  onClick={openSignatureUpload}
+                  onClick={useSavedSignature}
                   disabled={busy}
-                  title="ارفع صورة لتوقيعك (PNG أو JPG) بدلًا من الرسم"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+                  title="استخدم التوقيع الذي حفظته سابقًا"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
                 >
-                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  ارفع صورة التوقيع
+                  <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
+                  استخدم التوقيع المحفوظ
                 </button>
-                <input
-                  ref={signatureFileRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg"
-                  className="hidden"
-                  onChange={onSignatureFilePicked}
-                />
-              </div>
+              )}
             </div>
             <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
               <canvas
