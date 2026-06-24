@@ -1,9 +1,9 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { Archive, PackageCheck, ExternalLink } from 'lucide-react'
-import { fmtDateTime } from '@/lib/dsb/datetime'
+import { Archive } from 'lucide-react'
 import { CaseFiltersBar } from '../CaseFiltersBar'
+import { EditableArchiveRow } from './EditableArchiveRow'
 
 /**
  * Archive — all cases with status = 'delivered'.
@@ -261,60 +261,22 @@ export default async function ArchivePage({
                     ? delivererNameById.get(c.delivered_by_user_id) ?? '—'
                     : '—'
                   return (
-                    <tr key={c.id} className="hover:bg-slate-50 transition">
-                      <Td>
-                        <Link
-                          href={`/app/disbursements/${c.id}`}
-                          className="font-mono text-xs font-semibold text-teal-700 hover:text-teal-900"
-                        >
-                          {c.case_number}
-                        </Link>
-                      </Td>
-                      <Td>
-                        {project ? (
-                          <span>
-                            <span className="font-mono text-xs text-slate-500">{project.code}</span>
-                            <span className="text-slate-400 mx-1">·</span>
-                            <span className="text-slate-900">{project.name_ar}</span>
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </Td>
-                      <Td>{developer?.company_name_ar ?? '—'}</Td>
-                      <Td>
-                        <span className="font-mono text-xs">{c.voucher_number_text ?? '—'}</span>
-                      </Td>
-                      <Td>
-                        <span className="font-mono">{fmtSar(c.amount_sar)}</span>
-                      </Td>
-                      <Td>
-                        <div className="leading-tight">
-                          <div className="text-slate-900">{c.recipient_name ?? '—'}</div>
-                          {c.recipient_phone && (
-                            <div className="text-[11px] font-mono text-slate-500" dir="ltr">
-                              {c.recipient_phone}
-                            </div>
-                          )}
-                        </div>
-                      </Td>
-                      <Td>
-                        <span className="inline-flex items-center gap-1 text-slate-700">
-                          <PackageCheck className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
-                          {fmtDateTime(c.delivered_at)}
-                        </span>
-                      </Td>
-                      <Td>{deliverer}</Td>
-                      <Td>
-                        <Link
-                          href={`/app/disbursements/${c.id}`}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-                          فتح
-                        </Link>
-                      </Td>
-                    </tr>
+                    <EditableArchiveRow
+                      key={c.id}
+                      caseId={c.id}
+                      caseNumber={c.case_number}
+                      project={project ? { code: project.code, name_ar: project.name_ar } : null}
+                      developer={developer ? { company_name_ar: developer.company_name_ar } : null}
+                      voucherNumber={c.voucher_number_text}
+                      amountLabel={fmtSar(c.amount_sar)}
+                      recipientName={c.recipient_name}
+                      recipientPhone={c.recipient_phone}
+                      deliveredAt={c.delivered_at}
+                      delivererName={deliverer}
+                      // Viewer is read-only; staff + deliverer can edit
+                      // the recipient name / delivery time inline.
+                      canEdit={['employee', 'supervisor', 'owner', 'deliverer'].includes(dsbRole ?? '')}
+                    />
                   )
                 })}
               </tbody>
