@@ -112,7 +112,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   const dsbRole = (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer' | null) ?? null
   // Convenience flags. `canWrite` covers approve/reject/sign/edit/attach.
   // `canDeliver` is broader — deliverers can ONLY do this one thing.
-  const canWrite = canWrite
+  const canWrite = dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'
   const canDeliver = canWrite || dsbRole === 'deliverer'
 
   const { data: kaseRaw } = await svc
