@@ -32,11 +32,16 @@ export function AttachmentsSection({
   attachments,
   currentUserId,
   isOwner,
+  canEdit = true,
 }: {
   caseId: string
   attachments: AttachmentRow[]
   currentUserId: string
   isOwner: boolean
+  /** When false (viewer / deliverer), hide the upload button and delete
+   *  controls — downloads remain available. Defaults to true so existing
+   *  callers don't need updating. */
+  canEdit?: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -156,7 +161,7 @@ export function AttachmentsSection({
             <span className="text-xs font-mono text-slate-400">({attachments.length})</span>
           )}
         </h2>
-        {!picking && (
+        {!picking && canEdit && (
           <button
             type="button"
             onClick={openPicker}
@@ -238,7 +243,8 @@ export function AttachmentsSection({
       ) : (
         <ul className="space-y-2">
           {attachments.map((a) => {
-            const canDelete = a.uploaded_by_user_id === currentUserId || isOwner
+            // Delete requires write privileges in addition to ownership/role.
+            const canDelete = canEdit && (a.uploaded_by_user_id === currentUserId || isOwner)
             return (
               <li
                 key={a.id}

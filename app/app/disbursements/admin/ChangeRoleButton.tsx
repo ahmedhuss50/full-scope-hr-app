@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation'
 import { UserCog } from 'lucide-react'
 import { changeEmployeeRole } from './edit-actions'
 
-type StaffRole = 'employee' | 'supervisor' | 'owner'
+type StaffRole = 'employee' | 'supervisor' | 'owner' | 'viewer' | 'deliverer'
 
 const ROLE_LABEL: Record<StaffRole, string> = {
   employee:   'مراجع',
   supervisor: 'مشرف',
   owner:      'مدير',
+  viewer:     'مشاهد',
+  deliverer:  'مسلِّم',
 }
 
 /**
@@ -76,7 +78,7 @@ export function ChangeRoleButton({
     <div className="inline-flex flex-col items-stretch gap-1.5">
       <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">اختر الدور الجديد</div>
       <div className="inline-flex items-center gap-1.5 flex-wrap">
-        {(['employee', 'supervisor', 'owner'] as StaffRole[]).map((role) => {
+        {(['employee', 'supervisor', 'owner', 'viewer', 'deliverer'] as StaffRole[]).map((role) => {
           const isCurrent = role === currentRole
           return (
             <button

@@ -157,7 +157,9 @@ export default async function DisbursementsDashboardPage({
   // Redirect them directly instead of going through /app (which would just
   // bounce back here and cause ERR_TOO_MANY_REDIRECTS).
   if (dsbRole === 'developer') redirect('/developer')
-  if (!dsbRole || !['employee', 'supervisor', 'owner'].includes(dsbRole)) {
+  // Open to every internal role — including viewer (read-only) and deliverer
+  // (read + deliver). Write actions are gated separately at the action layer.
+  if (!dsbRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(dsbRole)) {
     redirect('/login')
   }
 

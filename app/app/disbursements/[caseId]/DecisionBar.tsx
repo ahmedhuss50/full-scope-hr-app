@@ -12,7 +12,7 @@ import {
 } from './actions'
 import { DrawSignatureDialog } from './DrawSignatureDialog'
 
-type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner' | null
+type DsbRole = 'developer' | 'employee' | 'supervisor' | 'owner' | 'viewer' | 'deliverer' | null
 type CaseStatus =
   | 'draft'
   | 'with_employee'

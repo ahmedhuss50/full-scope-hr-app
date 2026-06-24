@@ -79,7 +79,8 @@ export default async function ArchivePage({
   if (!profile) redirect('/login')
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
-  if (!dsbRole || !['employee', 'supervisor', 'owner'].includes(dsbRole)) {
+  // Read-access only — viewer + deliverer can browse the archive.
+  if (!dsbRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(dsbRole)) {
     redirect('/app/disbursements')
   }
 

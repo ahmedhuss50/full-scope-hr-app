@@ -65,7 +65,10 @@ export default async function DeliveryDocumentsRegisterPage({
   if (!profile) redirect('/login')
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
-  if (!dsbRole || !['employee', 'supervisor', 'owner'].includes(dsbRole)) {
+  // Read-access only — viewer + deliverer can see the signed-docs register.
+  // The register's whole purpose for the deliverer is finding the next case
+  // they need to deliver.
+  if (!dsbRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(dsbRole)) {
     redirect('/app/disbursements')
   }
 

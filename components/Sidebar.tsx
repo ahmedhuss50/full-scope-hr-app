@@ -25,7 +25,7 @@ export type SidebarCounts = {
 export type SidebarUser = {
   full_name: string | null
   email: string | null
-  dsb_role?: 'employee' | 'supervisor' | 'owner' | 'developer' | null
+  dsb_role?: 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer' | null
 }
 
 type Item = {

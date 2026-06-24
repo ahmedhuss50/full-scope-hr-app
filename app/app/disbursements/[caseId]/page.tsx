@@ -109,7 +109,11 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const tenantId = profile.tenant_id as string
   const userId = profile.id as string
-  const dsbRole = (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | null) ?? null
+  const dsbRole = (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer' | null) ?? null
+  // Convenience flags. `canWrite` covers approve/reject/sign/edit/attach.
+  // `canDeliver` is broader — deliverers can ONLY do this one thing.
+  const canWrite = canWrite
+  const canDeliver = canWrite || dsbRole === 'deliverer'
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
@@ -267,7 +271,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   }))
 
   const isAssignedEmployee = !!project && project.assigned_employee_id === userId
-  const canEditChecklist = dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'
+  const canEditChecklist = canWrite
   // Breakdown is editable only by the role currently responsible.
   const breakdownEditable =
     (kase.status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee) ||
@@ -329,7 +333,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             {kase.status === 'signed' && dsbRole === 'owner' && (
               <RevertSignatureButton caseId={kase.id} />
             )}
-            {kase.status === 'signed' && (dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner') && (
+            {kase.status === 'signed' && canDeliver && (
               <DeliverDocumentButton caseId={kase.id} />
             )}
             {dsbRole === 'owner' && (
@@ -363,7 +367,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                   delivery_date: kase.delivery_date,
                   notes: kase.notes,
                 }}
-                canEdit={dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'}
+                canEdit={canWrite}
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -503,7 +507,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="serif font-bold text-lg text-slate-900">ملف PDF</h2>
-              {upload && (dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner') && (
+              {upload && (canWrite) && (
                 <ReplaceDocumentButton caseId={kase.id} />
               )}
             </div>
@@ -560,6 +564,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             attachments={attachments}
             currentUserId={userId}
             isOwner={dsbRole === 'owner'}
+            // Viewer + deliverer can still download attachments but can't
+            // upload new ones or delete existing ones.
+            canEdit={canWrite}
           />
 
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
@@ -588,7 +595,10 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           <CommentsThread
             caseId={kase.id}
             currentUserId={userId}
-            currentUserRole={(dsbRole as 'employee' | 'supervisor' | 'owner' | null) ?? null}
+            // Viewer + deliverer pass `null` so the thread shows in read-only
+            // mode (they can see existing notes but the compose box is hidden
+            // and they can't delete anyone else's).
+            currentUserRole={canWrite ? (dsbRole as 'employee' | 'supervisor' | 'owner') : null}
             comments={comments}
           />
 
@@ -597,7 +607,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <EditExtractedFields
                 caseId={kase.id}
                 extracted={extractedFields}
-                canEdit={dsbRole === 'employee' || dsbRole === 'supervisor' || dsbRole === 'owner'}
+                canEdit={canWrite}
               />
             </div>
             <ExtractedFieldsPanel

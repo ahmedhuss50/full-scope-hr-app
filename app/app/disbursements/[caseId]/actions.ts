@@ -1102,7 +1102,9 @@ export async function getAttachmentSignedUrl(
 > {
   const caller = await resolveCaller()
   if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
-  if (!['employee', 'supervisor', 'owner', 'developer'].includes(caller.dsbRole ?? '')) {
+  // Anyone with access to the module — including viewer + deliverer — can
+  // pull a signed download URL for an attachment.
+  if (!['employee', 'supervisor', 'owner', 'developer', 'viewer', 'deliverer'].includes(caller.dsbRole ?? '')) {
     return { ok: false, error: 'لا تملك صلاحية.' }
   }
 
@@ -1583,7 +1585,9 @@ export async function deliverCase(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
-  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+  // Delivery is the deliverer's sole capability, so they're explicitly
+  // allowed here alongside the regular write roles.
+  if (!['employee', 'supervisor', 'owner', 'deliverer'].includes(caller.dsbRole ?? '')) {
     return { ok: false, error: 'لا تملك صلاحية تسليم الوثيقة.' }
   }
   if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }

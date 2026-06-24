@@ -130,7 +130,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           user={{
             full_name: profile.full_name as string | null,
             email: user.email ?? null,
-            dsb_role: (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | null) ?? null,
+            dsb_role: (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer' | null) ?? null,
           }}
         />
         <div className="flex-1 min-w-0 flex flex-col">

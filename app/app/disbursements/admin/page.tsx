@@ -46,7 +46,8 @@ type EmployeeRow = {
   id: string
   full_name: string | null
   email: string | null
-  dsb_role: 'employee' | 'supervisor' | 'owner' | null
+  // Broadened: viewer (مشاهد) + deliverer (مسلِّم) joined the role list.
+  dsb_role: 'employee' | 'supervisor' | 'owner' | 'viewer' | 'deliverer' | null
 }
 
 function roleLabel(role: string | null): { cls: string; label: string } {
@@ -57,6 +58,10 @@ function roleLabel(role: string | null): { cls: string; label: string } {
       return { cls: 'bg-amber-50 text-amber-800 ring-amber-200', label: 'مشرف' }
     case 'employee':
       return { cls: 'bg-teal-50 text-teal-700 ring-teal-200', label: 'موظف' }
+    case 'viewer':
+      return { cls: 'bg-slate-50 text-slate-700 ring-slate-200', label: 'مشاهد' }
+    case 'deliverer':
+      return { cls: 'bg-blue-50 text-blue-700 ring-blue-200', label: 'مسلِّم' }
     default:
       return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: role ?? '—' }
   }

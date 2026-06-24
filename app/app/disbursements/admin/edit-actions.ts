@@ -50,7 +50,7 @@ async function resolveStaff(): Promise<
 //   - Target user must belong to the same tenant.
 // ---------------------------------------------------------------------------
 
-type StaffOnlyRole = 'employee' | 'supervisor' | 'owner'
+type StaffOnlyRole = 'employee' | 'supervisor' | 'owner' | 'viewer' | 'deliverer'
 
 export interface ChangeEmployeeRoleInput {
   user_id: string
@@ -69,7 +69,7 @@ export async function changeEmployeeRole(
   if (input.user_id === caller.userId) {
     return { ok: false, error: 'لا يمكنك تغيير دورك الخاص.' }
   }
-  if (!['employee', 'supervisor', 'owner'].includes(input.new_role)) {
+  if (!['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(input.new_role)) {
     return { ok: false, error: 'دور غير صالح.' }
   }
 
