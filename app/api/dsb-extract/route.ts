@@ -29,6 +29,7 @@
 import { NextResponse } from 'next/server'
 import { createSupabaseService } from '@/lib/supabase/server'
 import { fireDsbAiReviewWebhook } from '@/lib/n8n/fire-dsb-ai-review'
+import { pdfPageCount, splitPdfIntoChunks } from '@/lib/dsb/pdf-chunks'
 
 // NOTE: We intentionally do NOT use the @anthropic-ai/sdk wrapper for this
 // call. The installed SDK version (0.30.1) does not type the `document`
@@ -277,94 +278,27 @@ export async function POST(req: Request) {
     if (!pdfResp.ok) {
       throw new Error(`PDF download failed: HTTP ${pdfResp.status}`)
     }
-    const pdfArrayBuf = await pdfResp.arrayBuffer()
-    const pdfBase64 = Buffer.from(pdfArrayBuf).toString('base64')
+    const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer())
 
-    // ----- 3. Call Claude (direct fetch — see note at top of file) -----
+    // ----- 3. Decide chunked vs single-shot based on page count -----
+    // Anthropic caps PDF documents at 100 pages per request. We page-count
+    // with pdf-lib up front so we can split oversized PDFs locally instead
+    // of bouncing off the API. The friendly Arabic 100-page error in the
+    // Claude-call helper remains as a safety net in case the count is wrong
+    // (e.g. encrypted or malformed PDF).
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
 
-    // Cost controls (each ~independently saves a chunk):
-    //   1. Default to Haiku 4.5 — ~4x cheaper than Sonnet for both input and
-    //      output. For structured extraction from a fixed-format Arabic
-    //      voucher this is a known-format task where Haiku matches Sonnet's
-    //      accuracy in our spot-tests. Flip back via DSB_EXTRACT_MODEL env.
-    //   2. Prompt caching on the system prompt — cache_control: ephemeral.
-    //      Anthropic charges 10% of normal input rate for cache reads. Our
-    //      ~1.5kB system prompt is identical on every call, so ~90% savings
-    //      on that portion after the first request.
-    //   3. max_tokens reduced from 4000 → 2500. Typical response is well
-    //      under 2000; the extra headroom was just unused budget.
-    const claudeBody = {
-      model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
-      max_tokens: 2500,
-      system: [
-        {
-          type: 'text',
-          text: SYSTEM_PROMPT,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 },
-            },
-            {
-              type: 'text',
-              text: 'Return JSON only.',
-            },
-          ],
-        },
-      ],
+    let totalPageCount: number
+    try {
+      totalPageCount = await pdfPageCount(pdfBuffer)
+    } catch {
+      // pdf-lib couldn't open the PDF — fall back to single-shot and let
+      // the Claude API surface the real error message to the user.
+      totalPageCount = 0
     }
 
-    const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(claudeBody),
-      signal: AbortSignal.timeout(90_000),
-    })
-
-    if (!claudeResp.ok) {
-      const errBody = await claudeResp.text().catch(() => '')
-      if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
-        throw new Error(
-          'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة) لمعالجة الذكاء الاصطناعي. يرجى تقسيم الوثيقة إلى ملفات أصغر.',
-        )
-      }
-      if (errBody.includes('document') && errBody.includes('size')) {
-        throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
-      }
-      throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
-    }
-
-    const claudeJson = (await claudeResp.json()) as {
-      content?: Array<{ type: string; text?: string }>
-      model?: string
-      usage?: {
-        input_tokens?: number
-        output_tokens?: number
-        cache_creation_input_tokens?: number
-        cache_read_input_tokens?: number
-      }
-    }
-    const firstTextBlock = (claudeJson.content || []).find(
-      (b) => b.type === 'text' && typeof b.text === 'string',
-    )
-    const claudeText = firstTextBlock?.text || ''
-    if (!claudeText) throw new Error('Claude returned no text content')
-
-    // ----- 3.5 Compute cost from usage stats -----
-    // Rates per million tokens, in USD. Keep in sync with Anthropic pricing:
-    //   https://docs.anthropic.com/en/docs/about-claude/pricing
+    // Pricing table — keep in sync with https://docs.anthropic.com/en/docs/about-claude/pricing
     const PRICING: Record<string, {
       input: number
       output: number
@@ -384,29 +318,218 @@ export async function POST(req: Request) {
         cacheWrite: 3.75,
       },
     }
-    const usedModel = (claudeJson.model as string | undefined) || claudeBody.model
-    const u = claudeJson.usage ?? {}
-    const inputTok = u.input_tokens ?? 0
-    const outputTok = u.output_tokens ?? 0
-    const cacheReadTok = u.cache_read_input_tokens ?? 0
-    const cacheWriteTok = u.cache_creation_input_tokens ?? 0
-    const rate = PRICING[usedModel] ?? PRICING['claude-haiku-4-5-20251001']!
-    const costUsd =
-      (inputTok * rate.input +
-        outputTok * rate.output +
-        cacheReadTok * rate.cacheRead +
-        cacheWriteTok * rate.cacheWrite) /
-      1_000_000
 
-    // ----- 4. Parse JSON -----
-    const parsed = extractJson(claudeText) as ClaudeJson
-    const sectionsRaw: SectionRaw[] = Array.isArray(parsed.sections)
-      ? (parsed.sections as SectionRaw[])
-      : []
-    const metaRaw: CaseMetadataRaw =
-      parsed.case_metadata && typeof parsed.case_metadata === 'object'
-        ? (parsed.case_metadata as CaseMetadataRaw)
-        : {}
+    /**
+     * Send one PDF (chunk or whole document) to Claude and return the parsed
+     * JSON plus cost/usage stats. Used both in the single-shot path and in
+     * the per-chunk loop below — body shape, prompt, and parsing are
+     * identical regardless of whether we're chunking.
+     *
+     * Cost controls (unchanged from the original implementation):
+     *   1. Default to Haiku 4.5 — ~4x cheaper than Sonnet for both input
+     *      and output. For structured extraction from a fixed-format Arabic
+     *      voucher Haiku matches Sonnet's accuracy in our spot-tests.
+     *   2. Prompt caching on the system prompt — cache_control: ephemeral.
+     *      Cached reads are billed at 10% of input rate. The same system
+     *      prompt runs for every chunk in a multi-chunk request, so chunks
+     *      2..N pay the cached rate for system tokens.
+     *   3. max_tokens 2500 — typical response well under 2000.
+     */
+    async function extractChunk(chunkBytes: Buffer): Promise<{
+      sectionsRaw: SectionRaw[]
+      metaRaw: CaseMetadataRaw
+      model: string
+      inputTok: number
+      outputTok: number
+      cacheReadTok: number
+      cacheWriteTok: number
+      costUsd: number
+    }> {
+      const chunkBase64 = chunkBytes.toString('base64')
+
+      const claudeBody = {
+        model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
+        max_tokens: 2500,
+        system: [
+          {
+            type: 'text',
+            text: SYSTEM_PROMPT,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: chunkBase64 },
+              },
+              {
+                type: 'text',
+                text: 'Return JSON only.',
+              },
+            ],
+          },
+        ],
+      }
+
+      const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey!,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(claudeBody),
+        signal: AbortSignal.timeout(90_000),
+      })
+
+      if (!claudeResp.ok) {
+        const errBody = await claudeResp.text().catch(() => '')
+        // Safety net: if our pre-split count was wrong and Claude still
+        // rejects with the 100-page error, surface the friendly Arabic
+        // message. In practice this should not fire after the chunking
+        // logic above kicks in.
+        if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
+          throw new Error(
+            'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة) لمعالجة الذكاء الاصطناعي. يرجى تقسيم الوثيقة إلى ملفات أصغر.',
+          )
+        }
+        if (errBody.includes('document') && errBody.includes('size')) {
+          throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
+        }
+        throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
+      }
+
+      const claudeJson = (await claudeResp.json()) as {
+        content?: Array<{ type: string; text?: string }>
+        model?: string
+        usage?: {
+          input_tokens?: number
+          output_tokens?: number
+          cache_creation_input_tokens?: number
+          cache_read_input_tokens?: number
+        }
+      }
+      const firstTextBlock = (claudeJson.content || []).find(
+        (b) => b.type === 'text' && typeof b.text === 'string',
+      )
+      const claudeText = firstTextBlock?.text || ''
+      if (!claudeText) throw new Error('Claude returned no text content')
+
+      const usedModel = (claudeJson.model as string | undefined) || claudeBody.model
+      const u = claudeJson.usage ?? {}
+      const inputTok = u.input_tokens ?? 0
+      const outputTok = u.output_tokens ?? 0
+      const cacheReadTok = u.cache_read_input_tokens ?? 0
+      const cacheWriteTok = u.cache_creation_input_tokens ?? 0
+      const rate = PRICING[usedModel] ?? PRICING['claude-haiku-4-5-20251001']!
+      const costUsd =
+        (inputTok * rate.input +
+          outputTok * rate.output +
+          cacheReadTok * rate.cacheRead +
+          cacheWriteTok * rate.cacheWrite) /
+        1_000_000
+
+      const parsed = extractJson(claudeText) as ClaudeJson
+      const sectionsRaw: SectionRaw[] = Array.isArray(parsed.sections)
+        ? (parsed.sections as SectionRaw[])
+        : []
+      const metaRaw: CaseMetadataRaw =
+        parsed.case_metadata && typeof parsed.case_metadata === 'object'
+          ? (parsed.case_metadata as CaseMetadataRaw)
+          : {}
+
+      return {
+        sectionsRaw,
+        metaRaw,
+        model: usedModel,
+        inputTok,
+        outputTok,
+        cacheReadTok,
+        cacheWriteTok,
+        costUsd,
+      }
+    }
+
+    // ----- 3.5 Run extraction (single-shot or chunked sequentially) -----
+    // For ≤100 pages we send the whole PDF in one call (the common case;
+    // identical behaviour to the pre-chunking implementation). For larger
+    // PDFs we split into ≤100-page chunks with pdf-lib and call Claude
+    // sequentially for each — sequential keeps rate-limit risk low and lets
+    // prompt caching kick in on chunks 2..N.
+    let sectionsRaw: SectionRaw[]
+    let metaRaw: CaseMetadataRaw
+    let usedModel: string
+    let inputTok = 0
+    let outputTok = 0
+    let cacheReadTok = 0
+    let cacheWriteTok = 0
+    let costUsd = 0
+    let chunkCount = 1
+
+    if (totalPageCount > 0 && totalPageCount > 100) {
+      // Chunked path.
+      const chunks = await splitPdfIntoChunks(pdfBuffer, 100)
+      chunkCount = chunks.length
+      // Merge accumulators.
+      sectionsRaw = []
+      // Per-field "first non-null wins" merge for metadata. Chunk 0 almost
+      // always carries the metadata (it lives on the cover page), but
+      // defensively we let later chunks fill blanks in case chunk 0 is sparse.
+      const metaMerged: CaseMetadataRaw = {}
+      let firstModel = ''
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!
+        const out = await extractChunk(Buffer.from(chunk.bytes))
+        if (i === 0) firstModel = out.model
+
+        // Merge sections: concat, but shift Claude's 1-based page indices
+        // by the chunk's 0-based offset so they map back to the original PDF.
+        for (const s of out.sectionsRaw) {
+          if (!s || typeof s !== 'object') continue
+          const pf = typeof s.page_from === 'number' ? s.page_from : Number(s.page_from)
+          const pt = typeof s.page_to === 'number' ? s.page_to : Number(s.page_to)
+          sectionsRaw.push({
+            ...s,
+            page_from: Number.isFinite(pf) ? pf + chunk.pageOffset : s.page_from,
+            page_to: Number.isFinite(pt) ? pt + chunk.pageOffset : s.page_to,
+          })
+        }
+
+        // Merge metadata: first non-null per field wins. Iterate the chunk's
+        // metadata keys and only set those that the merged object hasn't yet.
+        for (const [k, v] of Object.entries(out.metaRaw)) {
+          const key = k as keyof CaseMetadataRaw
+          if (metaMerged[key] !== undefined && metaMerged[key] !== null) continue
+          if (v === null || v === undefined) continue
+          // Reject empty strings — treat as "not present" so a later chunk can fill in.
+          if (typeof v === 'string' && v.trim() === '') continue
+          ;(metaMerged as Record<string, unknown>)[key] = v
+        }
+
+        // Sum cost + tokens across chunks.
+        inputTok += out.inputTok
+        outputTok += out.outputTok
+        cacheReadTok += out.cacheReadTok
+        cacheWriteTok += out.cacheWriteTok
+        costUsd += out.costUsd
+      }
+      metaRaw = metaMerged
+      usedModel = firstModel
+    } else {
+      // Single-shot path (unchanged behaviour for ≤100-page PDFs).
+      const out = await extractChunk(pdfBuffer)
+      sectionsRaw = out.sectionsRaw
+      metaRaw = out.metaRaw
+      usedModel = out.model
+      inputTok = out.inputTok
+      outputTok = out.outputTok
+      cacheReadTok = out.cacheReadTok
+      cacheWriteTok = out.cacheWriteTok
+      costUsd = out.costUsd
+    }
 
     // ----- 5. Build dsb_breakdown_items rows -----
     const rows: Array<{
@@ -515,6 +638,7 @@ export async function POST(req: Request) {
     // ----- 10. Audit log -----
     const auditNotes =
       `AI extracted ${rows.length} sections` +
+      (chunkCount > 1 ? ` (split into ${chunkCount} chunks)` : '') +
       (autofilledKeys.length > 0 ? `; autofilled: ${autofilledKeys.join(',')}` : '')
     await svc.from('dsb_audit_log').insert({
       tenant_id,

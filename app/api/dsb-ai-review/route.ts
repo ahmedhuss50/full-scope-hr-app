@@ -24,6 +24,7 @@
 
 import { NextResponse } from 'next/server'
 import { createSupabaseService, createSupabaseServer } from '@/lib/supabase/server'
+import { pdfPageCount, splitPdfIntoChunks } from '@/lib/dsb/pdf-chunks'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -223,11 +224,22 @@ export async function POST(req: Request) {
     }
     const pdfResp = await fetch(signed.signedUrl, { signal: AbortSignal.timeout(30_000) })
     if (!pdfResp.ok) throw new Error(`PDF download failed: HTTP ${pdfResp.status}`)
-    const pdfBase64 = Buffer.from(await pdfResp.arrayBuffer()).toString('base64')
+    const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer())
 
-    // ----- 3. Call Claude with checklist evaluation prompt -----
+    // ----- 3. Decide chunked vs single-shot based on page count -----
+    // Anthropic caps PDF documents at 100 pages per request. Page-count the
+    // PDF up front; if it's >100 we split with pdf-lib and review each chunk.
+    // The Arabic 100-page error inside reviewChunk stays as a safety net for
+    // weird cases (encrypted/malformed PDFs where pdf-lib counts wrong).
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
+
+    let totalPageCount: number
+    try {
+      totalPageCount = await pdfPageCount(pdfBuffer)
+    } catch {
+      totalPageCount = 0
+    }
 
     const systemPrompt = `You are a methodical compliance reviewer for Saudi real-estate disbursement vouchers. The PDF is in Arabic. You will be given a numbered checklist. You MUST process the items strictly one at a time, in the order given.
 
@@ -266,79 +278,201 @@ ${checklistItems.map((it, idx) => `${idx + 1}. ${it.code} — ${it.prompt_ar}`).
 
 Reminder: return JSON array only — no prose, no markdown.`
 
-    const claudeBody = {
-      model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
-      // Each item carries 5 fields (code, evidence_ar, page_ref, status,
-      // rationale_ar). With 19 items and Arabic verbosity that's typically
-      // 2-3k output tokens; 6000 gives comfortable headroom so we don't
-      // truncate mid-array. extractJson also self-heals truncated arrays as
-      // a safety net.
-      max_tokens: 6000,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-            { type: 'text', text: userText },
-          ],
+    /**
+     * Shape we parse out of each chunk's response. We keep the freeform
+     * evidence/page_ref/rationale fields as strings so the verdict-merging
+     * logic below can pick the winning chunk's values verbatim.
+     */
+    type VerdictRow = {
+      code: string
+      status: ChecklistVerdict
+      evidence_ar: string
+      page_ref: string
+      rationale_ar: string
+    }
+
+    /**
+     * Run the checklist evaluation against one PDF (chunk or whole document).
+     * Returns parsed verdicts plus usage stats. Body shape, prompt, parsing,
+     * and error-translation are identical to the pre-chunking version.
+     */
+    async function reviewChunk(chunkBytes: Buffer): Promise<{
+      verdicts: VerdictRow[]
+      model: string
+      inputTok: number
+      outputTok: number
+      cacheReadTok: number
+      cacheWriteTok: number
+      costUsd: number
+    }> {
+      const chunkBase64 = chunkBytes.toString('base64')
+      const claudeBody = {
+        model: process.env.DSB_EXTRACT_MODEL || 'claude-haiku-4-5-20251001',
+        // Each item carries 5 fields. With ~19 items and Arabic verbosity
+        // that's typically 2-3k output tokens; 6000 gives comfortable headroom
+        // so we don't truncate mid-array. extractJson self-heals truncated
+        // arrays as a safety net.
+        max_tokens: 6000,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: chunkBase64 } },
+              { type: 'text', text: userText },
+            ],
+          },
+        ],
+      }
+
+      const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey!,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
         },
-      ],
+        body: JSON.stringify(claudeBody),
+        signal: AbortSignal.timeout(90_000),
+      })
+      if (!claudeResp.ok) {
+        const errBody = await claudeResp.text().catch(() => '')
+        if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
+          throw new Error(
+            'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة). يرجى تقسيم الوثيقة إلى ملفات أصغر وإعادة رفعها، أو استبدالها بنسخة مختصرة.',
+          )
+        }
+        if (errBody.includes('document') && errBody.includes('size')) {
+          throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
+        }
+        throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
+      }
+
+      const claudeJson = (await claudeResp.json()) as {
+        content?: Array<{ type: string; text?: string }>
+        model?: string
+        usage?: {
+          input_tokens?: number
+          output_tokens?: number
+          cache_creation_input_tokens?: number
+          cache_read_input_tokens?: number
+        }
+      }
+      const firstText = (claudeJson.content || []).find((b) => b.type === 'text' && typeof b.text === 'string')
+      const claudeText = firstText?.text || ''
+      if (!claudeText) throw new Error('Claude returned no text content')
+
+      const usedModel = (claudeJson.model as string | undefined) || claudeBody.model
+      const u = claudeJson.usage ?? {}
+      const inputTok = u.input_tokens ?? 0
+      const outputTok = u.output_tokens ?? 0
+      const cacheReadTok = u.cache_read_input_tokens ?? 0
+      const cacheWriteTok = u.cache_creation_input_tokens ?? 0
+      const rate = PRICING[usedModel] ?? PRICING['claude-haiku-4-5-20251001']!
+      const costUsd =
+        (inputTok * rate.input + outputTok * rate.output + cacheReadTok * rate.cacheRead + cacheWriteTok * rate.cacheWrite) /
+        1_000_000
+
+      const parsed = extractJson(claudeText)
+      const rawArr = Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : []
+      const verdicts: VerdictRow[] = []
+      for (const r of rawArr) {
+        if (!r || typeof r !== 'object') continue
+        const code = typeof r.code === 'string' ? r.code : ''
+        const status = typeof r.status === 'string' ? r.status : ''
+        if (!code || !(CHECKLIST_VERDICTS as readonly string[]).includes(status)) continue
+        verdicts.push({
+          code,
+          status: status as ChecklistVerdict,
+          evidence_ar: typeof r.evidence_ar === 'string' ? r.evidence_ar : '',
+          page_ref: typeof r.page_ref === 'string' ? r.page_ref : '',
+          rationale_ar: typeof r.rationale_ar === 'string' ? r.rationale_ar : '',
+        })
+      }
+      return {
+        verdicts,
+        model: usedModel,
+        inputTok,
+        outputTok,
+        cacheReadTok,
+        cacheWriteTok,
+        costUsd,
+      }
     }
 
-    const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(claudeBody),
-      signal: AbortSignal.timeout(90_000),
-    })
-    if (!claudeResp.ok) {
-      const errBody = await claudeResp.text().catch(() => '')
-      // Translate the common "PDF too large" error into something the
-      // Arabic-speaking reviewer can act on.
-      if (errBody.includes('maximum of 100 PDF pages') || errBody.includes('PDF pages may be provided')) {
-        throw new Error(
-          'الوثيقة تتجاوز الحد الأقصى المسموح به (١٠٠ صفحة). يرجى تقسيم الوثيقة إلى ملفات أصغر وإعادة رفعها، أو استبدالها بنسخة مختصرة.',
-        )
+    // ----- 3.5 Run review (single-shot or chunked sequentially) -----
+    // For ≤100 pages we send the whole PDF in one call. For larger PDFs we
+    // split with pdf-lib, review each chunk, and merge per-item verdicts
+    // with the priority `issue > verified > not_attached > not_mentioned`
+    // (i.e. any chunk that finds a problem wins; only-positive verdicts win
+    // over absence; explicit "not_attached" beats default "not_mentioned").
+    let mergedVerdicts: VerdictRow[]
+    let usedModel: string
+    let inputTok = 0
+    let outputTok = 0
+    let cacheReadTok = 0
+    let cacheWriteTok = 0
+    let costUsd = 0
+    let chunkCount = 1
+
+    if (totalPageCount > 0 && totalPageCount > 100) {
+      const chunks = await splitPdfIntoChunks(pdfBuffer, 100)
+      chunkCount = chunks.length
+
+      // Priority — higher number wins on conflict.
+      const VERDICT_PRIORITY: Record<ChecklistVerdict, number> = {
+        not_mentioned: 0,
+        not_attached: 1,
+        verified: 2,
+        issue: 3,
       }
-      if (errBody.includes('document') && errBody.includes('size')) {
-        throw new Error('حجم الوثيقة يتجاوز الحد المسموح به. يرجى ضغط الملف وإعادة المحاولة.')
+
+      // Merge keyed by item code: keep the winner, plus the chunk-local
+      // verdict's evidence/page_ref/rationale so the human reviewer sees
+      // exactly which chunk contributed the verdict.
+      const winners = new Map<string, VerdictRow>()
+      let firstModel = ''
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!
+        const out = await reviewChunk(Buffer.from(chunk.bytes))
+        if (i === 0) firstModel = out.model
+
+        for (const v of out.verdicts) {
+          const prev = winners.get(v.code)
+          if (!prev || VERDICT_PRIORITY[v.status] > VERDICT_PRIORITY[prev.status]) {
+            // Take this chunk's row wholesale — its evidence/page_ref/
+            // rationale describe the verdict we're keeping. page_ref is
+            // freeform Arabic text ("ص ٣" / "غير موجود"); rewriting page
+            // numbers via regex is error-prone, so leave the text alone.
+            // Claude's rationale typically also restates the page.
+            winners.set(v.code, v)
+          }
+        }
+
+        inputTok += out.inputTok
+        outputTok += out.outputTok
+        cacheReadTok += out.cacheReadTok
+        cacheWriteTok += out.cacheWriteTok
+        costUsd += out.costUsd
       }
-      throw new Error(`Claude API ${claudeResp.status}: ${errBody.slice(0, 300)}`)
+      mergedVerdicts = Array.from(winners.values())
+      usedModel = firstModel
+    } else {
+      const out = await reviewChunk(pdfBuffer)
+      mergedVerdicts = out.verdicts
+      usedModel = out.model
+      inputTok = out.inputTok
+      outputTok = out.outputTok
+      cacheReadTok = out.cacheReadTok
+      cacheWriteTok = out.cacheWriteTok
+      costUsd = out.costUsd
     }
 
-    const claudeJson = (await claudeResp.json()) as {
-      content?: Array<{ type: string; text?: string }>
-      model?: string
-      usage?: {
-        input_tokens?: number
-        output_tokens?: number
-        cache_creation_input_tokens?: number
-        cache_read_input_tokens?: number
-      }
-    }
-    const firstText = (claudeJson.content || []).find((b) => b.type === 'text' && typeof b.text === 'string')
-    const claudeText = firstText?.text || ''
-    if (!claudeText) throw new Error('Claude returned no text content')
-
-    const usedModel = (claudeJson.model as string | undefined) || claudeBody.model
-    const u = claudeJson.usage ?? {}
-    const inputTok = u.input_tokens ?? 0
-    const outputTok = u.output_tokens ?? 0
-    const cacheReadTok = u.cache_read_input_tokens ?? 0
-    const cacheWriteTok = u.cache_creation_input_tokens ?? 0
-    const rate = PRICING[usedModel] ?? PRICING['claude-haiku-4-5-20251001']!
-    const costUsd =
-      (inputTok * rate.input + outputTok * rate.output + cacheReadTok * rate.cacheRead + cacheWriteTok * rate.cacheWrite) /
-      1_000_000
-
-    // ----- 4. Parse + persist -----
-    const parsed = extractJson(claudeText)
-    const verdictsRaw = Array.isArray(parsed) ? parsed : []
+    // ----- 4. Build the verdicts list the persistence step will consume -----
+    // The downstream step expects an array of `{ code, status, evidence_ar,
+    // page_ref, rationale_ar }` records — same shape as the pre-chunking
+    // path read out of Claude's response directly.
+    const verdictsRaw = mergedVerdicts as Array<Record<string, unknown>>
 
     const itemByCode = new Map<string, { id: string }>()
     for (const it of checklistItems) itemByCode.set(it.code, { id: it.id })
@@ -421,6 +555,7 @@ Reminder: return JSON array only — no prose, no markdown.`
     // ----- 5. Audit -----
     const auditNotes =
       `AI compliance review — ${rows.length}/${checklistItems.length} verdicts (${usedModel}, $${costUsd.toFixed(4)})` +
+      (chunkCount > 1 ? ` (split into ${chunkCount} chunks)` : '') +
       (missingItems.length > 0
         ? `; missed: ${missingItems.map((it) => it.code).join(',')}`
         : '')
