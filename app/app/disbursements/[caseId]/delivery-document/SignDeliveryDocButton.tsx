@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { PenLine, X, Eraser, Check, Undo2, Stamp } from 'lucide-react'
+import { PenLine, X, Eraser, Check, Undo2, Stamp, Upload } from 'lucide-react'
 import type SignaturePad from 'signature_pad'
 import {
   signDeliveryDocument,
@@ -75,6 +75,8 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
+  // Hidden file input — same upload-signature-image flow as DrawSignatureDialog.
+  const signatureFileRef = useRef<HTMLInputElement | null>(null)
 
   // Pre-fill signer info when dialog opens.
   useEffect(() => {
@@ -137,6 +139,59 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
     data.pop()
     pad.fromData(data)
     setHasDrawn(data.length > 0)
+  }
+
+  /** Upload signature image flow — see DrawSignatureDialog for full notes. */
+  function openSignatureUpload() {
+    setError(null)
+    signatureFileRef.current?.click()
+  }
+  async function onSignatureFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    if (!f.type.startsWith('image/')) { setError('يجب اختيار صورة (PNG أو JPG).'); return }
+    if (f.size > 2 * 1024 * 1024) { setError('حجم الصورة يتجاوز ٢ ميغابايت.'); return }
+
+    const reader = new FileReader()
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(new Error('file read failed'))
+      reader.readAsDataURL(f)
+    }).catch(() => '')
+    if (!dataUrl) { setError('تعذّر قراءة الملف.'); return }
+
+    const canvas = canvasRef.current
+    const pad = padRef.current
+    if (!canvas || !pad) return
+    const img = new Image()
+    img.src = dataUrl
+    try {
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res()
+        img.onerror = () => rej(new Error('image load failed'))
+      })
+    } catch { setError('تعذّر تحميل الصورة.'); return }
+    pad.clear()
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const rect = canvas.getBoundingClientRect()
+    const W = rect.width, H = rect.height
+    const fit = Math.min(W / img.width, H / img.height) * 0.95
+    const drawW = img.width * fit, drawH = img.height * fit
+    const x = (W - drawW) / 2, y = (H - drawH) / 2
+    ctx.drawImage(img, x, y, drawW, drawH)
+    setHasDrawn(true)
+
+    if (saveForReuse) {
+      const b64 = dataUrl.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
+      try {
+        const res = await saveSignature({ signature_png_base64: b64 })
+        if (res.ok) setSavedSignatureDataUrl(dataUrl)
+      } catch (err) {
+        console.warn('[SignDeliveryDocButton] image-upload saveSignature failed', err)
+      }
+    }
   }
 
   /** Paint the user's saved signature onto the pad canvas. Same approach as
@@ -329,18 +384,37 @@ export function SignDeliveryDocButton({ caseId }: { caseId: string }) {
           <div>
             <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
               <div className="text-xs font-semibold text-slate-700">ارسم توقيعك</div>
-              {savedSignatureDataUrl && (
+              <div className="inline-flex items-center gap-1.5 flex-wrap">
+                {savedSignatureDataUrl && (
+                  <button
+                    type="button"
+                    onClick={useSavedSignature}
+                    disabled={busy}
+                    title="استخدم التوقيع الذي حفظته سابقًا"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
+                  >
+                    <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
+                    استخدم التوقيع المحفوظ
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={useSavedSignature}
+                  onClick={openSignatureUpload}
                   disabled={busy}
-                  title="استخدم التوقيع الذي حفظته سابقًا"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition disabled:opacity-50"
+                  title="ارفع صورة لتوقيعك (PNG أو JPG) بدلًا من الرسم"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
                 >
-                  <Stamp className="w-3.5 h-3.5" aria-hidden="true" />
-                  استخدم التوقيع المحفوظ
+                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                  ارفع صورة التوقيع
                 </button>
-              )}
+                <input
+                  ref={signatureFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg"
+                  className="hidden"
+                  onChange={onSignatureFilePicked}
+                />
+              </div>
             </div>
             <div className="relative rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 overflow-hidden">
               <canvas
