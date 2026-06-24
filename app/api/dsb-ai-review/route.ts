@@ -139,29 +139,47 @@ function jsonError(error: string, status = 400) {
 }
 
 export async function POST(req: Request) {
-  // ----- Auth: must be signed-in staff in the same tenant as the case -----
-  const supabase = createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user?.email) return jsonError('not signed in', 401)
-
   const svc = createSupabaseService()
-  const { data: profile } = await svc
-    .from('users')
-    .select('id, tenant_id, dsb_role')
-    .eq('email', user.email)
-    .maybeSingle()
-  if (!profile) return jsonError('not linked to a tenant', 403)
-  const callerRole = (profile.dsb_role as string | null) ?? null
-  if (!callerRole || !['employee', 'supervisor', 'owner'].includes(callerRole)) {
-    return jsonError('no permission', 403)
-  }
-  const tenantId = profile.tenant_id as string
-  const callerUserId = profile.id as string
 
+  // ----- Parse body (we need tenant_id for the secret-auth path) -----
   let body: unknown
   try { body = await req.json() } catch { return jsonError('invalid JSON body') }
-  const { case_id } = (body || {}) as { case_id?: unknown }
+  const { case_id, tenant_id: bodyTenantId } = (body || {}) as {
+    case_id?: unknown
+    tenant_id?: unknown
+  }
   if (!isUuid(case_id)) return jsonError('case_id must be UUID')
+
+  // ----- Auth: two paths -----
+  // (1) Shared-secret (server-to-server). Used by /api/dsb-extract to chain
+  //     the review automatically after extraction. Caller passes tenant_id
+  //     in the body since there's no user session.
+  // (2) Cookie-based (a signed-in user pressing the on-demand review button).
+  let tenantId: string
+  let callerUserId: string | null
+  const expectedSecret = process.env.DSB_EXTRACT_SECRET
+  const providedSecret = req.headers.get('x-dsb-secret')
+  if (expectedSecret && providedSecret === expectedSecret) {
+    if (!isUuid(bodyTenantId)) return jsonError('tenant_id required for secret auth')
+    tenantId = bodyTenantId
+    callerUserId = null
+  } else {
+    const supabase = createSupabaseServer()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.email) return jsonError('not signed in', 401)
+    const { data: profile } = await svc
+      .from('users')
+      .select('id, tenant_id, dsb_role')
+      .eq('email', user.email)
+      .maybeSingle()
+    if (!profile) return jsonError('not linked to a tenant', 403)
+    const callerRole = (profile.dsb_role as string | null) ?? null
+    if (!callerRole || !['employee', 'supervisor', 'owner'].includes(callerRole)) {
+      return jsonError('no permission', 403)
+    }
+    tenantId = profile.tenant_id as string
+    callerUserId = profile.id as string
+  }
 
   try {
     // ----- 1. Load case + first upload + checklist items -----

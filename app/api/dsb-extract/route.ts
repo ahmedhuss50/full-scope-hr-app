@@ -28,6 +28,7 @@
 
 import { NextResponse } from 'next/server'
 import { createSupabaseService } from '@/lib/supabase/server'
+import { fireDsbAiReviewWebhook } from '@/lib/n8n/fire-dsb-ai-review'
 
 // NOTE: We intentionally do NOT use the @anthropic-ai/sdk wrapper for this
 // call. The installed SDK version (0.30.1) does not type the `document`
@@ -522,6 +523,17 @@ export async function POST(req: Request) {
       notes: auditNotes,
       occurred_at: new Date().toISOString(),
     })
+
+    // ----- 11. Auto-trigger the compliance review -----
+    // Fire-and-forget — kicks off /api/dsb-ai-review as a separate serverless
+    // invocation so it can spend its own ~30s on the Claude call without
+    // blocking our response here. The checklist will be pre-populated by the
+    // time the user opens the case page (or shortly after, if they open it
+    // immediately). The on-demand "مراجعة آلية" button still works for
+    // re-runs.
+    fireDsbAiReviewWebhook({ case_id, tenant_id }).catch((e) =>
+      console.error('[dsb-extract] auto-review trigger failed', e),
+    )
 
     return NextResponse.json({
       ok: true,
