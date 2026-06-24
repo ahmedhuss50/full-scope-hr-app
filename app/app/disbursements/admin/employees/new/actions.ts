@@ -69,9 +69,11 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
   if (existingUser) {
     userId = existingUser.id as string
     const updates: Record<string, unknown> = { full_name: fullName }
-    // Only set dsb_role if not already a staff role (preserve owner/supervisor).
+    // Only set dsb_role if not already an internal role. Preserves owner /
+    // supervisor / viewer / deliverer so re-creating an employee with the
+    // same email doesn't quietly overwrite their existing role.
     const existingRole = (existingUser.dsb_role as string | null) ?? null
-    if (!existingRole || !['employee', 'supervisor', 'owner'].includes(existingRole)) {
+    if (!existingRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(existingRole)) {
       updates.dsb_role = 'employee'
     }
     if (notes) updates.notes = notes

@@ -92,12 +92,14 @@ export default async function DisbursementsAdminPage({
 
   const tenantId = profile.tenant_id as string
 
-  // Fetch staff (employee, supervisor, owner).
+  // Fetch staff — all internal roles (including viewer / deliverer added later).
+  // Without 'viewer' and 'deliverer' here, users assigned those roles disappear
+  // from the admin list, leaving no way to undo the change from the UI.
   const { data: employeesData } = await svc
     .from('users')
     .select('id, full_name, email, dsb_role')
     .eq('tenant_id', tenantId)
-    .in('dsb_role', ['employee', 'supervisor', 'owner'])
+    .in('dsb_role', ['employee', 'supervisor', 'owner', 'viewer', 'deliverer'])
     .order('full_name', { ascending: true })
   const employees = (employeesData ?? []) as EmployeeRow[]
 
