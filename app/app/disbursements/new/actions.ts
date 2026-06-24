@@ -7,7 +7,7 @@ import { fireDsbBreakdownWebhook } from '@/lib/n8n/fire-dsb-breakdown'
 const STORAGE_BUCKET = 'Document submission'
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 
-type StaffRole = 'employee' | 'supervisor' | 'owner'
+type StaffRole = 'employee' | 'supervisor' | 'owner' | 'deliverer'
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180)
@@ -29,7 +29,9 @@ async function resolveStaff(): Promise<
     .maybeSingle()
   if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
   const role = (profile.dsb_role as string | null) ?? null
-  if (!role || !['employee', 'supervisor', 'owner'].includes(role)) {
+  // Deliverer can upload too — the upload privilege isn't tied to the
+  // approval chain; they just kick off a new case for someone else to review.
+  if (!role || !['employee', 'supervisor', 'owner', 'deliverer'].includes(role)) {
     return { error: 'لا تملك صلاحية.' }
   }
   return {

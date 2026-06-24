@@ -23,7 +23,8 @@ export default async function StaffNewCasePage({
   if (!profile) redirect('/login')
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
-  if (!dsbRole || !['employee', 'supervisor', 'owner'].includes(dsbRole)) {
+  // Deliverer can upload new cases too. Viewer cannot — they're read-only.
+  if (!dsbRole || !['employee', 'supervisor', 'owner', 'deliverer'].includes(dsbRole)) {
     redirect('/app/disbursements')
   }
 
