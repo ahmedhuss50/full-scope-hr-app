@@ -71,6 +71,14 @@ type CaseRow = {
   signed_by_user_id: string | null
   delivery_doc_signature_path: string | null
   delivery_doc_signed_at: string | null
+  // Recipient handoff fields — populated when the case is `delivered`.
+  // We render a "بيانات المستلم" block in the printable doc only when
+  // recipient_name is present.
+  recipient_name: string | null
+  recipient_phone: string | null
+  recipient_notes: string | null
+  delivered_at: string | null
+  delivered_by_user_id: string | null
   project:
     | { id: string; code: string; name_ar: string }
     | { id: string; code: string; name_ar: string }[]
@@ -110,6 +118,7 @@ export default async function DeliveryDocumentPage({
     .from('dsb_cases')
     .select(
       `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, signed_at, signed_by_user_id, delivery_doc_signature_path, delivery_doc_signed_at,
+       recipient_name, recipient_phone, recipient_notes, delivered_at, delivered_by_user_id,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -119,8 +128,9 @@ export default async function DeliveryDocumentPage({
   const kase = kaseRaw as CaseRow | null
   if (!kase) notFound()
 
-  // Gate: only show when signed.
-  if (kase.status !== 'signed') {
+  // Gate: signed OR delivered. Delivered cases still need the document for
+  // reprint/archive; we just stop generating new ones for in-flight cases.
+  if (kase.status !== 'signed' && kase.status !== 'delivered') {
     return (
       <div className="max-w-3xl mx-auto py-12 px-6" dir="rtl">
         <div className="bg-white border border-amber-200 rounded-xl p-6 shadow-sm">
@@ -154,6 +164,19 @@ export default async function DeliveryDocumentPage({
       .maybeSingle()
     signedByName = (u?.full_name as string | undefined) ?? null
   }
+
+  // Look up who recorded the delivery (for the recipient block footer).
+  let deliveredByName: string | null = null
+  if (kase.delivered_by_user_id) {
+    const { data: u } = await svc
+      .from('users')
+      .select('full_name')
+      .eq('id', kase.delivered_by_user_id)
+      .maybeSingle()
+    deliveredByName = (u?.full_name as string | undefined) ?? null
+  }
+
+  const isDelivered = kase.status === 'delivered' && !!kase.recipient_name
 
   const today = new Date().toISOString()
 
@@ -228,9 +251,48 @@ export default async function DeliveryDocumentPage({
             <FactRow label="المبلغ" value={fmtSar(kase.amount_sar)} mono />
             <FactRow label="تاريخ السند" value={fmtDate(kase.voucher_date)} />
             <FactRow label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
-            <FactRow label="الحالة" value="موقّعة" />
+            <FactRow label="الحالة" value={isDelivered ? 'مسلَّمة' : 'موقّعة'} />
             <FactRow label="وقع نهائياً" value={signedDisplay} />
           </section>
+
+          {/* Recipient handoff block — only printed when actually delivered. */}
+          {isDelivered && (
+            <section className="mt-8 pt-6 border-t border-slate-200">
+              <div className="text-xs font-semibold text-slate-500 mb-3">
+                بيانات المستلم
+              </div>
+              <div className="space-y-3 text-sm">
+                <FactRow label="اسم المستلم" value={kase.recipient_name ?? '—'} />
+                {kase.recipient_phone && (
+                  <FactRow label="رقم الجوال" value={kase.recipient_phone} mono />
+                )}
+                <FactRow label="وقت التسليم" value={fmtDateTime(kase.delivered_at)} />
+                <FactRow label="سُلِّم بواسطة" value={deliveredByName ?? '—'} />
+                {kase.recipient_notes && (
+                  <div className="pt-2">
+                    <div className="text-xs font-semibold text-slate-500 mb-1">
+                      ملاحظات عن المستلم
+                    </div>
+                    <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                      {kase.recipient_notes}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Recipient signature line — handwritten acknowledgement on the
+                  printed copy. We don't capture this digitally; it's just a
+                  line for the printed version. */}
+              <div className="mt-10 flex justify-start">
+                <div className="text-center">
+                  <div className="text-sm font-semibold text-slate-700 mb-2">
+                    توقيع المستلم
+                  </div>
+                  <div className="border-t border-slate-400 w-56 mt-12" />
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Notes */}
           {kase.notes && (
