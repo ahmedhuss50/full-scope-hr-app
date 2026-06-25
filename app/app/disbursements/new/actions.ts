@@ -289,19 +289,56 @@ export async function finalizeStaffUpload(
     notes: 'تم الرفع من قبل موظف فُل سكوب نيابةً عن المطوّر.',
   })
 
-  // Email assigned employee if they aren't the uploader.
-  const assignedEmpId = project?.assigned_employee_id ?? null
-  if (assignedEmpId && assignedEmpId !== caller.userId) {
-    const { data: emp } = await svc
+  // Email all assigned employees (junction members + legacy single
+  // pointer for backwards compatibility), excluding the caller. With the
+  // multi-assignment model a project can have many reviewers; each should
+  // get the upload notification.
+  //
+  // We first fetch the junction; if empty we fall back to the single
+  // legacy pointer so unmigrated projects keep emailing exactly one person
+  // like before.
+  const legacyAssignedId = project?.assigned_employee_id ?? null
+  const projectId = await (async () => {
+    // The select above doesn't include project.id; refetch case to get it.
+    const { data: c } = await svc
+      .from('dsb_cases')
+      .select('project_id')
+      .eq('id', input.case_id)
+      .maybeSingle()
+    return (c?.project_id as string | undefined) ?? null
+  })()
+
+  let recipientUserIds: string[] = []
+  if (projectId) {
+    const { data: junctionRows } = await svc
+      .from('dsb_project_employees')
+      .select('user_id')
+      .eq('project_id', projectId)
+    const fromJunction = ((junctionRows ?? []) as { user_id: string }[]).map((r) => r.user_id)
+    if (fromJunction.length > 0) {
+      recipientUserIds = fromJunction
+    } else if (legacyAssignedId) {
+      recipientUserIds = [legacyAssignedId]
+    }
+  }
+
+  // De-dupe and exclude the uploader.
+  const recipients = Array.from(new Set(recipientUserIds)).filter(
+    (uid) => uid && uid !== caller.userId,
+  )
+
+  if (recipients.length > 0) {
+    const { data: empRows } = await svc
       .from('users')
       .select('email')
-      .eq('id', assignedEmpId)
-      .maybeSingle()
-    const empEmail = (emp?.email as string | undefined) ?? null
-    if (empEmail) {
-      const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://app.fullscope.sa'
+      .in('id', recipients)
+    const emails = ((empRows ?? []) as { email: string | null }[])
+      .map((e) => e.email)
+      .filter((e): e is string => !!e)
+    const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://app.fullscope.sa'
+    for (const to of emails) {
       sendDeveloperUploadedEmail({
-        to: empEmail,
+        to,
         caseNumber: kase.case_number,
         projectName: project?.name_ar ?? '—',
         developerName: developer?.company_name_ar ?? '—',

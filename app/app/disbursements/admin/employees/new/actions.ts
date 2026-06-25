@@ -27,12 +27,32 @@ async function resolveOwner(): Promise<
   }
 }
 
+// Roles assignable from the create form. Mirrors the values handled by
+// the admin's ChangeRoleButton so a brand-new employee can be slotted into
+// the right tier at creation time instead of always landing as 'employee'
+// and being promoted afterwards.
+export type CreateEmployeeRole = 'employee' | 'supervisor' | 'owner' | 'viewer' | 'deliverer'
+
+const CREATE_EMPLOYEE_ROLES: readonly CreateEmployeeRole[] = [
+  'employee',
+  'supervisor',
+  'owner',
+  'viewer',
+  'deliverer',
+]
+
 export interface CreateEmployeeInput {
   full_name: string
   email: string
   job_title?: string | null
   notes?: string | null
   send_invite: boolean
+  // Optional: which dsb_role to assign. Defaults to 'employee' for
+  // backwards compatibility with any caller that hasn't been updated.
+  dsb_role?: CreateEmployeeRole
+  // Optional: project IDs to add this user to in the dsb_project_employees
+  // junction. Ignored when role is 'owner' (owners see everything).
+  project_ids?: string[]
 }
 
 export type CreateEmployeeResult =
@@ -54,6 +74,22 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
     return { ok: false, error: 'صيغة البريد الإلكتروني غير صحيحة.' }
   }
 
+  // Resolve and validate the selected role. Defaults to 'employee' when
+  // the form omits the field — keeps the older callsite shape working.
+  const selectedRole: CreateEmployeeRole = input.dsb_role ?? 'employee'
+  if (!CREATE_EMPLOYEE_ROLES.includes(selectedRole)) {
+    return { ok: false, error: 'دور غير صالح.' }
+  }
+
+  // Sanitize project_ids: trim, drop blanks, dedupe. Owners don't get
+  // junction rows at all — they see everything.
+  const projectIdsInput = (input.project_ids ?? [])
+    .map((id) => (id ?? '').trim())
+    .filter((id) => id.length > 0)
+  const projectIds = selectedRole === 'owner'
+    ? []
+    : Array.from(new Set(projectIdsInput))
+
   const svc = createSupabaseService()
   let fallbackLink: string | null = null
   let warning: string | null = null
@@ -69,12 +105,17 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
   if (existingUser) {
     userId = existingUser.id as string
     const updates: Record<string, unknown> = { full_name: fullName }
-    // Only set dsb_role if not already an internal role. Preserves owner /
-    // supervisor / viewer / deliverer so re-creating an employee with the
-    // same email doesn't quietly overwrite their existing role.
+    // If an internal role already exists, only overwrite it when the
+    // caller explicitly picked something OTHER than the default 'employee'.
+    // This keeps the "re-create same email" path safe (won't quietly demote
+    // a supervisor back to employee just because the form left the default).
     const existingRole = (existingUser.dsb_role as string | null) ?? null
-    if (!existingRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(existingRole)) {
-      updates.dsb_role = 'employee'
+    const hasInternalRole = !!existingRole && ['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(existingRole)
+    if (!hasInternalRole) {
+      updates.dsb_role = selectedRole
+    } else if (input.dsb_role && input.dsb_role !== existingRole) {
+      // Explicit role change requested.
+      updates.dsb_role = selectedRole
     }
     if (notes) updates.notes = notes
     await svc.from('users').update(updates).eq('id', userId)
@@ -83,7 +124,7 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
       tenant_id: caller.tenantId,
       email,
       full_name: fullName,
-      dsb_role: 'employee',
+      dsb_role: selectedRole,
     }
     if (jobTitle) insertRow.job_title = jobTitle
     if (notes) insertRow.notes = notes
@@ -100,7 +141,7 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           tenant_id: caller.tenantId,
           email,
           full_name: fullName,
-          dsb_role: 'employee',
+          dsb_role: selectedRole,
         })
         .select('id')
         .single()
@@ -114,6 +155,37 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
       }
     } else {
       userId = newUser.id as string
+    }
+  }
+
+  // Junction: assign the user to the chosen projects (skipped for owners).
+  // Validate each project belongs to this tenant before inserting; silently
+  // drop any that don't match rather than failing the whole create.
+  if (userId && projectIds.length > 0 && selectedRole !== 'owner') {
+    const { data: validProjects } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id')
+      .in('id', projectIds)
+      .eq('tenant_id', caller.tenantId)
+    const validIds = ((validProjects ?? []) as { id: string }[]).map((p) => p.id)
+    if (validIds.length > 0) {
+      const rows = validIds.map((pid) => ({
+        project_id: pid,
+        user_id: userId as string,
+        tenant_id: caller.tenantId,
+        added_by_user_id: caller.userId,
+      }))
+      // on conflict do nothing isn't supported through the JS client without
+      // upsert + onConflict; use upsert here.
+      const { error: junctionErr } = await svc
+        .from('dsb_project_employees')
+        .upsert(rows, { onConflict: 'project_id,user_id' })
+      if (junctionErr) {
+        console.warn('[dsb.createEmployee] junction upsert failed', junctionErr)
+        warning = warning ?? 'تم إنشاء الموظف، لكن تعذّر إسناده لبعض المشاريع.'
+      } else if (validIds.length !== projectIds.length) {
+        warning = warning ?? 'تم إنشاء الموظف، لكن بعض المشاريع لم تكن صالحة وتم تجاهلها.'
+      }
     }
   }
 

@@ -189,16 +189,49 @@ export default async function DisbursementsDashboardPage({
 
   // If filtering by assigned employee, we must first resolve the projects
   // assigned to them — assignment lives on dsb_projects, not on dsb_cases.
+  // Project assignment is the UNION of:
+  //   * legacy dsb_projects.assigned_employee_id (single pointer), and
+  //   * dsb_project_employees junction (many-to-many, the new model).
   let projectIdsForEmployee: string[] | null = null
   if (fEmployee) {
-    const { data: empProjects } = await svc
-      .from('dsb_projects')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .eq('assigned_employee_id', fEmployee)
-    projectIdsForEmployee = ((empProjects ?? []) as { id: string }[]).map((p) => p.id)
+    const [legacyRes, junctionRes] = await Promise.all([
+      svc
+        .from('dsb_projects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('assigned_employee_id', fEmployee),
+      svc
+        .from('dsb_project_employees')
+        .select('project_id')
+        .eq('tenant_id', tenantId)
+        .eq('user_id', fEmployee),
+    ])
+    const fromLegacy = ((legacyRes.data ?? []) as { id: string }[]).map((p) => p.id)
+    const fromJunction = ((junctionRes.data ?? []) as { project_id: string }[]).map((p) => p.project_id)
+    projectIdsForEmployee = Array.from(new Set([...fromLegacy, ...fromJunction]))
     // If they have no projects, no cases will match — short-circuit later.
   }
+
+  // Pre-compute the current user's project IDs (junction + legacy) once.
+  // Used by the my-inbox count below, and by the dashboard's "in my queue"
+  // filter for employees.
+  const myProjectIds: string[] = await (async () => {
+    const [legacyRes, junctionRes] = await Promise.all([
+      svc
+        .from('dsb_projects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('assigned_employee_id', userId),
+      svc
+        .from('dsb_project_employees')
+        .select('project_id')
+        .eq('tenant_id', tenantId)
+        .eq('user_id', userId),
+    ])
+    const fromLegacy = ((legacyRes.data ?? []) as { id: string }[]).map((p) => p.id)
+    const fromJunction = ((junctionRes.data ?? []) as { project_id: string }[]).map((p) => p.project_id)
+    return Array.from(new Set([...fromLegacy, ...fromJunction]))
+  })()
 
   // ---------- Dropdown options for the filter bar ----------
   const [clientOptsRes, projectOptsRes, employeeOptsRes] = await Promise.all([
@@ -288,15 +321,17 @@ export default async function DisbursementsDashboardPage({
     (async () => {
       if (!myInboxStatus) return { count: 0 } as { count: number }
       if (dsbRole === 'employee') {
-        // Need to filter by project.assigned_employee_id — fetch and count client-side.
-        const { data } = await svc
+        // My inbox for an employee = cases in `with_employee` status whose
+        // project is in MY assigned set (junction ∪ legacy single pointer).
+        // If I'm not on any project, the count is 0 without querying.
+        if (myProjectIds.length === 0) return { count: 0 }
+        const { count } = await svc
           .from('dsb_cases')
-          .select('id, project:dsb_projects!dsb_cases_project_id_fkey(assigned_employee_id)')
+          .select('id', { count: 'exact', head: true })
           .eq('tenant_id', tenantId)
           .eq('status', myInboxStatus)
-        const rows = (data ?? []) as Array<{ id: string; project: { assigned_employee_id: string | null } | { assigned_employee_id: string | null }[] | null }>
-        const c = rows.filter((r) => single(r.project)?.assigned_employee_id === userId).length
-        return { count: c }
+          .in('project_id', myProjectIds)
+        return { count: count ?? 0 }
       }
       const { count } = await svc
         .from('dsb_cases')

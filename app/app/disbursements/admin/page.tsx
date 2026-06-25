@@ -8,6 +8,7 @@ import {
   SendWelcomeToAllStaffButton,
 } from './WelcomeEmailButtons'
 import { ChangeRoleButton } from './ChangeRoleButton'
+import { EmployeeProjectsEditor, type ProjectPickerOption } from './EmployeeProjectsEditor'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,13 +112,45 @@ export default async function DisbursementsAdminPage({
     .order('created_at', { ascending: false })
   const clients = (clientsData ?? []) as ClientRow[]
 
-  // Fetch projects.
+  // Fetch projects (now also includes developer_id so the "edit projects"
+  // picker can group by client).
   const { data: projectsData } = await svc
     .from('dsb_projects')
-    .select('id, code, name_ar, assigned_employee_id, status')
+    .select('id, code, name_ar, assigned_employee_id, status, developer_id')
     .eq('tenant_id', tenantId)
     .order('code', { ascending: true })
-  const projects = (projectsData ?? []) as ProjectRow[]
+  const projects = (projectsData ?? []) as Array<ProjectRow & { developer_id: string | null }>
+
+  // Developer names for the project picker grouping.
+  const { data: developersForPicker } = await svc
+    .from('dsb_developers')
+    .select('id, company_name_ar')
+    .eq('tenant_id', tenantId)
+  const developerNameById = new Map<string, string>()
+  for (const d of (developersForPicker ?? []) as { id: string; company_name_ar: string }[]) {
+    developerNameById.set(d.id, d.company_name_ar)
+  }
+  const projectPickerOptions: ProjectPickerOption[] = projects.map((p) => ({
+    id: p.id,
+    code: p.code,
+    name_ar: p.name_ar,
+    developer_id: p.developer_id,
+    developer_name: p.developer_id ? developerNameById.get(p.developer_id) ?? null : null,
+  }))
+
+  // Bulk-load the junction so each employee row can show its current
+  // assignment count and pre-check the editor. One round-trip beats per-row
+  // queries by the staff count.
+  const { data: junctionRows } = await svc
+    .from('dsb_project_employees')
+    .select('user_id, project_id')
+    .eq('tenant_id', tenantId)
+  const projectIdsByUserId = new Map<string, string[]>()
+  for (const row of (junctionRows ?? []) as { user_id: string; project_id: string }[]) {
+    const arr = projectIdsByUserId.get(row.user_id) ?? []
+    arr.push(row.project_id)
+    projectIdsByUserId.set(row.user_id, arr)
+  }
 
   // Fetch user names for assigned employees.
   const employeeIds = Array.from(
@@ -316,6 +349,17 @@ export default async function DisbursementsAdminPage({
                             userId={e.id}
                             fullName={e.full_name ?? e.email ?? '—'}
                             currentRole={e.dsb_role}
+                          />
+                        )}
+                        {/* Project-assignment editor: owner-only, hidden
+                            for owner targets (they see everything) and for
+                            the owner editing themselves. */}
+                        {canDelete && e.dsb_role && e.dsb_role !== 'owner' && (
+                          <EmployeeProjectsEditor
+                            userId={e.id}
+                            fullName={e.full_name ?? e.email ?? '—'}
+                            initialProjectIds={projectIdsByUserId.get(e.id) ?? []}
+                            projects={projectPickerOptions}
                           />
                         )}
                         {canDelete && (

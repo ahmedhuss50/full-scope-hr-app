@@ -82,6 +82,34 @@ async function userEmail(svc: ReturnType<typeof createSupabaseService>, userId: 
   return (data?.email as string | undefined) ?? null
 }
 
+/**
+ * Returns true when the user is allowed to act on the project as "the
+ * assigned employee". This is the union of:
+ *
+ *   1. the legacy `dsb_projects.assigned_employee_id` single-pointer
+ *      column (kept in sync for backwards compatibility), and
+ *   2. ANY row in the `dsb_project_employees` junction for the pair.
+ *
+ * When neither matches the user, returns false. Owner / supervisor role
+ * bypasses are handled by the caller (role check happens separately).
+ */
+async function isAssignedToProject(
+  svc: ReturnType<typeof createSupabaseService>,
+  projectId: string | null | undefined,
+  userId: string | null | undefined,
+  legacyAssignedId: string | null | undefined,
+): Promise<boolean> {
+  if (!projectId || !userId) return false
+  if (legacyAssignedId && legacyAssignedId === userId) return true
+  const { data } = await svc
+    .from('dsb_project_employees')
+    .select('user_id')
+    .eq('project_id', projectId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  return !!data
+}
+
 function appUrl(path: string): string {
   const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://app.fullscope.sa'
   return `${origin}${path}`
@@ -202,8 +230,19 @@ export async function approveCase(input: { case_id: string }): Promise<{ ok: tru
     if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
       return { ok: false, error: 'لا تملك صلاحية الاعتماد.' }
     }
-    if (project?.assigned_employee_id !== caller.userId) {
-      return { ok: false, error: 'هذا الطلب غير مُسند إليك.' }
+    // Owners short-circuit the assignment check — they see and can act on
+    // everything regardless of the junction. Otherwise, check the union of
+    // the legacy single-pointer column AND the multi-assignment junction.
+    if (caller.dsbRole !== 'owner') {
+      const assigned = await isAssignedToProject(
+        svc,
+        project?.id,
+        caller.userId,
+        project?.assigned_employee_id,
+      )
+      if (!assigned) {
+        return { ok: false, error: 'هذا الطلب غير مُسند إليك.' }
+      }
     }
     nextStatus = 'with_supervisor'
   } else if (kase.status === 'with_supervisor') {

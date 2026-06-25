@@ -510,3 +510,287 @@ export async function setCasePaidFromAccount(
   revalidatePath(`/app/disbursements/${caseId}`)
   return { ok: true }
 }
+
+// ---------------------------------------------------------------------------
+// Project ↔ employee junction management (owner-only).
+//
+// These two actions are the canonical entry points for writing to
+// dsb_project_employees. Both follow the same "replace the whole list"
+// model — the caller sends the desired final state and we diff against
+// what's there. This avoids fiddly add/remove APIs from the client.
+//
+// We also keep dsb_projects.assigned_employee_id in sync (best-effort) so
+// any legacy code paths that still read the single-pointer column continue
+// to resolve a sensible value: it becomes "the first assignee" (or the
+// sole one, where that's true).
+// ---------------------------------------------------------------------------
+
+const STAFF_ROLES_FOR_ASSIGNMENT = ['employee', 'supervisor', 'viewer', 'deliverer'] as const
+
+export interface SetProjectEmployeesInput {
+  project_id: string
+  user_ids: string[]
+}
+
+export async function setProjectEmployees(
+  input: SetProjectEmployeesInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+
+  const projectId = (input.project_id ?? '').trim()
+  if (!projectId) return { ok: false, error: 'بيانات ناقصة.' }
+
+  // De-dupe + drop blanks defensively.
+  const userIds = Array.from(
+    new Set(
+      (input.user_ids ?? [])
+        .map((id) => (id ?? '').trim())
+        .filter((id) => id.length > 0),
+    ),
+  )
+
+  const svc = createSupabaseService()
+
+  // Confirm the project belongs to this tenant.
+  const { data: project } = await svc
+    .from('dsb_projects')
+    .select('id, tenant_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!project || (project as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  // If non-empty, validate every user_id belongs to the same tenant AND
+  // carries an internal staff role (employee/supervisor/viewer/deliverer).
+  // Owners are excluded from junction rows: they see everything anyway,
+  // and tying them to a project would just be confusing.
+  if (userIds.length > 0) {
+    const { data: usersRows } = await svc
+      .from('users')
+      .select('id, tenant_id, dsb_role')
+      .in('id', userIds)
+    const rows = (usersRows ?? []) as { id: string; tenant_id: string; dsb_role: string | null }[]
+    if (rows.length !== userIds.length) {
+      return { ok: false, error: 'بعض الموظفين المختارين غير موجودين.' }
+    }
+    for (const r of rows) {
+      if (r.tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'بعض الموظفين المختارين لا ينتمون لمؤسستك.' }
+      }
+      // Owners filtered out silently — but if the only thing the caller
+      // sent was an owner, reject so they don't think it saved.
+      if (r.dsb_role && !(STAFF_ROLES_FOR_ASSIGNMENT as readonly string[]).includes(r.dsb_role)) {
+        return { ok: false, error: 'لا يمكن إسناد المدير لمشروع بعينه — المدير يرى كل المشاريع.' }
+      }
+    }
+  }
+
+  // Replace strategy: delete the existing set, insert the new set. We do
+  // this in two statements (no transaction available from the JS client),
+  // which is fine — both operations are scoped to a single project_id and
+  // the worst case on a partial failure is "junction temporarily empty",
+  // which the action layer's fallback to assigned_employee_id covers.
+  const { error: delErr } = await svc
+    .from('dsb_project_employees')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('tenant_id', caller.tenantId)
+  if (delErr) return { ok: false, error: delErr.message }
+
+  if (userIds.length > 0) {
+    const rows = userIds.map((uid) => ({
+      project_id: projectId,
+      user_id: uid,
+      tenant_id: caller.tenantId,
+      added_by_user_id: caller.userId,
+    }))
+    const { error: insErr } = await svc.from('dsb_project_employees').insert(rows)
+    if (insErr) return { ok: false, error: insErr.message }
+  }
+
+  // Keep the legacy single-pointer column pointed at the first assignee
+  // (or null if cleared). Old code paths that still read it stay sane.
+  const primary = userIds[0] ?? null
+  const { error: updErr } = await svc
+    .from('dsb_projects')
+    .update({ assigned_employee_id: primary })
+    .eq('id', projectId)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  // Audit (best-effort; do not block the response on log failures).
+  try {
+    await svc.from('dsb_audit_log').insert({
+      tenant_id: caller.tenantId,
+      event: 'project_employees_set',
+      actor_user_id: caller.userId,
+      notes: `تعيين موظفي المشروع: ${userIds.length} موظف`,
+      occurred_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn('[dsb.setProjectEmployees] audit insert failed', e)
+  }
+
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  revalidatePath('/app/disbursements/admin')
+  return { ok: true }
+}
+
+export interface SetEmployeeProjectsInput {
+  user_id: string
+  project_ids: string[]
+}
+
+export async function setEmployeeProjects(
+  input: SetEmployeeProjectsInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+
+  const userId = (input.user_id ?? '').trim()
+  if (!userId) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const projectIds = Array.from(
+    new Set(
+      (input.project_ids ?? [])
+        .map((id) => (id ?? '').trim())
+        .filter((id) => id.length > 0),
+    ),
+  )
+
+  const svc = createSupabaseService()
+
+  // Confirm the user belongs to this tenant and is a staff role that can
+  // be assigned. Owners are not assignable (they see everything).
+  const { data: target } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('id', userId)
+    .maybeSingle()
+  if (!target || (target as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'الموظف غير موجود.' }
+  }
+  const targetRole = (target as { dsb_role: string | null }).dsb_role
+  if (!targetRole || !(STAFF_ROLES_FOR_ASSIGNMENT as readonly string[]).includes(targetRole)) {
+    return { ok: false, error: 'لا يمكن إسناد المدير لمشاريع — المدير يرى كل المشاريع.' }
+  }
+
+  if (projectIds.length > 0) {
+    const { data: projRows } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id')
+      .in('id', projectIds)
+    const rows = (projRows ?? []) as { id: string; tenant_id: string }[]
+    if (rows.length !== projectIds.length) {
+      return { ok: false, error: 'بعض المشاريع المختارة غير موجودة.' }
+    }
+    for (const r of rows) {
+      if (r.tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'بعض المشاريع المختارة لا تنتمي لمؤسستك.' }
+      }
+    }
+  }
+
+  // Replace strategy, scoped to (user_id, tenant_id).
+  const { error: delErr } = await svc
+    .from('dsb_project_employees')
+    .delete()
+    .eq('user_id', userId)
+    .eq('tenant_id', caller.tenantId)
+  if (delErr) return { ok: false, error: delErr.message }
+
+  if (projectIds.length > 0) {
+    const rows = projectIds.map((pid) => ({
+      project_id: pid,
+      user_id: userId,
+      tenant_id: caller.tenantId,
+      added_by_user_id: caller.userId,
+    }))
+    const { error: insErr } = await svc.from('dsb_project_employees').insert(rows)
+    if (insErr) return { ok: false, error: insErr.message }
+  }
+
+  // Keep dsb_projects.assigned_employee_id sensible:
+  //   - For each project where this user is now the SOLE assignee, point
+  //     the legacy column at this user.
+  //   - For each project this user was JUST REMOVED from, if the legacy
+  //     column was pointing at them, repoint to whoever's left (or null).
+  // This is best-effort; if it fails we still return ok — the junction is
+  // the source of truth.
+  try {
+    if (projectIds.length > 0) {
+      // Count assignees per project to spot solo cases.
+      const { data: counts } = await svc
+        .from('dsb_project_employees')
+        .select('project_id, user_id')
+        .in('project_id', projectIds)
+        .eq('tenant_id', caller.tenantId)
+      const byProject = new Map<string, string[]>()
+      for (const row of (counts ?? []) as { project_id: string; user_id: string }[]) {
+        const arr = byProject.get(row.project_id) ?? []
+        arr.push(row.user_id)
+        byProject.set(row.project_id, arr)
+      }
+      for (const [pid, members] of byProject) {
+        if (members.length === 1 && members[0] === userId) {
+          await svc
+            .from('dsb_projects')
+            .update({ assigned_employee_id: userId })
+            .eq('id', pid)
+            .eq('tenant_id', caller.tenantId)
+        }
+      }
+    }
+
+    // Repoint orphan legacy pointers: projects where assigned_employee_id
+    // is this user but the user is no longer in the junction.
+    const { data: legacyHits } = await svc
+      .from('dsb_projects')
+      .select('id')
+      .eq('tenant_id', caller.tenantId)
+      .eq('assigned_employee_id', userId)
+    for (const lh of (legacyHits ?? []) as { id: string }[]) {
+      // Is the user still in the junction for this project?
+      const { data: stillIn } = await svc
+        .from('dsb_project_employees')
+        .select('user_id')
+        .eq('project_id', lh.id)
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (!stillIn) {
+        // Pick a replacement: any remaining assignee, else null.
+        const { data: anyOther } = await svc
+          .from('dsb_project_employees')
+          .select('user_id')
+          .eq('project_id', lh.id)
+          .eq('tenant_id', caller.tenantId)
+          .limit(1)
+          .maybeSingle()
+        await svc
+          .from('dsb_projects')
+          .update({ assigned_employee_id: (anyOther?.user_id as string | undefined) ?? null })
+          .eq('id', lh.id)
+          .eq('tenant_id', caller.tenantId)
+      }
+    }
+  } catch (e) {
+    console.warn('[dsb.setEmployeeProjects] legacy pointer sync failed', e)
+  }
+
+  try {
+    await svc.from('dsb_audit_log').insert({
+      tenant_id: caller.tenantId,
+      event: 'employee_projects_set',
+      actor_user_id: caller.userId,
+      notes: `تعيين مشاريع الموظف: ${projectIds.length} مشروع`,
+      occurred_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn('[dsb.setEmployeeProjects] audit insert failed', e)
+  }
+
+  revalidatePath('/app/disbursements/admin')
+  return { ok: true }
+}

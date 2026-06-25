@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Pencil } from 'lucide-react'
-import { updateProject } from '../../edit-actions'
+import { updateProject, setProjectEmployees } from '../../edit-actions'
 
 type Project = {
   id: string
@@ -31,10 +31,18 @@ export function EditProjectInfo({
   project,
   clients,
   staff,
+  assignedUserIds,
+  canEditAssignees,
 }: {
   project: Project
   clients: ClientOpt[]
   staff: StaffOpt[]
+  // Pre-loaded list of users currently in dsb_project_employees for this
+  // project. The picker uses this for pre-checked state.
+  assignedUserIds: string[]
+  // Only owners can edit the assignee list. Non-owners see the metadata
+  // fields but the project assignees section is hidden.
+  canEditAssignees: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -44,7 +52,6 @@ export function EditProjectInfo({
   const [code, setCode] = useState(project.code)
   const [nameAr, setNameAr] = useState(project.name_ar)
   const [developerId, setDeveloperId] = useState(project.developer_id)
-  const [assignedId, setAssignedId] = useState<string>(project.assigned_employee_id ?? '')
   const [notes, setNotes] = useState(project.notes ?? '')
   const [status, setStatus] = useState<'active' | 'archived' | 'inactive'>(
     (project.status as 'active' | 'archived' | 'inactive') ?? 'active',
@@ -53,39 +60,83 @@ export function EditProjectInfo({
   const [bankAccount, setBankAccount] = useState(project.bank_account ?? '')
   const [bankIban, setBankIban] = useState(project.bank_iban ?? '')
 
+  // Multi-assignee picker state. Excludes owners — owners see everything
+  // already; placing them in the junction adds noise without changing access.
+  const assignableStaff = useMemo(
+    () => staff.filter((s) => s.role_label !== 'مدير'),
+    [staff],
+  )
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(
+    () => new Set(assignedUserIds),
+  )
+
+  function toggleUser(id: string) {
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
   function reset() {
     setCode(project.code)
     setNameAr(project.name_ar)
     setDeveloperId(project.developer_id)
-    setAssignedId(project.assigned_employee_id ?? '')
     setNotes(project.notes ?? '')
     setStatus((project.status as 'active' | 'archived' | 'inactive') ?? 'active')
     setBankName(project.bank_name ?? '')
     setBankAccount(project.bank_account ?? '')
     setBankIban(project.bank_iban ?? '')
+    setSelectedUserIds(new Set(assignedUserIds))
     setError(null)
   }
 
   async function onSave() {
     setError(null)
     setSaving(true)
+
+    // updateProject still carries the legacy single-pointer column for
+    // compatibility. We send the FIRST selected user (or null) as the
+    // "primary" assignee. setProjectEmployees, called next, will overwrite
+    // this with its own logic, but doing both keeps the row consistent if
+    // either call fails partway through.
+    const ids = Array.from(selectedUserIds)
+    const primary = ids[0] ?? null
+
     const res = await updateProject({
       project_id: project.id,
       code,
       name_ar: nameAr,
       developer_id: developerId,
-      assigned_employee_id: assignedId || null,
+      assigned_employee_id: primary,
       notes: notes || null,
       status,
       bank_name: bankName || null,
       bank_account: bankAccount || null,
       bank_iban: bankIban || null,
     })
-    setSaving(false)
     if (!res.ok) {
+      setSaving(false)
       setError(res.error)
       return
     }
+
+    // Only owners can change the assignee list; skip this call otherwise
+    // so non-owners don't get a permission error after a successful info
+    // save.
+    if (canEditAssignees) {
+      const assignRes = await setProjectEmployees({
+        project_id: project.id,
+        user_ids: ids,
+      })
+      if (!assignRes.ok) {
+        setSaving(false)
+        setError(assignRes.error)
+        return
+      }
+    }
+
+    setSaving(false)
     setOpen(false)
     startTransition(() => router.refresh())
   }
@@ -126,13 +177,6 @@ export function EditProjectInfo({
           </select>
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-500 mb-1 block">الموظف المسؤول</label>
-          <select className={inputCls} value={assignedId} onChange={(e) => setAssignedId(e.target.value)} disabled={saving}>
-            <option value="">— غير محدد —</option>
-            {staff.map((s) => <option key={s.id} value={s.id}>{s.full_name} — {s.role_label}</option>)}
-          </select>
-        </div>
-        <div>
           <label className="text-xs font-semibold text-slate-500 mb-1 block">الحالة</label>
           <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value as 'active' | 'archived' | 'inactive')} disabled={saving}>
             {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -143,6 +187,56 @@ export function EditProjectInfo({
           <textarea rows={3} className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
         </div>
       </div>
+
+      {/* Multi-employee picker — owner-only. */}
+      {canEditAssignees && (
+        <div className="pt-3 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="serif font-bold text-sm text-slate-900">الموظفون المسؤولون</h4>
+            <span className="text-[11px] text-slate-500">
+              {selectedUserIds.size} موظف مختار
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            أي موظف مُسند يمكنه اعتماد طلبات هذا المشروع في مرحلة &quot;بانتظار الموظف&quot;،
+            وتصله الإشعارات عند رفع سند جديد. المدير يطّلع على كل المشاريع بدون
+            إسناد.
+          </p>
+          {assignableStaff.length === 0 ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              لا يوجد موظفون قابلون للإسناد بعد.
+            </div>
+          ) : (
+            <div className="rounded-md border border-slate-200 max-h-56 overflow-y-auto divide-y divide-slate-100">
+              {assignableStaff.map((s) => {
+                const checked = selectedUserIds.has(s.id)
+                return (
+                  <label
+                    key={s.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm ${
+                      checked ? 'bg-teal-50' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleUser(s.id)}
+                      disabled={saving}
+                      className="w-4 h-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-slate-800">
+                      {s.full_name}
+                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 ring-1 ring-slate-200 text-[10px] font-semibold shrink-0">
+                      {s.role_label}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="pt-3 border-t border-slate-100 space-y-2">
         <h4 className="serif font-bold text-sm text-slate-900">حساب المشروع (حساب الضمان)</h4>

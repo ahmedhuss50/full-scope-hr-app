@@ -140,15 +140,34 @@ export default async function ProjectDetailPage({
     }
   }
 
-  let assignedEmployeeName: string | null = null
-  if (project.assigned_employee_id) {
-    const { data: empRow } = await svc
+  // Load the current set of assigned employees from the junction. The
+  // legacy assigned_employee_id is preserved as the "primary" pointer but
+  // the multi-select edits the junction directly. If the junction is
+  // empty but a legacy pointer exists (unmigrated row), we surface that
+  // value as a pre-check so the picker shows the same person the rest of
+  // the system treats as "assigned".
+  const { data: junctionRows } = await svc
+    .from('dsb_project_employees')
+    .select('user_id')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+  const junctionIds = ((junctionRows ?? []) as { user_id: string }[]).map((r) => r.user_id)
+  const assignedUserIds = junctionIds.length > 0
+    ? junctionIds
+    : (project.assigned_employee_id ? [project.assigned_employee_id] : [])
+
+  // Resolve assigned employee names for the read-only info card.
+  const assignedNameById = new Map<string, string>()
+  if (assignedUserIds.length > 0) {
+    const { data: rows } = await svc
       .from('users')
-      .select('full_name')
-      .eq('id', project.assigned_employee_id)
-      .maybeSingle()
-    assignedEmployeeName = (empRow?.full_name as string | null) ?? null
+      .select('id, full_name')
+      .in('id', assignedUserIds)
+    for (const r of (rows ?? []) as { id: string; full_name: string | null }[]) {
+      assignedNameById.set(r.id, r.full_name ?? '—')
+    }
   }
+  const assignedEmployeeNames = assignedUserIds.map((id) => assignedNameById.get(id) ?? '—')
 
   // Lists for the edit form: tenant clients + all staff.
   const { data: clientsForEdit } = await svc
@@ -266,6 +285,8 @@ export default async function ProjectDetailPage({
               }}
               clients={clientOptions}
               staff={staffOptions}
+              assignedUserIds={assignedUserIds}
+              canEditAssignees={dsbRole === 'owner'}
             />
             {dsbRole === 'owner' && (
               <DeleteProjectButton
@@ -297,8 +318,21 @@ export default async function ProjectDetailPage({
             </div>
           </div>
           <div>
-            <div className="text-xs text-slate-500 mb-0.5">الموظف المسؤول</div>
-            <div className="font-semibold text-slate-900">{assignedEmployeeName ?? '—'}</div>
+            <div className="text-xs text-slate-500 mb-0.5">الموظفون المسؤولون</div>
+            <div className="font-semibold text-slate-900">
+              {assignedEmployeeNames.length === 0 ? '—' : (
+                <div className="flex flex-wrap gap-1.5">
+                  {assignedEmployeeNames.map((name, idx) => (
+                    <span
+                      key={`${name}-${idx}`}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 ring-1 ring-teal-200 text-[11px] font-semibold"
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <div className="text-xs text-slate-500 mb-0.5">عدد السندات</div>
