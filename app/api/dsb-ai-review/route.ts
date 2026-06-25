@@ -415,8 +415,11 @@ Reminder: return JSON array only — no prose, no markdown.`
     let costUsd = 0
     let chunkCount = 1
 
-    if (totalPageCount > 0 && totalPageCount > 100) {
-      const chunks = await splitPdfIntoChunks(pdfBuffer, 100)
+    // Match the extract route's chunk threshold (50). See lib/dsb/pdf-chunks
+    // for why 50 instead of the Anthropic 100-page cap.
+    const CHUNK_THRESHOLD = 50
+    if (totalPageCount > 0 && totalPageCount > CHUNK_THRESHOLD) {
+      const chunks = await splitPdfIntoChunks(pdfBuffer, CHUNK_THRESHOLD)
       chunkCount = chunks.length
 
       // Priority — higher number wins on conflict.

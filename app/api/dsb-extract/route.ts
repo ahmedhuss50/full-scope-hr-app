@@ -469,9 +469,12 @@ export async function POST(req: Request) {
     let costUsd = 0
     let chunkCount = 1
 
-    if (totalPageCount > 0 && totalPageCount > 100) {
+    // Chunk threshold matches the splitter default (50). See lib/dsb/pdf-chunks
+    // for the rationale (token-budget headroom, not just page count).
+    const CHUNK_THRESHOLD = 50
+    if (totalPageCount > 0 && totalPageCount > CHUNK_THRESHOLD) {
       // Chunked path.
-      const chunks = await splitPdfIntoChunks(pdfBuffer, 100)
+      const chunks = await splitPdfIntoChunks(pdfBuffer, CHUNK_THRESHOLD)
       chunkCount = chunks.length
       // Merge accumulators.
       sectionsRaw = []

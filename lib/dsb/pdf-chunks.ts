@@ -50,12 +50,21 @@ export async function pdfPageCount(bytes: Uint8Array | ArrayBuffer | Buffer): Pr
  * are consistent with the multi-chunk path).
  *
  * @param bytes     Source PDF bytes.
- * @param chunkSize Maximum pages per chunk. Defaults to 100 to match the
- *                  Anthropic Messages API cap. Configurable for tests.
+ * @param chunkSize Maximum pages per chunk. Defaults to 50.
+ *
+ * Why 50 and not the Anthropic page-cap of 100: the page-cap is only one of
+ * the limits. The harder cap is the 200k token context window. Scanned /
+ * image-heavy PDFs cost ~1,500–2,200 tokens per page (each page is sent as
+ * an image). A 100-page image-heavy chunk routinely lands at 210k+ tokens
+ * and the API rejects it ("prompt is too long: N tokens > 200000 maximum").
+ * 50 pages × ~2,000 tokens = ~100k, leaving generous headroom for the
+ * system prompt, checklist items (ai-review), and the user message. Cost
+ * impact is marginal — for a 200-page voucher this is 4 chunks instead of
+ * 2, still pennies per case.
  */
 export async function splitPdfIntoChunks(
   bytes: Uint8Array | ArrayBuffer | Buffer,
-  chunkSize = 100,
+  chunkSize = 50,
 ): Promise<PdfChunk[]> {
   if (chunkSize < 1) throw new Error('chunkSize must be ≥ 1')
 
