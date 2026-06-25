@@ -59,13 +59,21 @@ export default async function NewProjectPage({
     .from('users')
     .select('id, full_name, dsb_role')
     .eq('tenant_id', tenantId)
-    .in('dsb_role', ['employee', 'supervisor', 'owner'])
+    // Deliverer is included so projects can be assigned to a delivery contact.
+    // Note: when a case in a deliverer-owned project is uploaded, the
+    // "with_employee" stage needs a supervisor or owner to step in and approve
+    // (deliverers can't approve). See approveCase in [caseId]/actions.ts.
+    .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer'])
     .order('full_name', { ascending: true })
   const employees: EmployeeOption[] = ((empRows ?? []) as { id: string; full_name: string | null; dsb_role: string | null }[])
     .map((r) => ({
       id: r.id,
       full_name: r.full_name ?? '—',
-      role_label: r.dsb_role === 'owner' ? 'مدير' : r.dsb_role === 'supervisor' ? 'مشرف' : 'مراجع',
+      role_label:
+        r.dsb_role === 'owner' ? 'مدير' :
+        r.dsb_role === 'supervisor' ? 'مشرف' :
+        r.dsb_role === 'deliverer' ? 'مسلِّم' :
+        'مراجع',
     }))
 
   // List clients (developers) for this tenant — required dropdown on the form.

@@ -110,7 +110,7 @@ export default async function DeliveryDocumentsRegisterPage({
       .from('users')
       .select('id, full_name')
       .eq('tenant_id', tenantId)
-      .in('dsb_role', ['employee', 'supervisor', 'owner'])
+      .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer'])
       .order('full_name', { ascending: true }),
   ])
   const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)

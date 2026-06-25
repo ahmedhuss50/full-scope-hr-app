@@ -140,7 +140,8 @@ export default async function ReportsPage() {
       .from('users')
       .select('id, full_name, dsb_role')
       .eq('tenant_id', tenantId)
-      .in('dsb_role', ['employee', 'supervisor', 'owner']),
+      // Deliverer included so per-employee KPI tables count them too.
+      .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer']),
     // Status-transition events from the audit log — used to compute time at each stage.
     svc
       .from('dsb_audit_log')

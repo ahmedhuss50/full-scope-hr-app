@@ -162,13 +162,20 @@ export default async function ProjectDetailPage({
     .from('users')
     .select('id, full_name, dsb_role')
     .eq('tenant_id', tenantId)
-    .in('dsb_role', ['employee', 'supervisor', 'owner'])
+    // Deliverer is included so a project can be assigned to a delivery
+    // contact. Approval at "with_employee" stage still requires supervisor
+    // or owner to step in when the assignee is a deliverer.
+    .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer'])
     .order('full_name', { ascending: true })
   const staffOptions = ((staffForEdit ?? []) as { id: string; full_name: string | null; dsb_role: string | null }[])
     .map((u) => ({
       id: u.id,
       full_name: u.full_name ?? '—',
-      role_label: u.dsb_role === 'owner' ? 'مدير' : u.dsb_role === 'supervisor' ? 'مشرف' : 'مراجع',
+      role_label:
+        u.dsb_role === 'owner' ? 'مدير' :
+        u.dsb_role === 'supervisor' ? 'مشرف' :
+        u.dsb_role === 'deliverer' ? 'مسلِّم' :
+        'مراجع',
     }))
 
   // Fetch cases for this project.
