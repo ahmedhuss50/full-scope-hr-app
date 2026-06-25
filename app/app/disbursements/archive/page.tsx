@@ -47,6 +47,7 @@ type DeliveredRow = {
   recipient_name: string | null
   recipient_phone: string | null
   paid_from_account_id: string | null
+  paid_at: string | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
   paid_from: PaidFromLite | PaidFromLite[] | null
@@ -142,7 +143,7 @@ export default async function ArchivePage({
     .select(
       `id, case_number, voucher_number_text, amount_sar, delivered_at,
        delivered_by_user_id, recipient_name, recipient_phone,
-       paid_from_account_id,
+       paid_from_account_id, paid_at,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar),
        paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label)`,
@@ -279,6 +280,7 @@ export default async function ArchivePage({
                   <Th>رقم السند</Th>
                   <Th>المبلغ</Th>
                   <Th>حساب الدفع</Th>
+                  <Th>تاريخ السداد</Th>
                   <Th>المستلم</Th>
                   <Th>وقت التسليم</Th>
                   <Th>سلَّم</Th>
@@ -321,6 +323,7 @@ export default async function ArchivePage({
                       // in either case via the row's fallback.
                       paidFromLabel={paidFrom?.label ?? null}
                       accountOptions={projectAccounts}
+                      paidAt={c.paid_at}
                     />
                   )
                 })}

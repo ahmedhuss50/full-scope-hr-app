@@ -48,6 +48,7 @@ export interface UpdateDeliveryInfoInput {
   recipient_name?: string | null
   delivered_at?: string | null   // ISO timestamp (UTC) from client
   paid_from_account_id?: string | null
+  paid_at?: string | null        // YYYY-MM-DD date string, or null to clear
 }
 
 export async function updateDeliveryInfo(
@@ -75,6 +76,18 @@ export async function updateDeliveryInfo(
         return { ok: false, error: 'تاريخ التسليم غير صالح.' }
       }
       patch.delivered_at = d.toISOString()
+    }
+  }
+  if (input.paid_at !== undefined) {
+    const v = (input.paid_at ?? '').trim()
+    if (!v) {
+      patch.paid_at = null
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      // The client sends a YYYY-MM-DD string from <input type="date">.
+      // Reject anything else so the date column doesn't get garbage.
+      return { ok: false, error: 'تاريخ السداد غير صالح.' }
+    } else {
+      patch.paid_at = v
     }
   }
   // paid_from_account_id needs an extra validation step (account must belong
@@ -134,6 +147,7 @@ export async function updateDeliveryInfo(
   const changedBits: string[] = []
   if ('recipient_name' in patch) changedBits.push(`اسم المستلم: ${patch.recipient_name ?? '—'}`)
   if ('delivered_at' in patch) changedBits.push(`وقت التسليم: ${patch.delivered_at ?? '—'}`)
+  if ('paid_at' in patch) changedBits.push(`تاريخ السداد: ${patch.paid_at ?? '—'}`)
   if (paidFromTouched) {
     changedBits.push(`حساب الدفع: ${paidFromLabel ?? '—'}`)
   }

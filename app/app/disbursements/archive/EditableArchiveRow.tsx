@@ -34,6 +34,7 @@ export function EditableArchiveRow({
   paidFromAccountId,
   paidFromLabel,
   accountOptions,
+  paidAt,
 }: {
   caseId: string
   caseNumber: string
@@ -53,6 +54,8 @@ export function EditableArchiveRow({
   // The full list of accounts available for this case's project. Empty
   // array if the project hasn't had any accounts configured yet.
   accountOptions: PaidFromOption[]
+  // Date the disbursement was actually paid (YYYY-MM-DD).
+  paidAt: string | null
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -66,12 +69,14 @@ export function EditableArchiveRow({
   const [nameDraft, setNameDraft] = useState<string>(recipientName ?? '')
   const [dateDraft, setDateDraft] = useState<string>(toLocalDateTimeInput(deliveredAt))
   const [paidFromDraft, setPaidFromDraft] = useState<string>(paidFromAccountId ?? '')
+  const [paidAtDraft, setPaidAtDraft] = useState<string>(paidAt ?? '')
 
   function startEdit() {
     setError(null)
     setNameDraft(recipientName ?? '')
     setDateDraft(toLocalDateTimeInput(deliveredAt))
     setPaidFromDraft(paidFromAccountId ?? '')
+    setPaidAtDraft(paidAt ?? '')
     setEditing(true)
   }
 
@@ -92,6 +97,7 @@ export function EditableArchiveRow({
       recipient_name: nameDraft,
       delivered_at: isoDelivered,
       paid_from_account_id: paidFromDraft || null,
+      paid_at: paidAtDraft || null,
     })
     setSaving(false)
     if (!res.ok) {
@@ -153,6 +159,22 @@ export function EditableArchiveRow({
           )
         ) : (
           <span className="text-slate-900">{paidFromLabel ?? '—'}</span>
+        )}
+      </Td>
+
+      {/* Payment date cell — editable */}
+      <Td>
+        {editing ? (
+          <input
+            type="date"
+            value={paidAtDraft}
+            onChange={(e) => setPaidAtDraft(e.target.value)}
+            disabled={saving}
+            dir="ltr"
+            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
+          />
+        ) : (
+          <span className="text-slate-900">{paidAt ? fmtPaidDate(paidAt) : '—'}</span>
         )}
       </Td>
 
@@ -261,6 +283,23 @@ export function EditableArchiveRow({
  * inputs expect, in the user's LOCAL timezone (matching what the browser
  * would store back).
  */
+/**
+ * Render a YYYY-MM-DD date string as Arabic locale date (e.g. "٢٥ يونيو ٢٠٢٦").
+ * Falls back to the raw string if anything is weird.
+ */
+function fmtPaidDate(s: string | null): string {
+  if (!s) return '—'
+  try {
+    return new Intl.DateTimeFormat('ar-SA', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    }).format(new Date(s + 'T00:00:00'))
+  } catch {
+    return s
+  }
+}
+
 function toLocalDateTimeInput(iso: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)

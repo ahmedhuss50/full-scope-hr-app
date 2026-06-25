@@ -307,11 +307,15 @@ export default async function DisbursementsDashboardPage({
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
       .in('status', ['with_employee', 'with_supervisor', 'with_owner']),
+    // "موقّعة هذا الشهر" — counts cases SIGNED this month, regardless of
+    // whether they were subsequently delivered. The filter is on signed_at,
+    // not status, so a case that's signed→delivered in the same month still
+    // counts exactly once.
     svc
       .from('dsb_cases')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tenantId)
-      .eq('status', 'signed')
+      .in('status', ['signed', 'delivered'])
       .gte('signed_at', monthStart),
     svc
       .from('dsb_cases')
@@ -340,11 +344,14 @@ export default async function DisbursementsDashboardPage({
         .eq('status', myInboxStatus)
       return { count: count ?? 0 }
     })(),
+    // Avg-cycle = avg(signed_at − created_at) for cases signed in the last
+    // 30 days. Includes delivered too — a delivered case was signed first
+    // and its cycle time is still valid data.
     svc
       .from('dsb_cases')
       .select('created_at, signed_at')
       .eq('tenant_id', tenantId)
-      .eq('status', 'signed')
+      .in('status', ['signed', 'delivered'])
       .gte('signed_at', thirtyDaysAgoIso)
       .limit(500),
     svc
