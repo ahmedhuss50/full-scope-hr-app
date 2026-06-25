@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { LayoutDashboard } from 'lucide-react'
+import { CaseFiltersBar } from '../CaseFiltersBar'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,7 +64,18 @@ const PIPELINE_COLUMNS: {
   { key: 'sent_back_to_developer', title: 'أعيدت إلى المطور',        headCls: 'bg-red-50 text-red-800 border-red-200' },
 ]
 
-export default async function DisbursementsBoardPage() {
+export default async function DisbursementsBoardPage({
+  searchParams,
+}: {
+  searchParams?: {
+    client?: string
+    project?: string
+    employee?: string
+    from?: string
+    to?: string
+    q?: string
+  }
+}) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -84,8 +96,68 @@ export default async function DisbursementsBoardPage() {
 
   const tenantId = profile.tenant_id as string
 
-  // Fetch all cases for the tenant with project + developer joins.
-  const { data: casesData } = await svc
+  // ---------- URL filter values (same shape as dashboard / archive) ----------
+  // The board is intentionally status-grouped (each column IS a status), so
+  // we do NOT honour a status filter here. The rest mirror the dashboard.
+  const f = searchParams ?? {}
+  const fClient   = (f.client   ?? '').trim() || null
+  const fProject  = (f.project  ?? '').trim() || null
+  const fEmployee = (f.employee ?? '').trim() || null
+  const fFrom     = (f.from     ?? '').trim() || null
+  const fTo       = (f.to       ?? '').trim() || null
+  const fQ        = (f.q        ?? '').trim() || null
+
+  // Resolve project IDs the employee filter restricts us to. An employee
+  // can be linked to a project either via the legacy assigned_employee_id
+  // column or via the dsb_project_employees junction (multi-assignment).
+  let projectIdsForEmployee: string[] | null = null
+  if (fEmployee) {
+    const [{ data: legacyRows }, { data: junctionRows }] = await Promise.all([
+      svc
+        .from('dsb_projects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('assigned_employee_id', fEmployee),
+      svc
+        .from('dsb_project_employees')
+        .select('project_id')
+        .eq('tenant_id', tenantId)
+        .eq('user_id', fEmployee),
+    ])
+    const set = new Set<string>()
+    for (const r of (legacyRows ?? []) as { id: string }[]) set.add(r.id)
+    for (const r of (junctionRows ?? []) as { project_id: string }[]) set.add(r.project_id)
+    projectIdsForEmployee = Array.from(set)
+  }
+
+  // ---------- Dropdown options for the filter bar ----------
+  const [clientOptsRes, projectOptsRes, employeeOptsRes] = await Promise.all([
+    svc
+      .from('dsb_developers')
+      .select('id, company_name_ar')
+      .eq('tenant_id', tenantId)
+      .order('company_name_ar', { ascending: true }),
+    svc
+      .from('dsb_projects')
+      .select('id, code, name_ar, developer_id')
+      .eq('tenant_id', tenantId)
+      .order('code', { ascending: true }),
+    svc
+      .from('users')
+      .select('id, full_name')
+      .eq('tenant_id', tenantId)
+      .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer'])
+      .order('full_name', { ascending: true }),
+  ])
+  const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
+    .map((c) => ({ id: c.id, label: c.company_name_ar }))
+  const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
+    .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
+  const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
+    .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
+
+  // ---------- Cases query with filters applied ----------
+  let casesQuery = svc
     .from('dsb_cases')
     .select(
       `id, case_number, voucher_number_text, amount_sar, status, submitted_at, created_at,
@@ -93,7 +165,20 @@ export default async function DisbursementsBoardPage() {
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
     .eq('tenant_id', tenantId)
-    .order('created_at', { ascending: false })
+  if (fClient)  casesQuery = casesQuery.eq('developer_id', fClient)
+  if (fProject) casesQuery = casesQuery.eq('project_id', fProject)
+  if (fFrom)    casesQuery = casesQuery.gte('submitted_at', `${fFrom}T00:00:00+03`)
+  if (fTo)      casesQuery = casesQuery.lte('submitted_at', `${fTo}T23:59:59+03`)
+  if (fQ)       casesQuery = casesQuery.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+  if (projectIdsForEmployee !== null) {
+    // No projects matched the employee filter → force a no-match.
+    const projectFilterIds =
+      projectIdsForEmployee.length === 0
+        ? ['00000000-0000-0000-0000-000000000000']
+        : projectIdsForEmployee
+    casesQuery = casesQuery.in('project_id', projectFilterIds)
+  }
+  const { data: casesData } = await casesQuery.order('created_at', { ascending: false })
   const cases = (casesData ?? []) as CaseRow[]
 
   // Group by pipeline column.
@@ -142,6 +227,15 @@ export default async function DisbursementsBoardPage() {
           </div>
         </div>
       </header>
+
+      {/* Filters — same URL-driven control used on the dashboard. Status is
+          hidden here because the board IS grouped by status (each column). */}
+      <CaseFiltersBar
+        clients={clientOptions}
+        projects={projectOptions}
+        employees={employeeOptions}
+        hideStatus
+      />
 
       {/* Pipeline */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
