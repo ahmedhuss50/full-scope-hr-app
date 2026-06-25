@@ -242,3 +242,271 @@ export async function updateProject(
   revalidatePath('/app/disbursements/admin')
   return { ok: true }
 }
+
+// ---------------------------------------------------------------------------
+// Project payment accounts (owner-only writes)
+// ---------------------------------------------------------------------------
+//
+// Each project owns a list of payment accounts that disbursements come out
+// of. When a case is delivered, the owner/staff record which of these
+// accounts the money came from. The admin (owner) maintains the list — one
+// at a time via the inline form, or in bulk via an Excel upload.
+// ---------------------------------------------------------------------------
+
+async function resolveOwner(): Promise<
+  | { tenantId: string; userId: string }
+  | { error: string }
+> {
+  const caller = await resolveStaff()
+  if ('error' in caller) return { error: caller.error }
+  if (caller.dsbRole !== 'owner') {
+    return { error: 'هذا الإجراء متاح للمدير فقط.' }
+  }
+  return { tenantId: caller.tenantId, userId: caller.userId }
+}
+
+async function ensureProjectInTenant(
+  svc: ReturnType<typeof createSupabaseService>,
+  tenantId: string,
+  projectId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { data: project } = await svc
+    .from('dsb_projects')
+    .select('id, tenant_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!project || (project as { tenant_id: string }).tenant_id !== tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+  return { ok: true }
+}
+
+export interface AddProjectAccountInput {
+  project_id: string
+  label: string
+  account_number?: string | null
+  bank_name?: string | null
+  iban?: string | null
+}
+
+export async function addProjectAccount(
+  input: AddProjectAccountInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const projectId = (input.project_id ?? '').trim()
+  const label = (input.label ?? '').trim()
+  if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
+  if (!label) return { ok: false, error: 'اسم الحساب مطلوب.' }
+
+  const svc = createSupabaseService()
+  const check = await ensureProjectInTenant(svc, caller.tenantId, projectId)
+  if (!check.ok) return check
+
+  const { data, error } = await svc
+    .from('dsb_project_accounts')
+    .insert({
+      tenant_id: caller.tenantId,
+      project_id: projectId,
+      label,
+      account_number: (input.account_number ?? '').trim() || null,
+      bank_name: (input.bank_name ?? '').trim() || null,
+      iban: (input.iban ?? '').trim().toUpperCase() || null,
+      created_by_user_id: caller.userId,
+    })
+    .select('id')
+    .single()
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? 'تعذّر إضافة الحساب.' }
+  }
+
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  return { ok: true, id: data.id as string }
+}
+
+export interface DeleteProjectAccountInput {
+  id: string
+}
+
+export async function deleteProjectAccount(
+  input: DeleteProjectAccountInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const id = (input.id ?? '').trim()
+  if (!id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  // Look up the account to confirm tenant ownership AND to know which
+  // project page to revalidate.
+  const { data: account } = await svc
+    .from('dsb_project_accounts')
+    .select('id, tenant_id, project_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!account || (account as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'الحساب غير موجود.' }
+  }
+
+  // The FK on dsb_cases.paid_from_account_id is ON DELETE SET NULL, so any
+  // cases that referenced this account simply lose the back-reference.
+  const { error } = await svc
+    .from('dsb_project_accounts')
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${(account as { project_id: string }).project_id}`)
+  return { ok: true }
+}
+
+export interface BulkUploadProjectAccountsInput {
+  project_id: string
+  accounts: Array<{
+    label: string
+    account_number?: string | null
+    bank_name?: string | null
+    iban?: string | null
+  }>
+}
+
+export async function bulkUploadProjectAccounts(
+  input: BulkUploadProjectAccountsInput,
+): Promise<{ ok: true; inserted: number } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const projectId = (input.project_id ?? '').trim()
+  if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
+  if (!Array.isArray(input.accounts) || input.accounts.length === 0) {
+    return { ok: false, error: 'لا توجد صفوف للرفع.' }
+  }
+
+  const svc = createSupabaseService()
+  const check = await ensureProjectInTenant(svc, caller.tenantId, projectId)
+  if (!check.ok) return check
+
+  // Skip blank-label rows defensively — the client also filters, but we
+  // don't trust client input.
+  const rows = input.accounts
+    .map((r) => ({
+      label: (r.label ?? '').trim(),
+      account_number: (r.account_number ?? '').trim() || null,
+      bank_name: (r.bank_name ?? '').trim() || null,
+      iban: (r.iban ?? '').trim().toUpperCase() || null,
+    }))
+    .filter((r) => r.label.length > 0)
+    .map((r) => ({
+      tenant_id: caller.tenantId,
+      project_id: projectId,
+      created_by_user_id: caller.userId,
+      ...r,
+    }))
+
+  if (rows.length === 0) {
+    return { ok: false, error: 'جميع الصفوف فارغة (اسم الحساب مطلوب).' }
+  }
+
+  const { error } = await svc
+    .from('dsb_project_accounts')
+    .insert(rows)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  return { ok: true, inserted: rows.length }
+}
+
+// ---------------------------------------------------------------------------
+// setCasePaidFromAccount — write roles + deliverer.
+//
+// This is the ONE action in this file that isn't owner-only. Setting which
+// account a delivery came out of is a delivery-time bookkeeping operation,
+// same permission surface as the archive edits (employee / supervisor /
+// owner / deliverer).
+// ---------------------------------------------------------------------------
+
+const PAID_FROM_EDIT_ROLES = ['employee', 'supervisor', 'owner', 'deliverer'] as const
+
+export interface SetCasePaidFromAccountInput {
+  case_id: string
+  account_id: string | null
+}
+
+export async function setCasePaidFromAccount(
+  input: SetCasePaidFromAccountInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Inline resolver — resolveStaff() only accepts write roles, but this
+  // action is also open to the deliverer role.
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  const svc0 = createSupabaseService()
+  const { data: profile } = await svc0
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email)
+    .maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط بمستأجر.' }
+  const role = (profile.dsb_role as string | null) ?? null
+  if (!role || !(PAID_FROM_EDIT_ROLES as readonly string[]).includes(role)) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  const caller = {
+    tenantId: profile.tenant_id as string,
+    userId: profile.id as string,
+  }
+  const caseId = (input.case_id ?? '').trim()
+  if (!caseId) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  // Fetch the case so we know its project_id (needed to validate that the
+  // chosen account belongs to the same project).
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, project_id, paid_from_account_id')
+    .eq('id', caseId)
+    .maybeSingle()
+  if (!kase || (kase as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'الطلب غير موجود.' }
+  }
+
+  let newLabel: string | null = null
+  if (input.account_id) {
+    const { data: account } = await svc
+      .from('dsb_project_accounts')
+      .select('id, tenant_id, project_id, label')
+      .eq('id', input.account_id)
+      .maybeSingle()
+    if (!account || (account as { tenant_id: string }).tenant_id !== caller.tenantId) {
+      return { ok: false, error: 'الحساب غير موجود.' }
+    }
+    // Defense against tampering: the picked account must belong to the
+    // case's project, not some other project the caller can see.
+    if ((account as { project_id: string }).project_id !== (kase as { project_id: string }).project_id) {
+      return { ok: false, error: 'الحساب المختار لا ينتمي إلى مشروع هذا الطلب.' }
+    }
+    newLabel = (account as { label: string }).label
+  }
+
+  const { error } = await svc
+    .from('dsb_cases')
+    .update({ paid_from_account_id: input.account_id ?? null })
+    .eq('id', caseId)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: caseId,
+    event: 'paid_from_account_set',
+    actor_user_id: caller.userId,
+    notes: newLabel
+      ? `تحديد حساب الدفع: ${newLabel}`
+      : 'إزالة حساب الدفع',
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath('/app/disbursements/archive')
+  revalidatePath(`/app/disbursements/${caseId}`)
+  return { ok: true }
+}

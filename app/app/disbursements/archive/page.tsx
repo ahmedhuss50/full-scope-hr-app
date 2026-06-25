@@ -35,6 +35,7 @@ function fmtSar(amount: number | null): string {
 
 type ProjectLite = { id: string; code: string; name_ar: string }
 type DeveloperLite = { id: string; company_name_ar: string }
+type PaidFromLite = { id: string; label: string }
 
 type DeliveredRow = {
   id: string
@@ -45,8 +46,10 @@ type DeliveredRow = {
   delivered_by_user_id: string | null
   recipient_name: string | null
   recipient_phone: string | null
+  paid_from_account_id: string | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
+  paid_from: PaidFromLite | PaidFromLite[] | null
 }
 
 function single<T>(maybe: T | T[] | null | undefined): T | null {
@@ -139,8 +142,10 @@ export default async function ArchivePage({
     .select(
       `id, case_number, voucher_number_text, amount_sar, delivered_at,
        delivered_by_user_id, recipient_name, recipient_phone,
+       paid_from_account_id,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
-       developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
+       developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar),
+       paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label)`,
     )
     .eq('tenant_id', tenantId)
     .eq('status', 'delivered')
@@ -175,6 +180,32 @@ export default async function ArchivePage({
       .in('id', delivererIds)
     for (const u of (users ?? []) as { id: string; full_name: string | null }[]) {
       delivererNameById.set(u.id, u.full_name ?? '—')
+    }
+  }
+
+  // For the inline paid-from picker we need the full list of accounts
+  // available to each row's project. We do a single bulk fetch over all
+  // distinct projects, then group by project_id.
+  const distinctProjectIds = Array.from(
+    new Set(
+      cases
+        .map((c) => single(c.project)?.id)
+        .filter((x): x is string => !!x),
+    ),
+  )
+  const accountsByProject = new Map<string, Array<{ id: string; label: string }>>()
+  if (distinctProjectIds.length > 0) {
+    const { data: allAccounts } = await svc
+      .from('dsb_project_accounts')
+      .select('id, project_id, label, is_active')
+      .eq('tenant_id', tenantId)
+      .in('project_id', distinctProjectIds)
+      .eq('is_active', true)
+      .order('label', { ascending: true })
+    for (const a of (allAccounts ?? []) as Array<{ id: string; project_id: string; label: string }>) {
+      const list = accountsByProject.get(a.project_id) ?? []
+      list.push({ id: a.id, label: a.label })
+      accountsByProject.set(a.project_id, list)
     }
   }
 
@@ -247,6 +278,7 @@ export default async function ArchivePage({
                   <Th>العميل</Th>
                   <Th>رقم السند</Th>
                   <Th>المبلغ</Th>
+                  <Th>حساب الدفع</Th>
                   <Th>المستلم</Th>
                   <Th>وقت التسليم</Th>
                   <Th>سلَّم</Th>
@@ -257,9 +289,15 @@ export default async function ArchivePage({
                 {cases.map((c) => {
                   const project = single(c.project)
                   const developer = single(c.developer)
+                  const paidFrom = single(c.paid_from)
                   const deliverer = c.delivered_by_user_id
                     ? delivererNameById.get(c.delivered_by_user_id) ?? '—'
                     : '—'
+                  // Account options for THIS case's project. If the project
+                  // has no accounts (or was deleted), this is just an empty
+                  // array — the row component renders a friendly placeholder
+                  // in that case.
+                  const projectAccounts = project ? accountsByProject.get(project.id) ?? [] : []
                   return (
                     <EditableArchiveRow
                       key={c.id}
@@ -276,6 +314,13 @@ export default async function ArchivePage({
                       // Viewer is read-only; staff + deliverer can edit
                       // the recipient name / delivery time inline.
                       canEdit={['employee', 'supervisor', 'owner', 'deliverer'].includes(dsbRole ?? '')}
+                      paidFromAccountId={c.paid_from_account_id}
+                      // If the FK was nulled out by a deleted account,
+                      // paid_from will be null even when paid_from_account_id
+                      // is non-null in some race conditions — we display "—"
+                      // in either case via the row's fallback.
+                      paidFromLabel={paidFrom?.label ?? null}
+                      accountOptions={projectAccounts}
                     />
                   )
                 })}

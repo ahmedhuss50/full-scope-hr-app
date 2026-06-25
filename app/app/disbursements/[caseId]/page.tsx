@@ -55,6 +55,8 @@ type CaseStatus =
   | 'delivered'
   | 'cancelled'
 
+type PaidFromLite = { id: string; label: string }
+
 type CaseRow = {
   id: string
   case_number: string
@@ -79,6 +81,7 @@ type CaseRow = {
   recipient_phone: string | null
   recipient_notes: string | null
   delivery_notes: string | null
+  paid_from_account_id: string | null
   project:
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
@@ -87,6 +90,7 @@ type CaseRow = {
     | { id: string; company_name_ar: string; bank_name: string | null; bank_account: string | null; bank_iban: string | null }
     | { id: string; company_name_ar: string; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
     | null
+  paid_from: PaidFromLite | PaidFromLite[] | null
 }
 
 function single<T>(maybe: T | T[] | null | undefined): T | null {
@@ -117,9 +121,10 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
-             developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban)`)
+             developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
+             paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label)`)
     .eq('tenant_id', tenantId)
     .eq('id', params.caseId)
     .maybeSingle()
@@ -133,6 +138,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const project = single(kase.project)
   const developer = single(kase.developer)
+  const paidFromAccount = single(kase.paid_from)
   const pill = statusPill(kase.status)
 
   // Include version-tracking fields: superseded_at filters CURRENT (active) vs
@@ -488,6 +494,10 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                 {kase.recipient_phone && (
                   <Detail label="رقم الجوال" value={kase.recipient_phone} />
                 )}
+                {/* paid_from_account_id may be non-null but the join returns
+                    null if the account was later deleted (FK is ON DELETE
+                    SET NULL — see migration 048). Display "—" gracefully. */}
+                <Detail label="حساب الدفع" value={paidFromAccount?.label ?? '—'} />
               </div>
               {kase.recipient_notes && (
                 <div className="pt-3 border-t border-slate-100">

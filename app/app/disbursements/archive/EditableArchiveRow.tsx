@@ -17,6 +17,8 @@ import { updateDeliveryInfo } from './actions'
  * `canEdit` is decided on the server (passed down from the page). Viewer
  * never sees the pencil; deliverer + write roles do.
  */
+type PaidFromOption = { id: string; label: string }
+
 export function EditableArchiveRow({
   caseId,
   caseNumber,
@@ -29,6 +31,9 @@ export function EditableArchiveRow({
   deliveredAt,
   delivererName,
   canEdit,
+  paidFromAccountId,
+  paidFromLabel,
+  accountOptions,
 }: {
   caseId: string
   caseNumber: string
@@ -41,6 +46,13 @@ export function EditableArchiveRow({
   deliveredAt: string | null
   delivererName: string
   canEdit: boolean
+  // The account currently linked to this case (null if cleared OR if the
+  // account was deleted — the FK is ON DELETE SET NULL).
+  paidFromAccountId: string | null
+  paidFromLabel: string | null
+  // The full list of accounts available for this case's project. Empty
+  // array if the project hasn't had any accounts configured yet.
+  accountOptions: PaidFromOption[]
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -53,11 +65,13 @@ export function EditableArchiveRow({
   // Edit doesn't carry over the previous (possibly half-typed) values.
   const [nameDraft, setNameDraft] = useState<string>(recipientName ?? '')
   const [dateDraft, setDateDraft] = useState<string>(toLocalDateTimeInput(deliveredAt))
+  const [paidFromDraft, setPaidFromDraft] = useState<string>(paidFromAccountId ?? '')
 
   function startEdit() {
     setError(null)
     setNameDraft(recipientName ?? '')
     setDateDraft(toLocalDateTimeInput(deliveredAt))
+    setPaidFromDraft(paidFromAccountId ?? '')
     setEditing(true)
   }
 
@@ -77,6 +91,7 @@ export function EditableArchiveRow({
       case_id: caseId,
       recipient_name: nameDraft,
       delivered_at: isoDelivered,
+      paid_from_account_id: paidFromDraft || null,
     })
     setSaving(false)
     if (!res.ok) {
@@ -114,6 +129,31 @@ export function EditableArchiveRow({
       </Td>
       <Td>
         <span className="font-mono">{amountLabel}</span>
+      </Td>
+
+      {/* Paid-from account cell — editable */}
+      <Td>
+        {editing ? (
+          accountOptions.length === 0 ? (
+            <span className="text-[11px] text-slate-500 italic">
+              لا توجد حسابات لهذا المشروع.
+            </span>
+          ) : (
+            <select
+              value={paidFromDraft}
+              onChange={(e) => setPaidFromDraft(e.target.value)}
+              disabled={saving}
+              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
+            >
+              <option value="">— غير محدد —</option>
+              {accountOptions.map((o) => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+          )
+        ) : (
+          <span className="text-slate-900">{paidFromLabel ?? '—'}</span>
+        )}
       </Td>
 
       {/* Recipient cell — editable */}

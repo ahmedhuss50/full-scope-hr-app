@@ -21,6 +21,7 @@
     "react-dom": "^18.3.1",
     "resend": "^3.2.0",
     "signature_pad": "^5.0.4",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

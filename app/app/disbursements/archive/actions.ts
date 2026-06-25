@@ -47,6 +47,7 @@ export interface UpdateDeliveryInfoInput {
   case_id: string
   recipient_name?: string | null
   delivered_at?: string | null   // ISO timestamp (UTC) from client
+  paid_from_account_id?: string | null
 }
 
 export async function updateDeliveryInfo(
@@ -76,7 +77,15 @@ export async function updateDeliveryInfo(
       patch.delivered_at = d.toISOString()
     }
   }
-  if (Object.keys(patch).length === 0) {
+  // paid_from_account_id needs an extra validation step (account must belong
+  // to the case's project) — defer setting it on the patch until after we
+  // know the case row.
+  const paidFromTouched = input.paid_from_account_id !== undefined
+  const desiredPaidFromId = paidFromTouched
+    ? ((input.paid_from_account_id ?? null) || null)
+    : undefined
+
+  if (Object.keys(patch).length === 0 && !paidFromTouched) {
     return { ok: true } // nothing to do
   }
 
@@ -85,13 +94,33 @@ export async function updateDeliveryInfo(
   // let archive edits resurrect a not-yet-delivered case.
   const { data: kase } = await svc
     .from('dsb_cases')
-    .select('id, status')
+    .select('id, status, project_id')
     .eq('tenant_id', caller.tenantId)
     .eq('id', input.case_id)
     .maybeSingle()
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
   if ((kase.status as string) !== 'delivered') {
     return { ok: false, error: 'هذا الإجراء متاح فقط للطلبات المسلَّمة.' }
+  }
+
+  // Validate paid_from_account_id against the case's project before saving.
+  let paidFromLabel: string | null = null
+  if (paidFromTouched) {
+    if (desiredPaidFromId) {
+      const { data: account } = await svc
+        .from('dsb_project_accounts')
+        .select('id, tenant_id, project_id, label')
+        .eq('id', desiredPaidFromId)
+        .maybeSingle()
+      if (!account || (account as { tenant_id: string }).tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'الحساب غير موجود.' }
+      }
+      if ((account as { project_id: string }).project_id !== (kase as { project_id: string }).project_id) {
+        return { ok: false, error: 'الحساب المختار لا ينتمي إلى مشروع هذا الطلب.' }
+      }
+      paidFromLabel = (account as { label: string }).label
+    }
+    patch.paid_from_account_id = desiredPaidFromId ?? null
   }
 
   const { error } = await svc
@@ -105,10 +134,15 @@ export async function updateDeliveryInfo(
   const changedBits: string[] = []
   if ('recipient_name' in patch) changedBits.push(`اسم المستلم: ${patch.recipient_name ?? '—'}`)
   if ('delivered_at' in patch) changedBits.push(`وقت التسليم: ${patch.delivered_at ?? '—'}`)
+  if (paidFromTouched) {
+    changedBits.push(`حساب الدفع: ${paidFromLabel ?? '—'}`)
+  }
   await svc.from('dsb_audit_log').insert({
     tenant_id: caller.tenantId,
     case_id: input.case_id,
-    event: 'delivery_info_updated',
+    event: paidFromTouched && Object.keys(patch).length === 1
+      ? 'paid_from_account_set'
+      : 'delivery_info_updated',
     actor_user_id: caller.userId,
     notes: `تحديث بيانات التسليم — ${changedBits.join(' · ')}`,
     occurred_at: new Date().toISOString(),

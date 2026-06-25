@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { FolderKanban, FileText, Plus } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
+import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
 
 export const dynamic = 'force-dynamic'
 
@@ -187,6 +188,15 @@ export default async function ProjectDetailPage({
     .order('created_at', { ascending: false })
   const cases = (casesData ?? []) as CaseRow[]
 
+  // Fetch per-project payment accounts (admin-managed list shown to owners).
+  const { data: accountsData } = await svc
+    .from('dsb_project_accounts')
+    .select('id, label, account_number, bank_name, iban')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+    .order('label', { ascending: true })
+  const projectAccounts = (accountsData ?? []) as ProjectAccount[]
+
   // Group by pipeline column.
   const byStatus = new Map<string, CaseRow[]>()
   for (const col of PIPELINE_COLUMNS) byStatus.set(col.key, [])
@@ -302,6 +312,14 @@ export default async function ProjectDetailPage({
           </div>
         )}
       </section>
+
+      {/* Per-project payment accounts — owner-only */}
+      {dsbRole === 'owner' && (
+        <ProjectAccountsSection
+          projectId={project.id}
+          initialAccounts={projectAccounts}
+        />
+      )}
 
       {/* Pipeline */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
