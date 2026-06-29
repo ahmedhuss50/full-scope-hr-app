@@ -453,6 +453,30 @@ export default async function DisbursementsAdminPage({
           </Link>
         </div>
       </section>
+
+      {/* Bulk accounts importer — owner-only quick link. */}
+      {isOwner && (
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="space-y-1 min-w-0 flex-1">
+              <h2 className="serif font-bold text-lg text-slate-900">
+                استيراد حسابات الدفع
+              </h2>
+              <p className="text-xs text-slate-600 max-w-2xl">
+                ارفع ملف Excel واحدًا يحتوي على حسابات الدفع لجميع المشاريع دفعة واحدة.
+                سيتم مطابقة كل صف مع المشروع الصحيح تلقائيًا.
+              </p>
+            </div>
+            <Link
+              href="/app/disbursements/admin/import-accounts"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+            >
+              فتح أداة الاستيراد
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
+            </Link>
+          </div>
+        </section>
+      )}
     </div>
   )
 }
