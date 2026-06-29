@@ -81,12 +81,10 @@ export function AccountsImporter({
     setError(null)
     setMode('parsing')
     try {
-      // Dynamic import so xlsx isn't in the initial bundle.
-      const moduleName = 'xlsx'
+      // Dynamic import so xlsx isn't in the initial bundle. Next.js picks
+      // this up at build time and splits it into a separate async chunk.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const XLSX: any = await import(/* webpackIgnore: true */ moduleName).catch(async () => {
-        return await import('xlsx')
-      })
+      const XLSX: any = await import('xlsx')
       const buf = await file.arrayBuffer()
       const wb = XLSX.read(buf, { type: 'array' })
       // Read the first non-empty sheet.
