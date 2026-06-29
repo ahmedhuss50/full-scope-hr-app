@@ -358,6 +358,97 @@ export async function deleteProjectAccount(
   if (error) return { ok: false, error: error.message }
 
   revalidatePath(`/app/disbursements/admin/projects/${(account as { project_id: string }).project_id}`)
+  revalidatePath('/app/disbursements/admin/accounts')
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
+// updateProjectAccount — owner only. Lets the owner re-assign an account to
+// a different project (changing the client by extension, since the project
+// belongs to a developer), or tweak its label / number / bank / iban. Used
+// by the tenant-wide accounts list at /admin/accounts.
+//
+// Note: if the project changes, any cases that currently reference this
+// account via dsb_cases.paid_from_account_id will still reference it — they
+// just become "this case was paid out of an account that's now associated
+// with a different project." We don't try to migrate paid_from_account_id;
+// the owner is editing the account's true metadata.
+// ----------------------------------------------------------------------------
+
+export interface UpdateProjectAccountInput {
+  id: string
+  // Any subset of these can be sent. undefined = leave alone. null on the
+  // text fields = clear. project_id is required-on-send (can't be cleared).
+  project_id?: string
+  label?: string
+  account_number?: string | null
+  bank_name?: string | null
+  iban?: string | null
+}
+
+export async function updateProjectAccount(
+  input: UpdateProjectAccountInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveOwner()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const id = (input.id ?? '').trim()
+  if (!id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: existing } = await svc
+    .from('dsb_project_accounts')
+    .select('id, tenant_id, project_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!existing || (existing as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'الحساب غير موجود.' }
+  }
+  const oldProjectId = (existing as { project_id: string }).project_id
+
+  // Build the patch, validating each field as we go.
+  const patch: Record<string, string | null> = {}
+  if (input.project_id !== undefined) {
+    const newProjectId = input.project_id.trim()
+    if (!newProjectId) return { ok: false, error: 'المشروع مطلوب.' }
+    // Validate the new project belongs to the same tenant.
+    const { data: proj } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id')
+      .eq('id', newProjectId)
+      .maybeSingle()
+    if (!proj || (proj as { tenant_id: string }).tenant_id !== caller.tenantId) {
+      return { ok: false, error: 'المشروع المختار لا ينتمي لمؤسستك.' }
+    }
+    patch.project_id = newProjectId
+  }
+  if (input.label !== undefined) {
+    const v = input.label.trim()
+    if (!v) return { ok: false, error: 'اسم الحساب مطلوب.' }
+    patch.label = v
+  }
+  if (input.account_number !== undefined) {
+    patch.account_number = (input.account_number ?? '').trim() || null
+  }
+  if (input.bank_name !== undefined) {
+    patch.bank_name = (input.bank_name ?? '').trim() || null
+  }
+  if (input.iban !== undefined) {
+    patch.iban = (input.iban ?? '').trim().toUpperCase() || null
+  }
+  if (Object.keys(patch).length === 0) return { ok: true } // nothing to do
+
+  const { error } = await svc
+    .from('dsb_project_accounts')
+    .update(patch)
+    .eq('id', id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/accounts')
+  revalidatePath(`/app/disbursements/admin/projects/${oldProjectId}`)
+  if (patch.project_id && patch.project_id !== oldProjectId) {
+    revalidatePath(`/app/disbursements/admin/projects/${patch.project_id}`)
+  }
   return { ok: true }
 }
 

@@ -454,24 +454,31 @@ export default async function DisbursementsAdminPage({
         </div>
       </section>
 
-      {/* Bulk accounts importer — owner-only quick link. */}
+      {/* Accounts management — owner-only. Import bulk + manage existing. */}
       {isOwner && (
-        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="space-y-1 min-w-0 flex-1">
-              <h2 className="serif font-bold text-lg text-slate-900">
-                استيراد حسابات الدفع
-              </h2>
-              <p className="text-xs text-slate-600 max-w-2xl">
-                ارفع ملف Excel واحدًا يحتوي على حسابات الدفع لجميع المشاريع دفعة واحدة.
-                سيتم مطابقة كل صف مع المشروع الصحيح تلقائيًا.
-              </p>
-            </div>
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
+          <div className="space-y-1">
+            <h2 className="serif font-bold text-lg text-slate-900">
+              حسابات الدفع
+            </h2>
+            <p className="text-xs text-slate-600 max-w-2xl">
+              استيراد حسابات الدفع من ملف Excel، أو إدارة القائمة الكاملة وتعديل
+              المشروع/العميل لكل حساب.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
             <Link
               href="/app/disbursements/admin/import-accounts"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
             >
               فتح أداة الاستيراد
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
+            </Link>
+            <Link
+              href="/app/disbursements/admin/accounts"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              إدارة الحسابات
               <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
             </Link>
           </div>
