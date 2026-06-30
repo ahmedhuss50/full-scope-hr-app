@@ -116,20 +116,22 @@ export async function updateDeliveryInfo(
     return { ok: false, error: 'هذا الإجراء متاح فقط للطلبات المسلَّمة.' }
   }
 
-  // Validate paid_from_account_id against the case's project before saving.
+  // Validate paid_from_account_id belongs to the same tenant before saving.
+  // (We deliberately removed the "must belong to this case's project" check
+  // — accounts are tenant-level resources, and importer name-matching can
+  // route them to a slightly-different project. The owner picks whatever
+  // account they actually paid out of, regardless of which project the
+  // account is administratively assigned to.)
   let paidFromLabel: string | null = null
   if (paidFromTouched) {
     if (desiredPaidFromId) {
       const { data: account } = await svc
         .from('dsb_project_accounts')
-        .select('id, tenant_id, project_id, label')
+        .select('id, tenant_id, label')
         .eq('id', desiredPaidFromId)
         .maybeSingle()
       if (!account || (account as { tenant_id: string }).tenant_id !== caller.tenantId) {
         return { ok: false, error: 'الحساب غير موجود.' }
-      }
-      if ((account as { project_id: string }).project_id !== (kase as { project_id: string }).project_id) {
-        return { ok: false, error: 'الحساب المختار لا ينتمي إلى مشروع هذا الطلب.' }
       }
       paidFromLabel = (account as { label: string }).label
     }

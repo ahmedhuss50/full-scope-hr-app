@@ -142,7 +142,7 @@ export function EditableArchiveRow({
         {editing ? (
           accountOptions.length === 0 ? (
             <span className="text-[11px] text-slate-500 italic">
-              لا توجد حسابات لهذا المشروع.
+              لم تُرفع أي حسابات بعد. أضفها من «إدارة الحسابات».
             </span>
           ) : (
             <select

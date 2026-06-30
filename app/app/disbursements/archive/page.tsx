@@ -187,27 +187,54 @@ export default async function ArchivePage({
   // For the inline paid-from picker we need the full list of accounts
   // available to each row's project. We do a single bulk fetch over all
   // distinct projects, then group by project_id.
-  const distinctProjectIds = Array.from(
-    new Set(
-      cases
-        .map((c) => single(c.project)?.id)
-        .filter((x): x is string => !!x),
-    ),
-  )
-  const accountsByProject = new Map<string, Array<{ id: string; label: string }>>()
-  if (distinctProjectIds.length > 0) {
-    const { data: allAccounts } = await svc
-      .from('dsb_project_accounts')
-      .select('id, project_id, label, is_active')
-      .eq('tenant_id', tenantId)
-      .in('project_id', distinctProjectIds)
-      .eq('is_active', true)
-      .order('label', { ascending: true })
-    for (const a of (allAccounts ?? []) as Array<{ id: string; project_id: string; label: string }>) {
-      const list = accountsByProject.get(a.project_id) ?? []
-      list.push({ id: a.id, label: a.label })
-      accountsByProject.set(a.project_id, list)
+  // Fetch EVERY tenant account (not just the ones for the cases' projects).
+  // Each option is labeled "{project} · {label}" so the user can pick any
+  // account regardless of which project it's administratively assigned to —
+  // important when the importer routed accounts to a slightly-different
+  // project name and the user needs the dropdown to surface them anyway.
+  // Server-side validation in updateDeliveryInfo no longer requires the
+  // account to belong to the case's project; tenant-membership is enough.
+  const { data: allAccountsData } = await svc
+    .from('dsb_project_accounts')
+    .select(`id, project_id, label, is_active,
+             project:dsb_projects!dsb_project_accounts_project_id_fkey(id, name_ar)`)
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true)
+    .order('label', { ascending: true })
+  type AccountWithProject = {
+    id: string
+    project_id: string
+    label: string
+    project: { id: string; name_ar: string } | { id: string; name_ar: string }[] | null
+  }
+  const allTenantAccounts: Array<{ id: string; label: string; projectId: string; projectName: string }> =
+    ((allAccountsData ?? []) as AccountWithProject[]).map((a) => {
+      const proj = single(a.project)
+      return {
+        id: a.id,
+        label: a.label,
+        projectId: a.project_id,
+        projectName: proj?.name_ar ?? '—',
+      }
+    })
+
+  /**
+   * For a given case, build the dropdown options: account list with the
+   * case's project's accounts FIRST (so the common case is one click), the
+   * rest after. Each option's display label includes the project so the user
+   * can disambiguate. Labels stay in the source label field; project name is
+   * prefixed only in the displayLabel.
+   */
+  function accountOptionsForCaseProject(caseProjectId: string | null) {
+    if (!caseProjectId) return allTenantAccounts.map((a) => ({ id: a.id, label: `${a.projectName} · ${a.label}` }))
+    const matching: Array<{ id: string; label: string }> = []
+    const others: Array<{ id: string; label: string }> = []
+    for (const a of allTenantAccounts) {
+      const display = `${a.projectName} · ${a.label}`
+      if (a.projectId === caseProjectId) matching.push({ id: a.id, label: display })
+      else others.push({ id: a.id, label: display })
     }
+    return [...matching, ...others]
   }
 
   // ---------- KPI strip ----------
@@ -295,11 +322,10 @@ export default async function ArchivePage({
                   const deliverer = c.delivered_by_user_id
                     ? delivererNameById.get(c.delivered_by_user_id) ?? '—'
                     : '—'
-                  // Account options for THIS case's project. If the project
-                  // has no accounts (or was deleted), this is just an empty
-                  // array — the row component renders a friendly placeholder
-                  // in that case.
-                  const projectAccounts = project ? accountsByProject.get(project.id) ?? [] : []
+                  // All tenant accounts, with this case's project's accounts
+                  // sorted FIRST. Lets the user pick any uploaded account
+                  // regardless of which project the importer assigned it to.
+                  const projectAccounts = accountOptionsForCaseProject(project?.id ?? null)
                   return (
                     <EditableArchiveRow
                       key={c.id}
