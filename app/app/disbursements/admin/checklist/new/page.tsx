@@ -34,6 +34,26 @@ export default async function NewChecklistItemPage() {
     .maybeSingle()
   const nextOrder = ((maxRow?.order_index as number | null) ?? 0) + 1
 
+  // Tenant clients + projects, for the scope selector.
+  const [{ data: devsRaw }, { data: projsRaw }] = await Promise.all([
+    svc
+      .from('dsb_developers')
+      .select('id, company_name_ar, status')
+      .eq('tenant_id', tenantId)
+      .order('company_name_ar', { ascending: true }),
+    svc
+      .from('dsb_projects')
+      .select('id, code, name_ar, status')
+      .eq('tenant_id', tenantId)
+      .order('name_ar', { ascending: true }),
+  ])
+  const developers = ((devsRaw ?? []) as Array<{ id: string; company_name_ar: string; status: string | null }>)
+    .filter((d) => d.status !== 'archived')
+    .map((d) => ({ id: d.id, label: d.company_name_ar }))
+  const projects = ((projsRaw ?? []) as Array<{ id: string; code: string; name_ar: string; status: string | null }>)
+    .filter((p) => p.status !== 'archived')
+    .map((p) => ({ id: p.id, label: `${p.name_ar} (${p.code})` }))
+
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
       <header className="space-y-2">
@@ -49,7 +69,11 @@ export default async function NewChecklistItemPage() {
         </p>
       </header>
 
-      <NewChecklistItemForm defaultOrderIndex={nextOrder} />
+      <NewChecklistItemForm
+        defaultOrderIndex={nextOrder}
+        developers={developers}
+        projects={projects}
+      />
     </div>
   )
 }

@@ -4,7 +4,18 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createChecklistItem } from './actions'
 
-export function NewChecklistItemForm({ defaultOrderIndex }: { defaultOrderIndex: number }) {
+type Option = { id: string; label: string }
+type Scope = 'global' | 'developer' | 'project'
+
+export function NewChecklistItemForm({
+  defaultOrderIndex,
+  developers,
+  projects,
+}: {
+  defaultOrderIndex: number
+  developers: Option[]
+  projects: Option[]
+}) {
   const router = useRouter()
 
   const [code, setCode] = useState('')
@@ -12,6 +23,9 @@ export function NewChecklistItemForm({ defaultOrderIndex }: { defaultOrderIndex:
   const [promptEn, setPromptEn] = useState('')
   const [orderIndex, setOrderIndex] = useState<number>(defaultOrderIndex)
   const [active, setActive] = useState(true)
+  const [scope, setScope] = useState<Scope>('global')
+  const [developerId, setDeveloperId] = useState<string>('')
+  const [projectId, setProjectId] = useState<string>('')
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,6 +51,14 @@ export function NewChecklistItemForm({ defaultOrderIndex }: { defaultOrderIndex:
       setError('النص بالإنجليزية مطلوب.')
       return
     }
+    if (scope === 'developer' && !developerId) {
+      setError('اختر العميل المرتبط بالبند.')
+      return
+    }
+    if (scope === 'project' && !projectId) {
+      setError('اختر المشروع المرتبط بالبند.')
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -46,6 +68,8 @@ export function NewChecklistItemForm({ defaultOrderIndex }: { defaultOrderIndex:
         prompt_en: promptEn.trim(),
         order_index: Number.isFinite(orderIndex) ? orderIndex : 0,
         active,
+        developer_id: scope === 'developer' ? developerId : null,
+        project_id: scope === 'project' ? projectId : null,
       })
       if (!res.ok) {
         setError(res.error)
@@ -114,6 +138,82 @@ export function NewChecklistItemForm({ defaultOrderIndex }: { defaultOrderIndex:
           maxLength={500}
         />
       </div>
+
+      <fieldset className="space-y-2 rounded-lg border border-slate-200 p-4">
+        <legend className="text-sm font-semibold text-slate-700 px-1">نطاق البند</legend>
+        <p className="text-[11px] text-slate-500 -mt-1">
+          اختر أين يظهر البند: في جميع الطلبات، أو فقط مع عميل معيّن، أو فقط مع مشروع معيّن.
+        </p>
+        <div className="space-y-2 pt-1">
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-800">
+            <input
+              type="radio"
+              name="scope"
+              value="global"
+              checked={scope === 'global'}
+              onChange={() => setScope('global')}
+              className="w-4 h-4 border-slate-300 text-teal-600 focus:ring-teal-500"
+            />
+            عام (لجميع الطلبات)
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-800">
+            <input
+              type="radio"
+              name="scope"
+              value="developer"
+              checked={scope === 'developer'}
+              onChange={() => setScope('developer')}
+              className="w-4 h-4 border-slate-300 text-teal-600 focus:ring-teal-500"
+              disabled={developers.length === 0}
+            />
+            خاص بعميل
+            {developers.length === 0 && (
+              <span className="text-[11px] text-slate-400">(لا يوجد عملاء)</span>
+            )}
+          </label>
+          {scope === 'developer' && (
+            <select
+              required
+              className={inputCls + ' mr-6'}
+              value={developerId}
+              onChange={(e) => setDeveloperId(e.target.value)}
+            >
+              <option value="">— اختر العميل —</option>
+              {developers.map((d) => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-800">
+            <input
+              type="radio"
+              name="scope"
+              value="project"
+              checked={scope === 'project'}
+              onChange={() => setScope('project')}
+              className="w-4 h-4 border-slate-300 text-teal-600 focus:ring-teal-500"
+              disabled={projects.length === 0}
+            />
+            خاص بمشروع
+            {projects.length === 0 && (
+              <span className="text-[11px] text-slate-400">(لا توجد مشاريع)</span>
+            )}
+          </label>
+          {scope === 'project' && (
+            <select
+              required
+              className={inputCls + ' mr-6'}
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+            >
+              <option value="">— اختر المشروع —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </fieldset>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>

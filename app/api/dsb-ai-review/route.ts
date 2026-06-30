@@ -187,7 +187,7 @@ export async function POST(req: Request) {
     const { data: caseRow } = await svc
       .from('dsb_cases')
       .select(`
-        id, tenant_id, case_number,
+        id, tenant_id, case_number, project_id, developer_id,
         uploads:dsb_uploads(id, filename, storage_path, storage_bucket)
       `)
       .eq('id', case_id)
@@ -200,16 +200,27 @@ export async function POST(req: Request) {
       return jsonError('case has no uploads', 400)
     }
     const upload = uploads[0] as { storage_path: string; storage_bucket: string | null }
+    const caseProjectId = (caseRow as { project_id: string | null }).project_id ?? null
+    const caseDeveloperId = (caseRow as { developer_id: string | null }).developer_id ?? null
 
+    // Items visible to this case: globals (no scope) plus any items scoped to
+    // this case's project/developer. See [caseId]/page.tsx for the matching
+    // visibility logic.
     const { data: checklistRaw } = await svc
       .from('dsb_checklist_items')
-      .select('id, code, prompt_ar, order_index')
+      .select('id, code, prompt_ar, order_index, project_id, developer_id')
       .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
       .eq('active', true)
       .order('order_index', { ascending: true })
     const checklistItems = ((checklistRaw ?? []) as Array<{
-      id: string; code: string; prompt_ar: string; order_index: number
-    }>)
+      id: string; code: string; prompt_ar: string; order_index: number;
+      project_id: string | null; developer_id: string | null
+    }>).filter((r) => {
+      if (r.project_id === null && r.developer_id === null) return true
+      if (r.developer_id && r.developer_id === caseDeveloperId) return true
+      if (r.project_id && r.project_id === caseProjectId) return true
+      return false
+    })
     if (checklistItems.length === 0) {
       return jsonError('no active checklist items configured', 400)
     }

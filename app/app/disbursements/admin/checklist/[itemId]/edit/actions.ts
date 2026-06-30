@@ -35,6 +35,10 @@ export interface UpdateChecklistItemInput {
   prompt_en: string
   order_index: number
   active: boolean
+  // Scope (added 052). At most one of the two may be set. Both null = global.
+  // Omit (undefined) to leave the existing scope untouched.
+  project_id?: string | null
+  developer_id?: string | null
 }
 
 export type UpdateChecklistItemResult = { ok: true } | { ok: false; error: string }
@@ -50,6 +54,11 @@ export async function updateChecklistItem(
   const promptEn = (input.prompt_en ?? '').trim()
   const orderIndex = Number.isFinite(input.order_index) ? Math.trunc(input.order_index) : 0
   const active = !!input.active
+  // Distinguish "leave alone" (undefined) from "explicitly clear" (null).
+  const scopeProvided =
+    input.project_id !== undefined || input.developer_id !== undefined
+  const projectId = input.project_id ?? null
+  const developerId = input.developer_id ?? null
 
   if (!code) return { ok: false, error: 'الرمز مطلوب.' }
   if (!/^[A-Z][A-Z0-9_]*$/.test(code)) {
@@ -58,6 +67,9 @@ export async function updateChecklistItem(
   if (!promptAr) return { ok: false, error: 'النص بالعربية مطلوب.' }
   if (!promptEn) return { ok: false, error: 'النص بالإنجليزية مطلوب.' }
   if (orderIndex < 0) return { ok: false, error: 'الترتيب يجب أن يكون صفرًا أو أكبر.' }
+  if (scopeProvided && projectId && developerId) {
+    return { ok: false, error: 'لا يمكن ربط البند بعميل ومشروع في نفس الوقت.' }
+  }
 
   const svc = createSupabaseService()
 
@@ -75,6 +87,28 @@ export async function updateChecklistItem(
   }
   const isDefaultItem = itemTenant === null
 
+  // Cross-tenant scope check: any scope target must belong to caller's tenant.
+  if (scopeProvided && projectId) {
+    const { data: proj } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id')
+      .eq('id', projectId)
+      .maybeSingle()
+    if (!proj || (proj.tenant_id as string) !== caller.tenantId) {
+      return { ok: false, error: 'المشروع غير موجود أو لا يخص مكتبك.' }
+    }
+  }
+  if (scopeProvided && developerId) {
+    const { data: dev } = await svc
+      .from('dsb_developers')
+      .select('id, tenant_id')
+      .eq('id', developerId)
+      .maybeSingle()
+    if (!dev || (dev.tenant_id as string) !== caller.tenantId) {
+      return { ok: false, error: 'العميل غير موجود أو لا يخص مكتبك.' }
+    }
+  }
+
   // Uniqueness check (excluding self) — scoped to same tenant bucket as the item.
   const clashQuery = svc
     .from('dsb_checklist_items')
@@ -87,15 +121,21 @@ export async function updateChecklistItem(
   if (clashRes.data) return { ok: false, error: 'يوجد بند بهذا الرمز بالفعل.' }
 
   // Build update; only filter by tenant if it's a tenant-specific item.
+  const updatePayload: Record<string, unknown> = {
+    code,
+    prompt_ar: promptAr,
+    prompt_en: promptEn,
+    order_index: orderIndex,
+    active,
+  }
+  if (scopeProvided) {
+    updatePayload.project_id = projectId
+    updatePayload.developer_id = developerId
+  }
+
   const updateQuery = svc
     .from('dsb_checklist_items')
-    .update({
-      code,
-      prompt_ar: promptAr,
-      prompt_en: promptEn,
-      order_index: orderIndex,
-      active,
-    })
+    .update(updatePayload)
     .eq('id', input.item_id)
   const { error } = isDefaultItem
     ? await updateQuery.is('tenant_id', null)

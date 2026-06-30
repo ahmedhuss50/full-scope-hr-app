@@ -13,6 +13,8 @@ type ChecklistItemRow = {
   prompt_ar: string
   prompt_en: string
   active: boolean
+  project_id: string | null
+  developer_id: string | null
 }
 
 export default async function EditChecklistItemPage({
@@ -40,7 +42,7 @@ export default async function EditChecklistItemPage({
 
   const { data: itemData } = await svc
     .from('dsb_checklist_items')
-    .select('id, tenant_id, code, order_index, prompt_ar, prompt_en, active')
+    .select('id, tenant_id, code, order_index, prompt_ar, prompt_en, active, project_id, developer_id')
     .eq('id', params.itemId)
     .maybeSingle()
 
@@ -49,6 +51,32 @@ export default async function EditChecklistItemPage({
   // Owner can now edit defaults (tenant_id IS NULL) AND own-tenant items.
   // Block only items from OTHER tenants.
   if (item.tenant_id !== null && item.tenant_id !== tenantId) notFound()
+
+  // Scope picker can only target tenant-owned items. Defaults (tenant_id NULL)
+  // stay global and the form will hide the scope picker.
+  const isDefaultItem = item.tenant_id === null
+  let developers: Array<{ id: string; label: string }> = []
+  let projects: Array<{ id: string; label: string }> = []
+  if (!isDefaultItem) {
+    const [{ data: devsRaw }, { data: projsRaw }] = await Promise.all([
+      svc
+        .from('dsb_developers')
+        .select('id, company_name_ar, status')
+        .eq('tenant_id', tenantId)
+        .order('company_name_ar', { ascending: true }),
+      svc
+        .from('dsb_projects')
+        .select('id, code, name_ar, status')
+        .eq('tenant_id', tenantId)
+        .order('name_ar', { ascending: true }),
+    ])
+    developers = ((devsRaw ?? []) as Array<{ id: string; company_name_ar: string; status: string | null }>)
+      .filter((d) => d.status !== 'archived' || d.id === item.developer_id)
+      .map((d) => ({ id: d.id, label: d.company_name_ar }))
+    projects = ((projsRaw ?? []) as Array<{ id: string; code: string; name_ar: string; status: string | null }>)
+      .filter((p) => p.status !== 'archived' || p.id === item.project_id)
+      .map((p) => ({ id: p.id, label: `${p.name_ar} (${p.code})` }))
+  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
@@ -71,7 +99,12 @@ export default async function EditChecklistItemPage({
           prompt_en: item.prompt_en,
           order_index: item.order_index,
           active: item.active,
+          project_id: item.project_id,
+          developer_id: item.developer_id,
         }}
+        isDefaultItem={isDefaultItem}
+        developers={developers}
+        projects={projects}
       />
     </div>
   )

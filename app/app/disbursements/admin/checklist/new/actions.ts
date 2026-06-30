@@ -34,6 +34,10 @@ export interface CreateChecklistItemInput {
   prompt_en: string
   order_index: number
   active: boolean
+  // Scope (added 052). At most one of the two may be set. Both null = global
+  // (applies to every case in the tenant — existing behavior).
+  project_id?: string | null
+  developer_id?: string | null
 }
 
 export type CreateChecklistItemResult =
@@ -51,6 +55,8 @@ export async function createChecklistItem(
   const promptEn = (input.prompt_en ?? '').trim()
   const orderIndex = Number.isFinite(input.order_index) ? Math.trunc(input.order_index) : 0
   const active = !!input.active
+  const projectId = input.project_id ?? null
+  const developerId = input.developer_id ?? null
 
   if (!code) return { ok: false, error: 'الرمز مطلوب.' }
   if (!/^[A-Z][A-Z0-9_]*$/.test(code)) {
@@ -59,8 +65,33 @@ export async function createChecklistItem(
   if (!promptAr) return { ok: false, error: 'النص بالعربية مطلوب.' }
   if (!promptEn) return { ok: false, error: 'النص بالإنجليزية مطلوب.' }
   if (orderIndex < 0) return { ok: false, error: 'الترتيب يجب أن يكون صفرًا أو أكبر.' }
+  if (projectId && developerId) {
+    return { ok: false, error: 'لا يمكن ربط البند بعميل ومشروع في نفس الوقت.' }
+  }
 
   const svc = createSupabaseService()
+
+  // Validate scope target belongs to the caller's tenant.
+  if (projectId) {
+    const { data: proj } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id')
+      .eq('id', projectId)
+      .maybeSingle()
+    if (!proj || (proj.tenant_id as string) !== caller.tenantId) {
+      return { ok: false, error: 'المشروع غير موجود أو لا يخص مكتبك.' }
+    }
+  }
+  if (developerId) {
+    const { data: dev } = await svc
+      .from('dsb_developers')
+      .select('id, tenant_id')
+      .eq('id', developerId)
+      .maybeSingle()
+    if (!dev || (dev.tenant_id as string) !== caller.tenantId) {
+      return { ok: false, error: 'العميل غير موجود أو لا يخص مكتبك.' }
+    }
+  }
 
   // Uniqueness check within tenant.
   const { data: existing } = await svc
@@ -80,6 +111,8 @@ export async function createChecklistItem(
       prompt_en: promptEn,
       order_index: orderIndex,
       active,
+      project_id: projectId,
+      developer_id: developerId,
     })
     .select('id')
     .single()
