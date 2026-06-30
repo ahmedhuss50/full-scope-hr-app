@@ -7,7 +7,11 @@ import { TemplatesIndex, type TemplateRow } from './TemplatesIndex'
 export const dynamic = 'force-dynamic'
 
 const AR_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩']
-export function toArabicDigits(n: number): string {
+// Local helper — NOT exported. Next.js page files only allow a specific
+// set of exports (default component, metadata, dynamic config, etc.);
+// exporting a utility function from a page.tsx fails the build with
+// `"toArabicDigits" is not a valid Page export field`.
+function toArabicDigits(n: number): string {
   return String(n).replace(/\d/g, (d) => AR_DIGITS[Number(d)] ?? d)
 }
 
