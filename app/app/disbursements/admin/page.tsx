@@ -167,13 +167,11 @@ export default async function DisbursementsAdminPage({
     }
   }
 
-  // Count active checklist items (global defaults + tenant-specific).
-  const { data: checklistData } = await svc
-    .from('dsb_checklist_items')
-    .select('id, active')
-    .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
-  const checklistActiveCount = ((checklistData ?? []) as { id: string; active: boolean }[])
-    .filter((r) => r.active).length
+  // Count tenant checklist templates for the admin landing card.
+  const { count: checklistTemplateCount } = await svc
+    .from('dsb_checklist_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
 
   // Counts per project.
   const projectCaseCounts = new Map<string, number>()
@@ -441,11 +439,11 @@ export default async function DisbursementsAdminPage({
         <div className="flex items-center justify-between gap-3 px-5 py-4">
           <div className="inline-flex items-center gap-2 min-w-0">
             <ListChecks className="w-4 h-4 text-slate-500 shrink-0" aria-hidden="true" />
-            <h2 className="serif font-bold text-lg text-slate-900">قائمة المراجعة</h2>
-            <span className="text-xs text-slate-400 font-mono">({checklistActiveCount} نشط)</span>
+            <h2 className="serif font-bold text-lg text-slate-900">قوائم المراجعة</h2>
+            <span className="text-xs text-slate-400 font-mono">({checklistTemplateCount ?? 0} قائمة)</span>
           </div>
           <Link
-            href="/app/disbursements/admin/checklist"
+            href="/app/disbursements/admin/checklist-templates"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
           >
             إدارة

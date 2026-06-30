@@ -16,10 +16,12 @@ type Project = {
   bank_name?: string | null
   bank_account?: string | null
   bank_iban?: string | null
+  checklist_template_id?: string | null
 }
 
 type ClientOpt = { id: string; company_name_ar: string }
 type StaffOpt = { id: string; full_name: string; role_label: string }
+type TemplateOpt = { id: string; label: string }
 
 const STATUS_OPTIONS: Array<{ value: 'active' | 'archived' | 'inactive'; label: string }> = [
   { value: 'active',   label: 'نشط' },
@@ -33,6 +35,7 @@ export function EditProjectInfo({
   staff,
   assignedUserIds,
   canEditAssignees,
+  checklistTemplates,
 }: {
   project: Project
   clients: ClientOpt[]
@@ -43,6 +46,9 @@ export function EditProjectInfo({
   // Only owners can edit the assignee list. Non-owners see the metadata
   // fields but the project assignees section is hidden.
   canEditAssignees: boolean
+  // All checklist templates in the tenant. Used for the "قائمة المراجعة"
+  // dropdown.
+  checklistTemplates: TemplateOpt[]
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -59,6 +65,10 @@ export function EditProjectInfo({
   const [bankName, setBankName] = useState(project.bank_name ?? '')
   const [bankAccount, setBankAccount] = useState(project.bank_account ?? '')
   const [bankIban, setBankIban] = useState(project.bank_iban ?? '')
+  // '' = inherit (fall back to client / tenant default); otherwise a template id.
+  const [checklistTemplateId, setChecklistTemplateId] = useState<string>(
+    project.checklist_template_id ?? '',
+  )
 
   // Multi-assignee picker state. Excludes owners — owners see everything
   // already; placing them in the junction adds noise without changing access.
@@ -87,6 +97,7 @@ export function EditProjectInfo({
     setBankName(project.bank_name ?? '')
     setBankAccount(project.bank_account ?? '')
     setBankIban(project.bank_iban ?? '')
+    setChecklistTemplateId(project.checklist_template_id ?? '')
     setSelectedUserIds(new Set(assignedUserIds))
     setError(null)
   }
@@ -114,6 +125,9 @@ export function EditProjectInfo({
       bank_name: bankName || null,
       bank_account: bankAccount || null,
       bank_iban: bankIban || null,
+      // '' means "inherit" — send null so the server clears any existing
+      // pointer. A populated value points the project at that template.
+      checklist_template_id: checklistTemplateId === '' ? null : checklistTemplateId,
     })
     if (!res.ok) {
       setSaving(false)
@@ -237,6 +251,25 @@ export function EditProjectInfo({
           )}
         </div>
       )}
+
+      <div className="pt-3 border-t border-slate-100 space-y-2">
+        <h4 className="serif font-bold text-sm text-slate-900">قائمة المراجعة</h4>
+        <p className="text-[11px] text-slate-500">
+          القائمة التي تظهر للموظف عند مراجعة سندات هذا المشروع. اتركها على
+          «افتراضي» لاستخدام قائمة العميل أو القائمة الافتراضية للمكتب.
+        </p>
+        <select
+          className={inputCls}
+          value={checklistTemplateId}
+          onChange={(e) => setChecklistTemplateId(e.target.value)}
+          disabled={saving}
+        >
+          <option value="">افتراضي (يستخدم قائمة العميل أو القائمة الافتراضية للمكتب)</option>
+          {checklistTemplates.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="pt-3 border-t border-slate-100 space-y-2">
         <h4 className="serif font-bold text-sm text-slate-900">حساب المشروع (حساب الضمان)</h4>

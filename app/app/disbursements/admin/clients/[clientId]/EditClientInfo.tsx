@@ -15,7 +15,10 @@ type Client = {
   bank_name?: string | null
   bank_account?: string | null
   bank_iban?: string | null
+  checklist_template_id?: string | null
 }
+
+type TemplateOpt = { id: string; label: string }
 
 const STATUS_OPTIONS: Array<{ value: 'active' | 'archived' | 'inactive'; label: string }> = [
   { value: 'active',   label: 'نشط' },
@@ -27,7 +30,13 @@ const STATUS_OPTIONS: Array<{ value: 'active' | 'archived' | 'inactive'; label: 
  * Inline edit panel for a client. Click "تعديل البيانات" → the info section
  * swaps to editable inputs → Save persists via updateClient, Cancel restores.
  */
-export function EditClientInfo({ client }: { client: Client }) {
+export function EditClientInfo({
+  client,
+  checklistTemplates,
+}: {
+  client: Client
+  checklistTemplates: TemplateOpt[]
+}) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
@@ -43,6 +52,10 @@ export function EditClientInfo({ client }: { client: Client }) {
   const [bankName, setBankName] = useState(client.bank_name ?? '')
   const [bankAccount, setBankAccount] = useState(client.bank_account ?? '')
   const [bankIban, setBankIban] = useState(client.bank_iban ?? '')
+  // '' = inherit (fall back to tenant default); otherwise a template id.
+  const [checklistTemplateId, setChecklistTemplateId] = useState<string>(
+    client.checklist_template_id ?? '',
+  )
 
   function reset() {
     setCompanyName(client.company_name_ar)
@@ -53,6 +66,7 @@ export function EditClientInfo({ client }: { client: Client }) {
     setBankName(client.bank_name ?? '')
     setBankAccount(client.bank_account ?? '')
     setBankIban(client.bank_iban ?? '')
+    setChecklistTemplateId(client.checklist_template_id ?? '')
     setError(null)
   }
 
@@ -69,6 +83,8 @@ export function EditClientInfo({ client }: { client: Client }) {
       bank_name: bankName || null,
       bank_account: bankAccount || null,
       bank_iban: bankIban || null,
+      // '' means "inherit" — send null to clear any existing pointer.
+      checklist_template_id: checklistTemplateId === '' ? null : checklistTemplateId,
     })
     setSaving(false)
     if (!res.ok) {
@@ -122,6 +138,25 @@ export function EditClientInfo({ client }: { client: Client }) {
           <label className="text-xs font-semibold text-slate-500 mb-1 block">ملاحظات</label>
           <textarea rows={3} className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
         </div>
+      </div>
+
+      <div className="pt-3 border-t border-slate-100 space-y-2">
+        <h4 className="serif font-bold text-sm text-slate-900">قائمة المراجعة</h4>
+        <p className="text-[11px] text-slate-500">
+          القائمة التي تظهر للموظف عند مراجعة سندات هذا العميل. اتركها على
+          «افتراضي» لاستخدام القائمة الافتراضية للمكتب.
+        </p>
+        <select
+          className={inputCls}
+          value={checklistTemplateId}
+          onChange={(e) => setChecklistTemplateId(e.target.value)}
+          disabled={saving}
+        >
+          <option value="">افتراضي (يستخدم القائمة الافتراضية للمكتب)</option>
+          {checklistTemplates.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
       </div>
 
       <div className="pt-3 border-t border-slate-100 space-y-2">

@@ -28,16 +28,16 @@ async function resolveOwner(): Promise<
   }
 }
 
+// Items now belong to a template (migration 053). The old project_id /
+// developer_id per-item scope has been replaced by the template's
+// scope assignments at the project/client level.
 export interface CreateChecklistItemInput {
   code: string
   prompt_ar: string
   prompt_en: string
   order_index: number
   active: boolean
-  // Scope (added 052). At most one of the two may be set. Both null = global
-  // (applies to every case in the tenant — existing behavior).
-  project_id?: string | null
-  developer_id?: string | null
+  template_id: string
 }
 
 export type CreateChecklistItemResult =
@@ -55,8 +55,7 @@ export async function createChecklistItem(
   const promptEn = (input.prompt_en ?? '').trim()
   const orderIndex = Number.isFinite(input.order_index) ? Math.trunc(input.order_index) : 0
   const active = !!input.active
-  const projectId = input.project_id ?? null
-  const developerId = input.developer_id ?? null
+  const templateId = (input.template_id ?? '').trim()
 
   if (!code) return { ok: false, error: 'الرمز مطلوب.' }
   if (!/^[A-Z][A-Z0-9_]*$/.test(code)) {
@@ -65,32 +64,18 @@ export async function createChecklistItem(
   if (!promptAr) return { ok: false, error: 'النص بالعربية مطلوب.' }
   if (!promptEn) return { ok: false, error: 'النص بالإنجليزية مطلوب.' }
   if (orderIndex < 0) return { ok: false, error: 'الترتيب يجب أن يكون صفرًا أو أكبر.' }
-  if (projectId && developerId) {
-    return { ok: false, error: 'لا يمكن ربط البند بعميل ومشروع في نفس الوقت.' }
-  }
+  if (!templateId) return { ok: false, error: 'القائمة مطلوبة.' }
 
   const svc = createSupabaseService()
 
-  // Validate scope target belongs to the caller's tenant.
-  if (projectId) {
-    const { data: proj } = await svc
-      .from('dsb_projects')
-      .select('id, tenant_id')
-      .eq('id', projectId)
-      .maybeSingle()
-    if (!proj || (proj.tenant_id as string) !== caller.tenantId) {
-      return { ok: false, error: 'المشروع غير موجود أو لا يخص مكتبك.' }
-    }
-  }
-  if (developerId) {
-    const { data: dev } = await svc
-      .from('dsb_developers')
-      .select('id, tenant_id')
-      .eq('id', developerId)
-      .maybeSingle()
-    if (!dev || (dev.tenant_id as string) !== caller.tenantId) {
-      return { ok: false, error: 'العميل غير موجود أو لا يخص مكتبك.' }
-    }
+  // Validate the template belongs to the caller's tenant.
+  const { data: tpl } = await svc
+    .from('dsb_checklist_templates')
+    .select('id, tenant_id')
+    .eq('id', templateId)
+    .maybeSingle()
+  if (!tpl || (tpl as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'القائمة غير موجودة أو لا تخص مكتبك.' }
   }
 
   // Uniqueness check within tenant.
@@ -111,8 +96,7 @@ export async function createChecklistItem(
       prompt_en: promptEn,
       order_index: orderIndex,
       active,
-      project_id: projectId,
-      developer_id: developerId,
+      template_id: templateId,
     })
     .select('id')
     .single()
@@ -122,6 +106,8 @@ export async function createChecklistItem(
   }
 
   revalidatePath('/app/disbursements/admin/checklist')
+  revalidatePath('/app/disbursements/admin/checklist-templates')
+  revalidatePath(`/app/disbursements/admin/checklist-templates/${templateId}`)
   revalidatePath('/app/disbursements/admin')
   return { ok: true, item_id: data.id as string }
 }

@@ -125,6 +125,9 @@ export interface UpdateClientInput {
   bank_name?: string | null
   bank_account?: string | null
   bank_iban?: string | null
+  // Which named checklist template this client uses by default. null = fall
+  // back to the tenant's default template. undefined = leave alone.
+  checklist_template_id?: string | null
 }
 
 export async function updateClient(
@@ -143,6 +146,25 @@ export async function updateClient(
   }
 
   const svc = createSupabaseService()
+
+  // Validate the picked template belongs to the same tenant. undefined = no
+  // change; null = explicit clear (fall back to tenant default).
+  let templatePatch: { checklist_template_id: string | null } | Record<string, never> = {}
+  if (input.checklist_template_id !== undefined) {
+    const tplId = input.checklist_template_id
+    if (tplId !== null) {
+      const { data: tpl } = await svc
+        .from('dsb_checklist_templates')
+        .select('id, tenant_id')
+        .eq('id', tplId)
+        .maybeSingle()
+      if (!tpl || (tpl as { tenant_id: string }).tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'القائمة المختارة غير صحيحة.' }
+      }
+    }
+    templatePatch = { checklist_template_id: tplId }
+  }
+
   const { error } = await svc
     .from('dsb_developers')
     .update({
@@ -154,6 +176,7 @@ export async function updateClient(
       bank_account: (input.bank_account ?? '').trim() || null,
       bank_iban: (input.bank_iban ?? '').trim().toUpperCase() || null,
       ...(input.status ? { status: input.status } : {}),
+      ...templatePatch,
     })
     .eq('id', input.client_id)
     .eq('tenant_id', caller.tenantId)
@@ -180,6 +203,9 @@ export interface UpdateProjectInput {
   bank_name?: string | null
   bank_account?: string | null
   bank_iban?: string | null
+  // Which named checklist template this project uses. null = fall back to
+  // the client's template, then to the tenant default. undefined = leave alone.
+  checklist_template_id?: string | null
 }
 
 export async function updateProject(
@@ -221,6 +247,24 @@ export async function updateProject(
     }
   }
 
+  // Validate the picked template belongs to the same tenant. undefined = no
+  // change; null = explicit clear (fall back to client/tenant default).
+  let templatePatch: { checklist_template_id: string | null } | Record<string, never> = {}
+  if (input.checklist_template_id !== undefined) {
+    const tplId = input.checklist_template_id
+    if (tplId !== null) {
+      const { data: tpl } = await svc
+        .from('dsb_checklist_templates')
+        .select('id, tenant_id')
+        .eq('id', tplId)
+        .maybeSingle()
+      if (!tpl || (tpl as { tenant_id: string }).tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'القائمة المختارة غير صحيحة.' }
+      }
+    }
+    templatePatch = { checklist_template_id: tplId }
+  }
+
   const { error } = await svc
     .from('dsb_projects')
     .update({
@@ -233,6 +277,7 @@ export async function updateProject(
       bank_account: (input.bank_account ?? '').trim() || null,
       bank_iban: (input.bank_iban ?? '').trim().toUpperCase() || null,
       ...(input.status ? { status: input.status } : {}),
+      ...templatePatch,
     })
     .eq('id', input.project_id)
     .eq('tenant_id', caller.tenantId)

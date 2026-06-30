@@ -20,6 +20,7 @@ type ProjectRow = {
   bank_name: string | null
   bank_account: string | null
   bank_iban: string | null
+  checklist_template_id: string | null
 }
 
 type DeveloperLite = {
@@ -115,7 +116,7 @@ export default async function ProjectDetailPage({
   // Fetch the project + tenant-scope.
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -197,6 +198,16 @@ export default async function ProjectDetailPage({
         u.dsb_role === 'deliverer' ? 'مسلِّم' :
         'مراجع',
     }))
+
+  // Checklist templates for this tenant — feeds the "قائمة المراجعة" picker.
+  const { data: tplsForEdit } = await svc
+    .from('dsb_checklist_templates')
+    .select('id, name, is_default')
+    .eq('tenant_id', tenantId)
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true })
+  const checklistTemplateOptions = ((tplsForEdit ?? []) as Array<{ id: string; name: string; is_default: boolean }>)
+    .map((t) => ({ id: t.id, label: t.is_default ? `${t.name} (افتراضية)` : t.name }))
 
   // Fetch cases for this project.
   const { data: casesData } = await svc
@@ -282,11 +293,13 @@ export default async function ProjectDetailPage({
                 bank_name: project.bank_name,
                 bank_account: project.bank_account,
                 bank_iban: project.bank_iban,
+                checklist_template_id: project.checklist_template_id,
               }}
               clients={clientOptions}
               staff={staffOptions}
               assignedUserIds={assignedUserIds}
               canEditAssignees={dsbRole === 'owner'}
+              checklistTemplates={checklistTemplateOptions}
             />
             {dsbRole === 'owner' && (
               <DeleteProjectButton

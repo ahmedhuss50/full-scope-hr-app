@@ -25,6 +25,7 @@
 import { NextResponse } from 'next/server'
 import { createSupabaseService, createSupabaseServer } from '@/lib/supabase/server'
 import { pdfPageCount, splitPdfIntoChunks } from '@/lib/dsb/pdf-chunks'
+import { resolveEffectiveTemplateId } from '@/lib/dsb/effective-checklist'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -203,24 +204,27 @@ export async function POST(req: Request) {
     const caseProjectId = (caseRow as { project_id: string | null }).project_id ?? null
     const caseDeveloperId = (caseRow as { developer_id: string | null }).developer_id ?? null
 
-    // Items visible to this case: globals (no scope) plus any items scoped to
-    // this case's project/developer. See [caseId]/page.tsx for the matching
-    // visibility logic.
+    // Items for this case come from ONE template, picked by precedence:
+    // project → developer → tenant default. Mirrors the case page.
+    const effectiveTemplateId = await resolveEffectiveTemplateId(
+      svc,
+      tenantId,
+      caseProjectId,
+      caseDeveloperId,
+    )
+    if (!effectiveTemplateId) {
+      return jsonError('no checklist template resolved for this case', 400)
+    }
     const { data: checklistRaw } = await svc
       .from('dsb_checklist_items')
-      .select('id, code, prompt_ar, order_index, project_id, developer_id')
-      .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
+      .select('id, code, prompt_ar, order_index')
+      .eq('tenant_id', tenantId)
+      .eq('template_id', effectiveTemplateId)
       .eq('active', true)
       .order('order_index', { ascending: true })
     const checklistItems = ((checklistRaw ?? []) as Array<{
-      id: string; code: string; prompt_ar: string; order_index: number;
-      project_id: string | null; developer_id: string | null
-    }>).filter((r) => {
-      if (r.project_id === null && r.developer_id === null) return true
-      if (r.developer_id && r.developer_id === caseDeveloperId) return true
-      if (r.project_id && r.project_id === caseProjectId) return true
-      return false
-    })
+      id: string; code: string; prompt_ar: string; order_index: number
+    }>)
     if (checklistItems.length === 0) {
       return jsonError('no active checklist items configured', 400)
     }

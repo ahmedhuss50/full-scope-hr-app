@@ -19,6 +19,7 @@ import { RevertSignatureButton } from './RevertSignatureButton'
 import { DeliverDocumentButton } from './DeliverDocumentButton'
 import { AttachmentsSection } from './AttachmentsSection'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
+import { resolveEffectiveTemplateId } from '@/lib/dsb/effective-checklist'
 
 export const dynamic = 'force-dynamic'
 
@@ -242,43 +243,36 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     assignedEmployeeName = (assignedRow?.full_name as string | undefined) ?? null
   }
 
-  // Checklist items visible to this case. The full set =
-  //   (a) defaults (tenant_id IS NULL)
-  // ∪ (b) tenant-wide items (tenant_id = us, no scope set)
-  // ∪ (c) items scoped to this case's developer
-  // ∪ (d) items scoped to this case's project
-  //
-  // We fetch everything in (a) ∪ (b) ∪ tenant rows with any scope, then filter
-  // the scoped rows in JS to those matching this case's developer/project.
-  // Doing the filter in JS keeps the Supabase query simple and avoids the
-  // brittle `.or(and(...))` string syntax — the row count is tiny.
+  // Checklist items for this case — sourced from one named template.
+  // Resolution: project → developer → tenant default. If nothing resolves
+  // (no defaults configured yet), the case sees an empty checklist.
   const caseProjectId = project?.id ?? null
   const caseDeveloperId = developer?.id ?? null
-  const { data: checklistItemsRaw } = await svc
-    .from('dsb_checklist_items')
-    .select('id, code, order_index, prompt_ar, prompt_en, tenant_id, active, project_id, developer_id')
-    .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`)
-    .eq('active', true)
-    .order('order_index', { ascending: true })
-  const checklistItems: ChecklistItem[] = ((checklistItemsRaw ?? []) as Array<{
-    id: string; code: string; order_index: number; prompt_ar: string; prompt_en: string;
-    project_id: string | null; developer_id: string | null
-  }>)
-    .filter((r) => {
-      // Global (no scope): always included.
-      if (r.project_id === null && r.developer_id === null) return true
-      // Scoped: include only if it matches the case.
-      if (r.developer_id && r.developer_id === caseDeveloperId) return true
-      if (r.project_id && r.project_id === caseProjectId) return true
-      return false
-    })
-    .map((r) => ({
+  const effectiveTemplateId = await resolveEffectiveTemplateId(
+    svc,
+    tenantId,
+    caseProjectId,
+    caseDeveloperId,
+  )
+  let checklistItems: ChecklistItem[] = []
+  if (effectiveTemplateId) {
+    const { data: checklistItemsRaw } = await svc
+      .from('dsb_checklist_items')
+      .select('id, code, order_index, prompt_ar, prompt_en')
+      .eq('tenant_id', tenantId)
+      .eq('template_id', effectiveTemplateId)
+      .eq('active', true)
+      .order('order_index', { ascending: true })
+    checklistItems = ((checklistItemsRaw ?? []) as Array<{
+      id: string; code: string; order_index: number; prompt_ar: string; prompt_en: string
+    }>).map((r) => ({
       id: r.id,
       code: r.code,
       order_index: r.order_index,
       prompt_ar: r.prompt_ar,
       prompt_en: r.prompt_en,
     }))
+  }
 
   // Existing responses for this case.
   const { data: checklistRespRaw } = await svc

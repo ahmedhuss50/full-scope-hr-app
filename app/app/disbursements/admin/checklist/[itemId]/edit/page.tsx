@@ -13,8 +13,7 @@ type ChecklistItemRow = {
   prompt_ar: string
   prompt_en: string
   active: boolean
-  project_id: string | null
-  developer_id: string | null
+  template_id: string | null
 }
 
 export default async function EditChecklistItemPage({
@@ -36,59 +35,60 @@ export default async function EditChecklistItemPage({
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
   if (dsbRole !== 'owner') {
-    redirect('/app/disbursements/admin/checklist')
+    redirect('/app/disbursements/admin/checklist-templates')
   }
   const tenantId = profile.tenant_id as string
 
   const { data: itemData } = await svc
     .from('dsb_checklist_items')
-    .select('id, tenant_id, code, order_index, prompt_ar, prompt_en, active, project_id, developer_id')
+    .select('id, tenant_id, code, order_index, prompt_ar, prompt_en, active, template_id')
     .eq('id', params.itemId)
     .maybeSingle()
 
   if (!itemData) notFound()
   const item = itemData as ChecklistItemRow
-  // Owner can now edit defaults (tenant_id IS NULL) AND own-tenant items.
-  // Block only items from OTHER tenants.
+  // Allow editing of legacy default items (tenant_id IS NULL) and own-tenant
+  // items. Block items from another tenant.
   if (item.tenant_id !== null && item.tenant_id !== tenantId) notFound()
 
-  // Scope picker can only target tenant-owned items. Defaults (tenant_id NULL)
-  // stay global and the form will hide the scope picker.
-  const isDefaultItem = item.tenant_id === null
-  let developers: Array<{ id: string; label: string }> = []
-  let projects: Array<{ id: string; label: string }> = []
-  if (!isDefaultItem) {
-    const [{ data: devsRaw }, { data: projsRaw }] = await Promise.all([
-      svc
-        .from('dsb_developers')
-        .select('id, company_name_ar, status')
-        .eq('tenant_id', tenantId)
-        .order('company_name_ar', { ascending: true }),
-      svc
-        .from('dsb_projects')
-        .select('id, code, name_ar, status')
-        .eq('tenant_id', tenantId)
-        .order('name_ar', { ascending: true }),
-    ])
-    developers = ((devsRaw ?? []) as Array<{ id: string; company_name_ar: string; status: string | null }>)
-      .filter((d) => d.status !== 'archived' || d.id === item.developer_id)
-      .map((d) => ({ id: d.id, label: d.company_name_ar }))
-    projects = ((projsRaw ?? []) as Array<{ id: string; code: string; name_ar: string; status: string | null }>)
-      .filter((p) => p.status !== 'archived' || p.id === item.project_id)
-      .map((p) => ({ id: p.id, label: `${p.name_ar} (${p.code})` }))
+  // Templates for the picker (tenant-scoped).
+  const { data: tplsRaw } = await svc
+    .from('dsb_checklist_templates')
+    .select('id, name, is_default')
+    .eq('tenant_id', tenantId)
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true })
+  const templates = ((tplsRaw ?? []) as Array<{ id: string; name: string; is_default: boolean }>)
+    .map((t) => ({ id: t.id, label: t.is_default ? `${t.name} (افتراضية)` : t.name }))
+
+  // Look up the current template's display name for the read-only header
+  // shown above the form.
+  let currentTemplateLabel: string | null = null
+  if (item.template_id) {
+    const match = templates.find((t) => t.id === item.template_id)
+    currentTemplateLabel = match?.label ?? null
   }
+
+  const backHref = item.template_id
+    ? `/app/disbursements/admin/checklist-templates/${item.template_id}`
+    : '/app/disbursements/admin/checklist-templates'
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
       <header className="space-y-2">
         <Link
-          href="/app/disbursements/admin/checklist"
+          href={backHref}
           className="inline-flex items-center text-xs text-slate-500 hover:text-slate-700"
         >
-          ← العودة إلى قائمة المراجعة
+          ← العودة إلى القائمة
         </Link>
         <h1 className="serif font-black text-3xl tracking-tight text-slate-900">تعديل البند</h1>
         <p className="text-sm text-slate-600 font-mono text-xs">{item.code}</p>
+        {currentTemplateLabel && (
+          <p className="text-xs text-slate-500">
+            القائمة الحالية: <span className="font-semibold text-slate-700">{currentTemplateLabel}</span>
+          </p>
+        )}
       </header>
 
       <EditChecklistItemForm
@@ -99,12 +99,9 @@ export default async function EditChecklistItemPage({
           prompt_en: item.prompt_en,
           order_index: item.order_index,
           active: item.active,
-          project_id: item.project_id,
-          developer_id: item.developer_id,
+          template_id: item.template_id,
         }}
-        isDefaultItem={isDefaultItem}
-        developers={developers}
-        projects={projects}
+        templates={templates}
       />
     </div>
   )

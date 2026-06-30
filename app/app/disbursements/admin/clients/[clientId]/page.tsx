@@ -20,6 +20,7 @@ type ClientRow = {
   bank_name: string | null
   bank_account: string | null
   bank_iban: string | null
+  checklist_template_id: string | null
 }
 
 type ProjectRow = {
@@ -111,7 +112,7 @@ export default async function ClientDetailPage({
   // Fetch the client — must belong to this tenant or 404.
   const { data: clientData } = await svc
     .from('dsb_developers')
-    .select('id, company_name_ar, contact_name, contact_email, user_id, status, notes, bank_name, bank_account, bank_iban, tenant_id')
+    .select('id, company_name_ar, contact_name, contact_email, user_id, status, notes, bank_name, bank_account, bank_iban, checklist_template_id, tenant_id')
     .eq('id', clientId)
     .maybeSingle()
   if (!clientData || (clientData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -151,6 +152,16 @@ export default async function ClientDetailPage({
     .eq('developer_id', clientId)
     .order('created_at', { ascending: false })
   const cases = (casesData ?? []) as CaseRow[]
+
+  // Checklist templates for this tenant — feeds the "قائمة المراجعة" picker.
+  const { data: tplsForEdit } = await svc
+    .from('dsb_checklist_templates')
+    .select('id, name, is_default')
+    .eq('tenant_id', tenantId)
+    .order('is_default', { ascending: false })
+    .order('name', { ascending: true })
+  const checklistTemplateOptions = ((tplsForEdit ?? []) as Array<{ id: string; name: string; is_default: boolean }>)
+    .map((t) => ({ id: t.id, label: t.is_default ? `${t.name} (افتراضية)` : t.name }))
 
   // Per-project case counts (derived from the cases we already pulled).
   const projectCaseCounts = new Map<string, number>()
@@ -236,7 +247,9 @@ export default async function ClientDetailPage({
                 bank_name: client.bank_name,
                 bank_account: client.bank_account,
                 bank_iban: client.bank_iban,
+                checklist_template_id: client.checklist_template_id,
               }}
+              checklistTemplates={checklistTemplateOptions}
             />
             {dsbRole === 'owner' && (
               <DeleteClientButton

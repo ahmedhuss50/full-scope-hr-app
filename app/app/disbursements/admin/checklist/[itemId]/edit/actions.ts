@@ -35,10 +35,9 @@ export interface UpdateChecklistItemInput {
   prompt_en: string
   order_index: number
   active: boolean
-  // Scope (added 052). At most one of the two may be set. Both null = global.
-  // Omit (undefined) to leave the existing scope untouched.
-  project_id?: string | null
-  developer_id?: string | null
+  // Optional — pass a non-empty string to MOVE the item between templates.
+  // Omit to leave it where it is. Same-tenant validation runs server-side.
+  template_id?: string
 }
 
 export type UpdateChecklistItemResult = { ok: true } | { ok: false; error: string }
@@ -54,11 +53,8 @@ export async function updateChecklistItem(
   const promptEn = (input.prompt_en ?? '').trim()
   const orderIndex = Number.isFinite(input.order_index) ? Math.trunc(input.order_index) : 0
   const active = !!input.active
-  // Distinguish "leave alone" (undefined) from "explicitly clear" (null).
-  const scopeProvided =
-    input.project_id !== undefined || input.developer_id !== undefined
-  const projectId = input.project_id ?? null
-  const developerId = input.developer_id ?? null
+  const templateIdProvided = input.template_id !== undefined
+  const templateId = templateIdProvided ? (input.template_id ?? '').trim() : null
 
   if (!code) return { ok: false, error: 'الرمز مطلوب.' }
   if (!/^[A-Z][A-Z0-9_]*$/.test(code)) {
@@ -67,17 +63,17 @@ export async function updateChecklistItem(
   if (!promptAr) return { ok: false, error: 'النص بالعربية مطلوب.' }
   if (!promptEn) return { ok: false, error: 'النص بالإنجليزية مطلوب.' }
   if (orderIndex < 0) return { ok: false, error: 'الترتيب يجب أن يكون صفرًا أو أكبر.' }
-  if (scopeProvided && projectId && developerId) {
-    return { ok: false, error: 'لا يمكن ربط البند بعميل ومشروع في نفس الوقت.' }
+  if (templateIdProvided && !templateId) {
+    return { ok: false, error: 'القائمة مطلوبة.' }
   }
 
   const svc = createSupabaseService()
 
-  // Load the item. Owner can edit BOTH defaults (tenant_id IS NULL) AND
-  // their own tenant items. Block only items belonging to another tenant.
+  // Load the item. Now that everything's tenant-scoped (no more NULL-tenant
+  // globals in the admin surface), block items from another tenant.
   const { data: existing } = await svc
     .from('dsb_checklist_items')
-    .select('id, tenant_id')
+    .select('id, tenant_id, template_id')
     .eq('id', input.item_id)
     .maybeSingle()
   if (!existing) return { ok: false, error: 'البند غير موجود.' }
@@ -87,25 +83,16 @@ export async function updateChecklistItem(
   }
   const isDefaultItem = itemTenant === null
 
-  // Cross-tenant scope check: any scope target must belong to caller's tenant.
-  if (scopeProvided && projectId) {
-    const { data: proj } = await svc
-      .from('dsb_projects')
+  // Cross-tenant template check: if the caller is moving the item, the
+  // target template must belong to caller's tenant.
+  if (templateIdProvided && templateId) {
+    const { data: tpl } = await svc
+      .from('dsb_checklist_templates')
       .select('id, tenant_id')
-      .eq('id', projectId)
+      .eq('id', templateId)
       .maybeSingle()
-    if (!proj || (proj.tenant_id as string) !== caller.tenantId) {
-      return { ok: false, error: 'المشروع غير موجود أو لا يخص مكتبك.' }
-    }
-  }
-  if (scopeProvided && developerId) {
-    const { data: dev } = await svc
-      .from('dsb_developers')
-      .select('id, tenant_id')
-      .eq('id', developerId)
-      .maybeSingle()
-    if (!dev || (dev.tenant_id as string) !== caller.tenantId) {
-      return { ok: false, error: 'العميل غير موجود أو لا يخص مكتبك.' }
+    if (!tpl || (tpl as { tenant_id: string }).tenant_id !== caller.tenantId) {
+      return { ok: false, error: 'القائمة غير موجودة أو لا تخص مكتبك.' }
     }
   }
 
@@ -120,7 +107,6 @@ export async function updateChecklistItem(
     : await clashQuery.eq('tenant_id', caller.tenantId).maybeSingle()
   if (clashRes.data) return { ok: false, error: 'يوجد بند بهذا الرمز بالفعل.' }
 
-  // Build update; only filter by tenant if it's a tenant-specific item.
   const updatePayload: Record<string, unknown> = {
     code,
     prompt_ar: promptAr,
@@ -128,9 +114,8 @@ export async function updateChecklistItem(
     order_index: orderIndex,
     active,
   }
-  if (scopeProvided) {
-    updatePayload.project_id = projectId
-    updatePayload.developer_id = developerId
+  if (templateIdProvided && templateId) {
+    updatePayload.template_id = templateId
   }
 
   const updateQuery = svc
@@ -142,7 +127,15 @@ export async function updateChecklistItem(
     : await updateQuery.eq('tenant_id', caller.tenantId)
   if (error) return { ok: false, error: error.message }
 
+  const prevTplId = (existing as { template_id: string | null }).template_id ?? null
   revalidatePath('/app/disbursements/admin/checklist')
+  revalidatePath('/app/disbursements/admin/checklist-templates')
+  if (prevTplId) {
+    revalidatePath(`/app/disbursements/admin/checklist-templates/${prevTplId}`)
+  }
+  if (templateIdProvided && templateId && templateId !== prevTplId) {
+    revalidatePath(`/app/disbursements/admin/checklist-templates/${templateId}`)
+  }
   revalidatePath('/app/disbursements/admin')
   return { ok: true }
 }
@@ -156,7 +149,7 @@ export async function deleteChecklistItem(
   const svc = createSupabaseService()
   const { data: existing } = await svc
     .from('dsb_checklist_items')
-    .select('id, tenant_id')
+    .select('id, tenant_id, template_id')
     .eq('id', input.item_id)
     .maybeSingle()
   if (!existing) return { ok: false, error: 'البند غير موجود.' }
@@ -175,7 +168,12 @@ export async function deleteChecklistItem(
     : await deleteQuery.eq('tenant_id', caller.tenantId)
   if (error) return { ok: false, error: error.message }
 
+  const prevTplId = (existing as { template_id: string | null }).template_id ?? null
   revalidatePath('/app/disbursements/admin/checklist')
+  revalidatePath('/app/disbursements/admin/checklist-templates')
+  if (prevTplId) {
+    revalidatePath(`/app/disbursements/admin/checklist-templates/${prevTplId}`)
+  }
   revalidatePath('/app/disbursements/admin')
   return { ok: true }
 }
