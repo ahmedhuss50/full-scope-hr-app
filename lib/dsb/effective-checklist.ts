@@ -7,7 +7,11 @@
  *   1. project.checklist_template_id   (most specific — wins if set)
  *   2. developer.checklist_template_id (per-client default)
  *   3. tenant's default template       (the row with is_default = true)
- *   4. null                            (no template at all → empty checklist)
+ *   4. tenant's OLDEST template        (defensive fallback: better to run
+ *                                       against SOMETHING than error out
+ *                                       when the owner forgot to mark a
+ *                                       default)
+ *   5. null                            (no templates at all → empty)
  *
  * Keep both the case page and /api/dsb-ai-review using this helper so the
  * "which template" decision lives in exactly one place.
@@ -41,11 +45,26 @@ export async function resolveEffectiveTemplateId(
     const tid = (data as { checklist_template_id: string | null } | null)?.checklist_template_id ?? null
     if (tid) return tid
   }
-  const { data } = await svc
+  // Tenant default (is_default = true).
+  const { data: def } = await svc
     .from('dsb_checklist_templates')
     .select('id')
     .eq('tenant_id', tenantId)
     .eq('is_default', true)
     .maybeSingle()
-  return (data as { id: string } | null)?.id ?? null
+  const defId = (def as { id: string } | null)?.id ?? null
+  if (defId) return defId
+
+  // Defensive fallback: no default marked, but the tenant DOES have
+  // templates. Use the oldest one (usually the seeded "افتراضي" or the
+  // first one the owner created). Prevents "no template resolved" errors
+  // when the owner just forgot to click "set as default."
+  const { data: any } = await svc
+    .from('dsb_checklist_templates')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  return (any as { id: string } | null)?.id ?? null
 }
