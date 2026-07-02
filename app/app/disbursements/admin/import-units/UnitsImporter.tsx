@@ -355,14 +355,12 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
     setError(null)
     setMode('parsing')
     try {
-      // Dynamic import — same pattern as AccountsImporter so xlsx stays out
-      // of the initial page bundle. Non-literal specifier + `any` typing so
-      // the build doesn't fail in environments where `xlsx` types haven't
-      // resolved yet (the dep is in package.json; Vercel resolves it on
-      // deploy).
-      const moduleName = 'xlsx'
+      // Dynamic import — Next.js statically picks this up and bundles xlsx
+      // as an async chunk. Using a non-literal specifier here breaks
+      // webpack's static analysis and causes "Cannot find module 'xlsx'"
+      // at runtime.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const XLSX: any = await import(/* webpackIgnore: false */ moduleName)
+      const XLSX: any = await import('xlsx')
       const buf = await file.arrayBuffer()
       const wb = XLSX.read(buf, { type: 'array', cellDates: true })
 
