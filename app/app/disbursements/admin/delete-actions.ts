@@ -100,23 +100,19 @@ async function cascadeDeleteCases(
 // ---------------------------------------------------------------------------
 
 /**
- * Deleting a case is allowed:
- *   - Owners: at any stage
- *   - Employees / supervisors: only while the case is still early (draft /
- *     with_employee / with_supervisor). Once it reaches a manager for signing
- *     or later, only an owner can delete — this stops accidental loss of
- *     signed / delivered records.
+ * Deleting a case is allowed for ANY write role (employee / supervisor /
+ * owner) at ANY stage — including signed and delivered cases.
  *
- * The "delete duplicate uploaded twice" use case (which motivated broadening
- * this permission) always falls inside the early stages, so it's covered.
+ * Tradeoff to know: deleting a signed/delivered case removes its audit
+ * trail, uploads, checklist responses, comments, and any recipient
+ * information. This is destructive and permanent (Storage objects stay
+ * behind orphaned until the bucket is swept). We're relying on the
+ * confirmation dialog in the UI + audit-log entries elsewhere as the
+ * user's tripwire, not a role check.
  */
-const EARLY_DELETABLE_STATUSES = ['draft', 'with_employee', 'with_supervisor'] as const
-
 export async function deleteCase(
   input: { case_id: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  // Resolve any write-role caller (employee / supervisor / owner). Below we
-  // decide whether their role is enough for the case's current stage.
   const caller = await resolveWriteRole()
   if ('error' in caller) return { ok: false, error: caller.error }
   if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
@@ -124,20 +120,11 @@ export async function deleteCase(
   const svc = createSupabaseService()
   const { data: kase } = await svc
     .from('dsb_cases')
-    .select('id, tenant_id, status')
+    .select('id, tenant_id')
     .eq('tenant_id', caller.tenantId)
     .eq('id', input.case_id)
     .maybeSingle()
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
-
-  const status = (kase as { status: string }).status
-  const isEarly = (EARLY_DELETABLE_STATUSES as readonly string[]).includes(status)
-  if (caller.dsbRole !== 'owner' && !isEarly) {
-    return {
-      ok: false,
-      error: 'هذا الطلب متقدّم في المسار — الحذف متاح للمدير فقط.',
-    }
-  }
 
   try {
     await cascadeDeleteCases(svc, caller.tenantId, [input.case_id])
@@ -149,6 +136,7 @@ export async function deleteCase(
   revalidatePath('/app/disbursements')
   revalidatePath('/app/disbursements/board')
   revalidatePath('/app/disbursements/documents')
+  revalidatePath('/app/disbursements/archive')
   return { ok: true }
 }
 
