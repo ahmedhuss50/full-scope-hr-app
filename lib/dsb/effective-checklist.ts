@@ -59,12 +59,13 @@ export async function resolveEffectiveTemplateId(
   // templates. Use the oldest one (usually the seeded "افتراضي" or the
   // first one the owner created). Prevents "no template resolved" errors
   // when the owner just forgot to click "set as default."
-  const { data: any } = await svc
+  // NB: renamed from `any` (TS reserved word) to `firstTemplate`.
+  const { data: firstTemplate } = await svc
     .from('dsb_checklist_templates')
     .select('id')
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle()
-  return (any as { id: string } | null)?.id ?? null
+  return (firstTemplate as { id: string } | null)?.id ?? null
 }
