@@ -534,9 +534,21 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="serif font-bold text-lg text-slate-900">ملف PDF</h2>
-              {upload && (canWrite) && (
-                <ReplaceDocumentButton caseId={kase.id} />
-              )}
+              <div className="inline-flex items-center gap-2 flex-wrap">
+                {upload && canWrite && (
+                  <ReplaceDocumentButton caseId={kase.id} />
+                )}
+                {/* Delete-case button also lives here — quick access alongside
+                    "استبدال الوثيقة" for the common "wrong file uploaded"
+                    cleanup path. Same permissions as the top-of-page delete. */}
+                {canWrite && (
+                  <DeleteCaseButton
+                    caseId={kase.id}
+                    caseNumber={kase.case_number}
+                    size="sm"
+                  />
+                )}
+              </div>
             </div>
 
             {supersededUploads.length > 0 && (
