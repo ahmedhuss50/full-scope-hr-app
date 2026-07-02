@@ -5,6 +5,12 @@ import { FolderKanban, FileText, Plus } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
+import {
+  UnitsSection,
+  type UnitRow,
+  type SaleRow,
+  type ContractRow,
+} from './UnitsSection'
 
 export const dynamic = 'force-dynamic'
 
@@ -227,6 +233,86 @@ export default async function ProjectDetailPage({
     .order('label', { ascending: true })
   const projectAccounts = (accountsData ?? []) as ProjectAccount[]
 
+  // ---- Units + sales + contracts (owner-only section) ----
+  // We always load these arrays so the section can render for owners; they
+  // stay empty for non-owners and the section itself is not rendered.
+  let units: UnitRow[] = []
+  let salesByUnitId: Record<string, SaleRow[]> = {}
+  let contractsByUnitId: Record<string, ContractRow[]> = {}
+  let contractsUnlinked: ContractRow[] = []
+  let latestSaleByUnit: Record<string, SaleRow | null> = {}
+
+  if (dsbRole === 'owner') {
+    const { data: unitRows } = await svc
+      .from('dsb_project_units')
+      .select('id, unit_number, zone_number, block_number, unit_type, area_m2, district, city, region, notes')
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId)
+      .order('unit_number', { ascending: true })
+    units = ((unitRows ?? []) as UnitRow[])
+
+    const unitIds = units.map((u) => u.id)
+    if (unitIds.length > 0) {
+      const { data: salesRows } = await svc
+        .from('dsb_unit_sales')
+        .select(
+          'id, unit_id, sale_count, sale_status, buyer_name_ar, buyer_id_type, buyer_id_number, buyer_nationality, buyer_phone, contract_number, contract_type, financing_type, financing_bank, sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar, delivery_status, delivery_date, created_at',
+        )
+        .eq('tenant_id', tenantId)
+        .in('unit_id', unitIds)
+        .order('sale_count', { ascending: false })
+        .order('created_at', { ascending: false })
+      for (const s of (salesRows ?? []) as SaleRow[]) {
+        const arr = salesByUnitId[s.unit_id] ?? []
+        arr.push(s)
+        salesByUnitId[s.unit_id] = arr
+      }
+      // Latest sale = first entry per unit (already sorted desc by sale_count).
+      for (const uid of unitIds) {
+        const arr = salesByUnitId[uid] ?? []
+        // Prefer the active row when the latest sale_count row is cancelled.
+        const active = arr.find((s) => s.sale_status === 'active')
+        latestSaleByUnit[uid] = active ?? arr[0] ?? null
+      }
+
+      // Two separate queries — the .or() with a nested in-list gets tricky
+      // to escape safely. Load linked contracts by unit_id, then load
+      // unlinked contracts (no unit_id yet) for the tenant.
+      const [linkedRes, unlinkedRes] = await Promise.all([
+        svc
+          .from('dsb_unit_contracts')
+          .select('id, sale_id, unit_id, filename, storage_path, storage_bucket, extraction_status, extracted_fields, extracted_at, uploaded_at')
+          .eq('tenant_id', tenantId)
+          .in('unit_id', unitIds)
+          .order('uploaded_at', { ascending: false }),
+        svc
+          .from('dsb_unit_contracts')
+          .select('id, sale_id, unit_id, filename, storage_path, storage_bucket, extraction_status, extracted_fields, extracted_at, uploaded_at')
+          .eq('tenant_id', tenantId)
+          .is('unit_id', null)
+          .order('uploaded_at', { ascending: false }),
+      ])
+      for (const c of (linkedRes.data ?? []) as ContractRow[]) {
+        if (!c.unit_id) continue
+        const arr = contractsByUnitId[c.unit_id] ?? []
+        arr.push(c)
+        contractsByUnitId[c.unit_id] = arr
+      }
+      contractsUnlinked = ((unlinkedRes.data ?? []) as ContractRow[])
+    } else {
+      // No units yet — surface unmatched contracts for this tenant so the
+      // owner can still see uploads waiting to be linked once units are
+      // imported.
+      const { data: unlinked } = await svc
+        .from('dsb_unit_contracts')
+        .select('id, sale_id, unit_id, filename, storage_path, storage_bucket, extraction_status, extracted_fields, extracted_at, uploaded_at')
+        .eq('tenant_id', tenantId)
+        .is('unit_id', null)
+        .order('uploaded_at', { ascending: false })
+      contractsUnlinked = (unlinked ?? []) as ContractRow[]
+    }
+  }
+
   // Group by pipeline column.
   const byStatus = new Map<string, CaseRow[]>()
   for (const col of PIPELINE_COLUMNS) byStatus.set(col.key, [])
@@ -365,6 +451,18 @@ export default async function ProjectDetailPage({
         <ProjectAccountsSection
           projectId={project.id}
           initialAccounts={projectAccounts}
+        />
+      )}
+
+      {/* Units + buyers + contracts — owner-only */}
+      {dsbRole === 'owner' && (
+        <UnitsSection
+          projectId={project.id}
+          units={units}
+          salesByUnitId={salesByUnitId}
+          contractsByUnitId={contractsByUnitId}
+          contractsUnlinked={contractsUnlinked}
+          latestSaleByUnit={latestSaleByUnit}
         />
       )}
 
