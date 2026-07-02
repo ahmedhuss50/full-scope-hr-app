@@ -43,6 +43,37 @@ async function resolveOwner(): Promise<
 }
 
 /**
+ * Broader auth for deleteCase: allow any write role. The caller checks the
+ * case's status and refuses if the role doesn't cover it (only owner can
+ * delete cases past the early stages).
+ */
+async function resolveWriteRole(): Promise<
+  | { tenantId: string; userId: string; dsbRole: DsbRole }
+  | { error: string }
+> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email)
+    .maybeSingle()
+  if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
+  const role = (profile.dsb_role as DsbRole | null) ?? null
+  if (!role || !['employee', 'supervisor', 'owner'].includes(role)) {
+    return { error: 'لا تملك صلاحية.' }
+  }
+  return {
+    tenantId: profile.tenant_id as string,
+    userId: profile.id as string,
+    dsbRole: role,
+  }
+}
+
+/**
  * Cascade-delete a single case and everything that hangs off it:
  *   audit log, notes, checklist responses, breakdown items, uploads,
  *   upload tokens. The case row itself is deleted last.
@@ -68,21 +99,45 @@ async function cascadeDeleteCases(
 // Delete a single case + its children.
 // ---------------------------------------------------------------------------
 
+/**
+ * Deleting a case is allowed:
+ *   - Owners: at any stage
+ *   - Employees / supervisors: only while the case is still early (draft /
+ *     with_employee / with_supervisor). Once it reaches a manager for signing
+ *     or later, only an owner can delete — this stops accidental loss of
+ *     signed / delivered records.
+ *
+ * The "delete duplicate uploaded twice" use case (which motivated broadening
+ * this permission) always falls inside the early stages, so it's covered.
+ */
+const EARLY_DELETABLE_STATUSES = ['draft', 'with_employee', 'with_supervisor'] as const
+
 export async function deleteCase(
   input: { case_id: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const caller = await resolveOwner()
+  // Resolve any write-role caller (employee / supervisor / owner). Below we
+  // decide whether their role is enough for the case's current stage.
+  const caller = await resolveWriteRole()
   if ('error' in caller) return { ok: false, error: caller.error }
   if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
 
   const svc = createSupabaseService()
   const { data: kase } = await svc
     .from('dsb_cases')
-    .select('id, tenant_id')
+    .select('id, tenant_id, status')
     .eq('tenant_id', caller.tenantId)
     .eq('id', input.case_id)
     .maybeSingle()
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const status = (kase as { status: string }).status
+  const isEarly = (EARLY_DELETABLE_STATUSES as readonly string[]).includes(status)
+  if (caller.dsbRole !== 'owner' && !isEarly) {
+    return {
+      ok: false,
+      error: 'هذا الطلب متقدّم في المسار — الحذف متاح للمدير فقط.',
+    }
+  }
 
   try {
     await cascadeDeleteCases(svc, caller.tenantId, [input.case_id])

@@ -357,7 +357,14 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             {kase.status === 'signed' && canDeliver && (
               <DeliverDocumentButton caseId={kase.id} />
             )}
-            {dsbRole === 'owner' && (
+            {/* Delete case:
+                - Owner: any stage
+                - Employee/supervisor: only while the case is still early
+                  (draft / with_employee / with_supervisor). Motivated by
+                  the "duplicate uploaded twice" cleanup scenario. Server
+                  re-checks the same rule. */}
+            {(dsbRole === 'owner' ||
+              (canWrite && ['draft', 'with_employee', 'with_supervisor'].includes(kase.status))) && (
               <DeleteCaseButton
                 caseId={kase.id}
                 caseNumber={kase.case_number}
