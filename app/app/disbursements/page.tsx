@@ -19,6 +19,9 @@ type CaseRow = {
   submitted_at: string | null
   signed_at: string | null
   created_at: string
+  // JSONB blob from AI extraction. We only pluck beneficiary_name_ar for
+  // the kanban card display; the full shape is defined elsewhere.
+  extracted_fields: { beneficiary_name_ar?: string | null } | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
 }
@@ -276,7 +279,7 @@ export default async function DisbursementsDashboardPage({
       let q = svc
         .from('dsb_cases')
         .select(
-          `id, case_number, voucher_number_text, amount_sar, status, submitted_at, signed_at, created_at,
+          `id, case_number, voucher_number_text, amount_sar, status, submitted_at, signed_at, created_at, extracted_fields,
            project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id),
            developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
         )
@@ -530,6 +533,11 @@ export default async function DisbursementsDashboardPage({
                                 {c.voucher_number_text && (
                                   <div className="text-xs text-slate-600 truncate mt-0.5">
                                     سند {c.voucher_number_text}
+                                  </div>
+                                )}
+                                {c.extracted_fields?.beneficiary_name_ar && (
+                                  <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                                    المستفيد: {c.extracted_fields.beneficiary_name_ar}
                                   </div>
                                 )}
                                 <div className="text-sm font-bold text-slate-900 mt-1">

@@ -17,6 +17,9 @@ type CaseRow = {
   status: string
   submitted_at: string | null
   created_at: string
+  // Only the beneficiary name is displayed on the card; other JSONB keys
+  // stay defined at the case detail level.
+  extracted_fields: { beneficiary_name_ar?: string | null } | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
 }
@@ -160,7 +163,7 @@ export default async function DisbursementsBoardPage({
   let casesQuery = svc
     .from('dsb_cases')
     .select(
-      `id, case_number, voucher_number_text, amount_sar, status, submitted_at, created_at,
+      `id, case_number, voucher_number_text, amount_sar, status, submitted_at, created_at, extracted_fields,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -289,6 +292,11 @@ export default async function DisbursementsBoardPage({
                             {c.voucher_number_text && (
                               <div className="text-xs text-slate-600 truncate mt-0.5">
                                 سند {c.voucher_number_text}
+                              </div>
+                            )}
+                            {c.extracted_fields?.beneficiary_name_ar && (
+                              <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                                المستفيد: {c.extracted_fields.beneficiary_name_ar}
                               </div>
                             )}
                             <div className="text-sm font-bold text-slate-900 mt-1">
