@@ -26,6 +26,7 @@ export function EditableArchiveRow({
   developer,
   voucherNumber,
   amountLabel,
+  beneficiaryName,
   recipientName,
   recipientPhone,
   deliveredAt,
@@ -42,6 +43,8 @@ export function EditableArchiveRow({
   developer: { company_name_ar: string } | null
   voucherNumber: string | null
   amountLabel: string
+  // Beneficiary name from the AI-extracted fields (read-only display).
+  beneficiaryName: string | null
   recipientName: string | null
   recipientPhone: string | null
   deliveredAt: string | null
@@ -135,6 +138,11 @@ export function EditableArchiveRow({
       </Td>
       <Td>
         <span className="font-mono">{amountLabel}</span>
+      </Td>
+
+      {/* Beneficiary cell — read-only, source is AI-extracted fields. */}
+      <Td>
+        <span className="text-slate-900">{beneficiaryName ?? '—'}</span>
       </Td>
 
       {/* Paid-from account cell — editable */}
