@@ -251,7 +251,7 @@ export default async function DeliveryDocumentPage({
             <FactRow label="المبلغ" value={fmtSar(kase.amount_sar)} mono />
             <FactRow label="تاريخ السند" value={fmtDate(kase.voucher_date)} />
             <FactRow label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
-            <FactRow label="الحالة" value={isDelivered ? 'مسلَّمة' : 'موقّعة'} />
+            <FactRow label="الحالة" value={isDelivered ? 'مسلَّمة' : 'جاهزة للتسليم'} />
             <FactRow label="وقع نهائياً" value={signedDisplay} />
           </section>
 

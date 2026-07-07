@@ -394,18 +394,29 @@ export async function signCase(input: { case_id: string }): Promise<{ ok: true }
   const svc = createSupabaseService()
   const kase = await loadCase(caller.tenantId, input.case_id)
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
-  if (kase.status !== 'with_owner') return { ok: false, error: 'لا يمكن التوقيع في الحالة الحالية.' }
+  // Allow signing from with_owner (first-time sign, transitions to signed)
+  // AND from signed (re-sign at the "جاهزة للتسليم" stage — refreshes signed_at
+  // and audit trail without changing status or reassigning signed_by_user_id).
+  if (kase.status !== 'with_owner' && kase.status !== 'signed') {
+    return { ok: false, error: 'لا يمكن التوقيع في الحالة الحالية.' }
+  }
+  const isReSign = kase.status === 'signed'
+  const previousStatus = kase.status
 
   const project = single(kase.project)
   const developer = single(kase.developer)
 
+  const updatePayload: Record<string, string | null> = {
+    signed_at: new Date().toISOString(),
+  }
+  if (!isReSign) {
+    updatePayload.status = 'signed'
+    updatePayload.signed_by_user_id = caller.userId
+  }
+
   const { error: updErr } = await svc
     .from('dsb_cases')
-    .update({
-      status: 'signed',
-      signed_at: new Date().toISOString(),
-      signed_by_user_id: caller.userId,
-    })
+    .update(updatePayload)
     .eq('id', input.case_id)
     .eq('tenant_id', caller.tenantId)
   if (updErr) return { ok: false, error: updErr.message }
@@ -413,28 +424,34 @@ export async function signCase(input: { case_id: string }): Promise<{ ok: true }
   await svc.from('dsb_audit_log').insert({
     tenant_id: caller.tenantId,
     case_id: input.case_id,
-    event: 'signed',
+    event: isReSign ? 'signature_replaced' : 'signed',
     actor_user_id: caller.userId,
-    from_status: 'with_owner',
+    from_status: previousStatus,
     to_status: 'signed',
+    notes: isReSign ? 'استُبدل التوقيع في مرحلة الجاهزة للتسليم.' : null,
   })
 
-  // Email developer (and assigned employee for record).
-  const devEmail = (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
-  const ctx = {
-    caseNumber: kase.case_number,
-    projectName: project?.name_ar ?? '—',
-    developerName: developer?.company_name_ar ?? '—',
-    amountSar: kase.amount_sar,
-    caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
-  }
-  if (devEmail && isDeveloperNotificationEnabled()) {
-    sendSignedEmail({ to: devEmail, ...ctx, caseUrl: appUrl(`/developer/${input.case_id}`) })
-      .catch((e) => console.error('[dsb] email failed', e))
-  }
-  const empEmail = await userEmail(svc, project?.assigned_employee_id)
-  if (empEmail) {
-    sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+  // Only fire notification emails on the first-time transition. Re-signs stay
+  // silent — the case is already in the "جاهزة للتسليم" stage and everyone
+  // downstream has already been alerted.
+  if (!isReSign) {
+    // Email developer (and assigned employee for record).
+    const devEmail = (await userEmail(svc, developer?.user_id)) ?? developer?.contact_email ?? null
+    const ctx = {
+      caseNumber: kase.case_number,
+      projectName: project?.name_ar ?? '—',
+      developerName: developer?.company_name_ar ?? '—',
+      amountSar: kase.amount_sar,
+      caseUrl: appUrl(`/app/disbursements/${input.case_id}`),
+    }
+    if (devEmail && isDeveloperNotificationEnabled()) {
+      sendSignedEmail({ to: devEmail, ...ctx, caseUrl: appUrl(`/developer/${input.case_id}`) })
+        .catch((e) => console.error('[dsb] email failed', e))
+    }
+    const empEmail = await userEmail(svc, project?.assigned_employee_id)
+    if (empEmail) {
+      sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
+    }
   }
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
@@ -1528,8 +1545,11 @@ export async function signCaseWithUploadedDocument(
   const svc = createSupabaseService()
   const kase = await loadCase(caller.tenantId, input.case_id)
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
-  if (kase.status === 'cancelled') {
-    return { ok: false, error: 'لا يمكن توقيع طلب ملغى.' }
+  // Sign path is open at two stages: with_owner (first-time sign, transitions
+  // to signed) and signed (re-sign — replaces the signed PDF, refreshes
+  // signed_at, keeps status).
+  if (kase.status !== 'with_owner' && kase.status !== 'signed') {
+    return { ok: false, error: 'لا يمكن التوقيع في الحالة الحالية.' }
   }
 
   const project = single(kase.project)
@@ -1537,13 +1557,16 @@ export async function signCaseWithUploadedDocument(
   const wasAlreadySigned = kase.status === 'signed'
   const previousStatus = kase.status
 
+  // Re-sign always bumps signed_at (so it reflects the LATEST signature time)
+  // but keeps status and signed_by_user_id untouched. First-time sign also
+  // transitions status and records signed_by_user_id.
   const updatePayload: Record<string, string | null> = {
     signed_document_path: input.storage_path,
     signed_document_filename: sanitizeFilename(input.filename),
+    signed_at: new Date().toISOString(),
   }
   if (!wasAlreadySigned) {
     updatePayload.status = 'signed'
-    updatePayload.signed_at = new Date().toISOString()
     updatePayload.signed_by_user_id = caller.userId
   }
 
@@ -1557,12 +1580,12 @@ export async function signCaseWithUploadedDocument(
   await svc.from('dsb_audit_log').insert({
     tenant_id: caller.tenantId,
     case_id: input.case_id,
-    event: wasAlreadySigned ? 'signed_document_attached' : 'signed_with_document',
+    event: wasAlreadySigned ? 'signature_replaced' : 'signed_with_document',
     actor_user_id: caller.userId,
     from_status: previousStatus,
     to_status: 'signed',
     notes: wasAlreadySigned
-      ? `تم إرفاق نسخة موقّعة لاحقًا: ${updatePayload.signed_document_filename}`
+      ? `استُبدل التوقيع برفع مستند جديد: ${updatePayload.signed_document_filename}`
       : `تم التوقيع برفع مستند موقّع يدويًا: ${updatePayload.signed_document_filename}`,
   })
 
@@ -1924,8 +1947,11 @@ export async function signCaseWithDrawnSignature(
   // Load case + current PDF upload.
   const kase = await loadCase(caller.tenantId, input.case_id)
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
-  if (kase.status === 'cancelled') {
-    return { ok: false, error: 'لا يمكن توقيع طلب ملغى.' }
+  // Sign path is open at two stages: with_owner (first-time sign, transitions
+  // to signed) and signed (re-sign — the drawn signature replaces the signed
+  // PDF, refreshes signed_at, keeps status).
+  if (kase.status !== 'with_owner' && kase.status !== 'signed') {
+    return { ok: false, error: 'لا يمكن التوقيع في الحالة الحالية.' }
   }
 
   const { data: uploadRow } = await svc
@@ -2034,15 +2060,16 @@ export async function signCaseWithDrawnSignature(
     return { ok: false, error: 'تعذّر حفظ الملف الموقّع.' }
   }
 
-  // Update the case row.
+  // Update the case row. Re-sign at 'signed' always bumps signed_at (latest
+  // signature time) but leaves status and signed_by_user_id untouched.
   const wasAlreadySigned = kase.status === 'signed'
   const updatePayload: Record<string, string | null> = {
     signed_document_path: newPath,
     signed_document_filename: `${safeBase}-signed.pdf`,
+    signed_at: new Date().toISOString(),
   }
   if (!wasAlreadySigned) {
     updatePayload.status = 'signed'
-    updatePayload.signed_at = new Date().toISOString()
     updatePayload.signed_by_user_id = caller.userId
   }
   const { error: updErr } = await svc
@@ -2055,11 +2082,13 @@ export async function signCaseWithDrawnSignature(
   await svc.from('dsb_audit_log').insert({
     tenant_id: caller.tenantId,
     case_id: input.case_id,
-    event: wasAlreadySigned ? 'signature_redrawn' : 'signed_with_drawn_signature',
+    event: wasAlreadySigned ? 'signature_replaced' : 'signed_with_drawn_signature',
     actor_user_id: caller.userId,
     from_status: kase.status,
     to_status: 'signed',
-    notes: 'تم التوقيع إلكترونيًا بقلم رقمي وحفظ النسخة الموقّعة.',
+    notes: wasAlreadySigned
+      ? 'استُبدل التوقيع إلكترونيًا بقلم رقمي وحُفظت نسخة موقّعة جديدة.'
+      : 'تم التوقيع إلكترونيًا بقلم رقمي وحفظ النسخة الموقّعة.',
     occurred_at: new Date().toISOString(),
   })
 

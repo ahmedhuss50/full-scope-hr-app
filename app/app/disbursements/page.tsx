@@ -77,8 +77,8 @@ const PIPELINE_COLUMNS: {
 }[] = [
   { key: 'with_employee',          title: 'بانتظار الموظف',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
   { key: 'with_supervisor',        title: 'بانتظار السوبرفايزر',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'with_owner',             title: 'بانتظار التوقيع',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'signed',                 title: 'موقّعة',                  headCls: 'bg-green-50 text-green-800 border-green-200' },
+  { key: 'with_owner',             title: 'بانتظار مدير المراجعة',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  { key: 'signed',                 title: 'جاهزة للتسليم',            headCls: 'bg-green-50 text-green-800 border-green-200' },
   { key: 'sent_back_to_developer', title: 'أعيدت إلى المطور',        headCls: 'bg-red-50 text-red-800 border-red-200' },
 ]
 
@@ -96,7 +96,7 @@ function describeEvent(event: string, toStatus: string | null): EventDescriptor 
     return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد الموظف وأرسل للسوبرفايزر' }
   }
   if (event === 'supervisor_approved') {
-    return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل للتوقيع النهائي' }
+    return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل إلى مدير المراجعة' }
   }
   if (event === 'sent_back') {
     return { Icon: RotateCcw, iconCls: 'text-red-700 bg-red-50', label: 'أعيدت إلى المطور' }
@@ -112,7 +112,7 @@ function describeEvent(event: string, toStatus: string | null): EventDescriptor 
       return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد الموظف وأرسل للسوبرفايزر' }
     }
     if (toStatus === 'with_owner') {
-      return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل للتوقيع النهائي' }
+      return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل إلى مدير المراجعة' }
     }
     if (toStatus === 'sent_back_to_developer') {
       return { Icon: RotateCcw, iconCls: 'text-red-700 bg-red-50', label: 'أعيدت إلى المطور' }
@@ -458,7 +458,7 @@ export default async function DisbursementsDashboardPage({
           hint={roleLabelAr(dsbRole)}
         />
         <KpiCard label="إجمالي النشطة" value={String(activeCount)} />
-        <KpiCard label="موقّعة هذا الشهر" value={String(signedThisMonthCount)} />
+        <KpiCard label="جاهزة للتسليم هذا الشهر" value={String(signedThisMonthCount)} />
         <KpiCard
           label="أعيدت إلى المطور"
           value={String(sentBackCount)}

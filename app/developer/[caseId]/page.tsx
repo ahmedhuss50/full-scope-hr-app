@@ -29,7 +29,7 @@ function statusPill(status: string): { cls: string; label: string } {
     case 'with_owner':
       return { cls: 'bg-blue-50 text-blue-700 ring-blue-200', label: 'قيد المراجعة' }
     case 'sent_back_to_developer': return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'أُعيدت إليك' }
-    case 'signed': return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'موقَّعة' }
+    case 'signed': return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'جاهزة للتسليم' }
     case 'cancelled': return { cls: 'bg-slate-100 text-slate-500 ring-slate-200', label: 'ملغاة' }
     default: return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: status }
   }

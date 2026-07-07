@@ -51,7 +51,7 @@ function statusPill(status: string): { cls: string; label: string } {
     case 'sent_back_to_developer':
       return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'أُعيدت إليك' }
     case 'signed':
-      return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'موقَّعة' }
+      return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'جاهزة للتسليم' }
     case 'cancelled':
       return { cls: 'bg-slate-100 text-slate-500 ring-slate-200', label: 'ملغاة' }
     default:

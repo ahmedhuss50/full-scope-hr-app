@@ -33,9 +33,9 @@ type MoveTargetStatus =
 const MOVE_TARGET_LABELS: Record<MoveTargetStatus, string> = {
   with_employee:           'بانتظار الموظف',
   with_supervisor:         'بانتظار السوبرفايزر',
-  with_owner:              'بانتظار التوقيع النهائي',
+  with_owner:              'بانتظار مدير المراجعة',
   sent_back_to_developer:  'أعيدت إلى المطور',
-  signed:                  'موقّعة',
+  signed:                  'جاهزة للتسليم',
 }
 
 const MOVE_ALLOWED_BY_ROLE: Record<'employee' | 'supervisor' | 'owner', MoveTargetStatus[]> = {
@@ -68,7 +68,11 @@ export function DecisionBar({
 
   const canApproveAsEmployee = status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee
   const canApproveAsSupervisor = status === 'with_supervisor' && dsbRole === 'supervisor'
-  const canSign = status === 'with_owner' && dsbRole === 'owner'
+  // Owner may sign at with_owner (first time — transitions to signed) OR at
+  // signed (re-sign — replaces the signed document, keeps status). In the
+  // re-sign case the buttons flip to a "replace" label.
+  const canSign = (status === 'with_owner' || status === 'signed') && dsbRole === 'owner'
+  const isReSign = status === 'signed'
   const canSendBack = ['with_employee', 'with_supervisor', 'with_owner'].includes(status) &&
     ['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')
   const canMove = ['employee', 'supervisor', 'owner'].includes(dsbRole ?? '') &&
@@ -244,7 +248,9 @@ export function DecisionBar({
               onClick={doSign}
               className="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
             >
-              {busy === 'sign' ? 'جاري التوقيع…' : 'التوقيع وإغلاق الطلب'}
+              {busy === 'sign'
+                ? (isReSign ? 'جاري تحديث التوقيع…' : 'جاري التوقيع…')
+                : (isReSign ? 'تحديث التوقيع' : 'التوقيع وإغلاق الطلب')}
             </button>
             <button
               type="button"
@@ -252,7 +258,9 @@ export function DecisionBar({
               onClick={() => fileInputRef.current?.click()}
               className="inline-flex items-center px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-700 text-sm font-semibold hover:bg-emerald-50 transition disabled:opacity-50"
             >
-              {busy === 'sign_upload' ? 'جاري الرفع والتوقيع…' : 'توقيع برفع مستند موقّع'}
+              {busy === 'sign_upload'
+                ? (isReSign ? 'جاري رفع البديل…' : 'جاري الرفع والتوقيع…')
+                : (isReSign ? 'استبدال بمستند موقّع' : 'توقيع برفع مستند موقّع')}
             </button>
             <input
               ref={fileInputRef}
@@ -267,8 +275,10 @@ export function DecisionBar({
               }}
             />
             {/* Third path: draw-to-sign in app. Server embeds the drawn
-                signature image onto the PDF and saves it as the signed doc. */}
-            <DrawSignatureDialog caseId={caseId} />
+                signature image onto the PDF and saves it as the signed doc.
+                At the signed stage this re-runs and REPLACES the previous
+                signed PDF (status stays 'signed'). */}
+            <DrawSignatureDialog caseId={caseId} mode={isReSign ? 'replace' : 'new'} />
           </>
         )}
         {canSendBack && !sendBackOpen && (

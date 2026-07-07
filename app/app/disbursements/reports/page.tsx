@@ -24,7 +24,7 @@ const STAGE_LABEL: Record<string, string> = {
   with_supervisor:        'مع المشرف',
   with_owner:             'مع المدير',
   sent_back_to_developer: 'أُعيد إلى المطوّر',
-  signed:                 'موقّعة',
+  signed:                 'جاهزة للتسليم',
   cancelled:              'ملغاة',
 }
 
@@ -423,7 +423,7 @@ export default async function ReportsPage() {
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi icon={FileText} label="إجمالي الطلبات" value={String(totalCases)} />
         <Kpi icon={TrendingUp} label="نشطة الآن" value={String(activeCases)} />
-        <Kpi icon={CheckCircle2} label="موقّعة" value={String(signedCases)} />
+        <Kpi icon={CheckCircle2} label="جاهزة للتسليم" value={String(signedCases)} />
         <Kpi icon={DollarSign} label="إجمالي المبالغ" value={fmtSar(totalAmount)} />
         <Kpi icon={Clock} label="متوسط زمن الدورة" value={fmtDuration(avgCycleMs)} />
         <Kpi
@@ -440,7 +440,7 @@ export default async function ReportsPage() {
           <Empty />
         ) : (
           <Table
-            head={['العميل', 'الإجمالي', 'النشطة', 'الموقّعة', 'أُعيدت', 'متوسط الدورة', 'المبلغ']}
+            head={['العميل', 'الإجمالي', 'النشطة', 'الجاهزة للتسليم', 'أُعيدت', 'متوسط الدورة', 'المبلغ']}
             rows={clientRows.map((r) => [
               r.name,
               String(r.total),
@@ -460,7 +460,7 @@ export default async function ReportsPage() {
           <Empty />
         ) : (
           <Table
-            head={['المشروع', 'العميل', 'الإجمالي', 'النشطة', 'الموقّعة', 'متوسط الدورة', 'المبلغ']}
+            head={['المشروع', 'العميل', 'الإجمالي', 'النشطة', 'الجاهزة للتسليم', 'متوسط الدورة', 'المبلغ']}
             rows={projectRows.map((r) => [
               `${r.code} — ${r.name}`,
               r.clientName,

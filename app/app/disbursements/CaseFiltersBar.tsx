@@ -29,8 +29,8 @@ export type FilterOption = { id: string; label: string }
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'with_employee',          label: 'بانتظار المراجع' },
   { value: 'with_supervisor',        label: 'بانتظار المشرف' },
-  { value: 'with_owner',             label: 'بانتظار المدير' },
-  { value: 'signed',                 label: 'موقّعة' },
+  { value: 'with_owner',             label: 'بانتظار مدير المراجعة' },
+  { value: 'signed',                 label: 'جاهزة للتسليم' },
   { value: 'delivered',              label: 'مسلَّمة (مؤرشفة)' },
   { value: 'sent_back_to_developer', label: 'أُعيدت إلى المطوّر' },
   { value: 'draft',                  label: 'مسودة' },

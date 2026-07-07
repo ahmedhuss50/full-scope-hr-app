@@ -39,7 +39,7 @@ function buildSteps(
     { order: 1, name_ar: 'رفع المطور',          handler: developerName },
     { order: 2, name_ar: 'مراجعة الموظف',        handler: assignedEmployeeName },
     { order: 3, name_ar: 'مراجعة السوبرفايزر',   handler: 'السوبرفايزر' },
-    { order: 4, name_ar: 'التوقيع النهائي',      handler: 'المدير' },
+    { order: 4, name_ar: 'مدير المراجعة',        handler: 'المدير' },
   ]
 
   function withStates(states: StepState[]): Step[] {

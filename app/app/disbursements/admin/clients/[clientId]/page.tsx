@@ -75,9 +75,9 @@ function casePill(status: string): { cls: string; label: string } {
   switch (status) {
     case 'with_employee':           return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار الموظف' }
     case 'with_supervisor':         return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار المشرف' }
-    case 'with_owner':              return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار التوقيع' }
+    case 'with_owner':              return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار مدير المراجعة' }
     case 'sent_back_to_developer':  return { cls: 'bg-red-50 text-red-700 ring-red-200',       label: 'أُعيدت إلى المطوّر' }
-    case 'signed':                  return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'موقَّعة' }
+    case 'signed':                  return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'جاهزة للتسليم' }
     case 'cancelled':               return { cls: 'bg-slate-100 text-slate-500 ring-slate-200', label: 'ملغاة' }
     case 'draft':                   return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: 'مسودة' }
     default:                        return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: status }

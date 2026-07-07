@@ -62,8 +62,8 @@ const PIPELINE_COLUMNS: {
 }[] = [
   { key: 'with_employee',          title: 'بانتظار الموظف',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
   { key: 'with_supervisor',        title: 'بانتظار السوبرفايزر',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'with_owner',             title: 'بانتظار التوقيع',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'signed',                 title: 'موقّعة',                  headCls: 'bg-green-50 text-green-800 border-green-200' },
+  { key: 'with_owner',             title: 'بانتظار مدير المراجعة',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  { key: 'signed',                 title: 'جاهزة للتسليم',            headCls: 'bg-green-50 text-green-800 border-green-200' },
   { key: 'sent_back_to_developer', title: 'أعيدت إلى المطور',        headCls: 'bg-red-50 text-red-800 border-red-200' },
 ]
 
@@ -220,7 +220,7 @@ export default async function DisbursementsBoardPage({
               <span className="font-mono font-bold text-lg text-slate-900">{totalCount}</span>
             </div>
             <div className="inline-flex flex-col items-center justify-center px-4 py-2 rounded-lg bg-green-50 border border-green-200 shadow-sm min-w-[5rem]">
-              <span className="text-[11px] text-green-700 font-semibold">موقّعة</span>
+              <span className="text-[11px] text-green-700 font-semibold">جاهزة للتسليم</span>
               <span className="font-mono font-bold text-lg text-green-800">{signedCount}</span>
             </div>
             <div className="inline-flex flex-col items-center justify-center px-4 py-2 rounded-lg bg-red-50 border border-red-200 shadow-sm min-w-[5rem]">

@@ -89,8 +89,8 @@ const PIPELINE_COLUMNS: {
 }[] = [
   { key: 'with_employee',          title: 'بانتظار الموظف',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
   { key: 'with_supervisor',        title: 'بانتظار السوبرفايزر',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'with_owner',             title: 'بانتظار التوقيع',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'signed',                 title: 'موقّعة',                  headCls: 'bg-green-50 text-green-800 border-green-200' },
+  { key: 'with_owner',             title: 'بانتظار مدير المراجعة',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  { key: 'signed',                 title: 'جاهزة للتسليم',            headCls: 'bg-green-50 text-green-800 border-green-200' },
   { key: 'sent_back_to_developer', title: 'أعيدت إلى المطور',        headCls: 'bg-red-50 text-red-800 border-red-200' },
 ]
 

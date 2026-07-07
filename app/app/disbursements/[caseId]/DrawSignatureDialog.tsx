@@ -78,7 +78,20 @@ function todayArabic(): string {
  */
 type Marker = { page: number; xFrac: number; yFrac: number }
 
-export function DrawSignatureDialog({ caseId }: { caseId: string }) {
+export function DrawSignatureDialog({
+  caseId,
+  mode = 'new',
+}: {
+  caseId: string
+  /**
+   * 'new'     — first-time sign at with_owner; button reads "توقيع إلكتروني".
+   * 'replace' — re-sign at signed; button reads "استبدال التوقيع" and the
+   *             server keeps status='signed' while refreshing signed_at +
+   *             the signed_document_* fields.
+   */
+  mode?: 'new' | 'replace'
+}) {
+  const isReplace = mode === 'replace'
   const router = useRouter()
   const [, startTransition] = useTransition()
 
@@ -458,7 +471,7 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold shadow-sm hover:bg-violet-700 transition"
       >
         <PenLine className="w-4 h-4" aria-hidden="true" />
-        توقيع إلكتروني
+        {isReplace ? 'استبدال التوقيع' : 'توقيع إلكتروني'}
       </button>
     )
   }
@@ -477,7 +490,7 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
         <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-200 shrink-0">
           <h3 className="serif font-bold text-base text-slate-900 inline-flex items-center gap-2">
             <PenLine className="w-4 h-4 text-violet-600" aria-hidden="true" />
-            التوقيع الإلكتروني
+            {isReplace ? 'استبدال التوقيع الإلكتروني' : 'التوقيع الإلكتروني'}
           </h3>
           <button
             type="button"
@@ -683,7 +696,9 @@ export function DrawSignatureDialog({ caseId }: { caseId: string }) {
             className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-50"
           >
             <Check className="w-4 h-4" aria-hidden="true" />
-            {busy ? 'جاري التوقيع…' : 'توقيع وحفظ'}
+            {busy
+              ? (isReplace ? 'جاري استبدال التوقيع…' : 'جاري التوقيع…')
+              : (isReplace ? 'استبدال وحفظ' : 'توقيع وحفظ')}
           </button>
         </div>
       </div>

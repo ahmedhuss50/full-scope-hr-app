@@ -48,7 +48,7 @@ export function RevertSignatureButton({ caseId }: { caseId: string }) {
   return (
     <div className="inline-flex flex-col items-stretch gap-1.5 max-w-sm">
       <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-xs leading-relaxed">
-        سيتم إعادة الطلب إلى حالة «بانتظار المدير». ستُحفظ النسخة الموقّعة السابقة في السجل ولن تُحذف من الخادم، لكنها لن تكون النسخة المعتمدة بعد الآن. هل تريد المتابعة؟
+        سيتم إعادة الطلب إلى حالة «بانتظار مدير المراجعة». ستُحفظ النسخة الموقّعة السابقة في السجل ولن تُحذف من الخادم، لكنها لن تكون النسخة المعتمدة بعد الآن. هل تريد المتابعة؟
       </div>
       <textarea
         rows={2}

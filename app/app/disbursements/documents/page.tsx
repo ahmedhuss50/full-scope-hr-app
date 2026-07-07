@@ -184,7 +184,7 @@ export default async function DeliveryDocumentsRegisterPage({
           <span className="text-sm text-slate-400 font-mono">({cases.length})</span>
         </div>
         <p className="text-sm text-slate-600">
-          كل الطلبات الموقّعة نهائياً — جاهزة لإصدار وثيقة التسليم.
+          كل الطلبات الجاهزة للتسليم — جاهزة لإصدار وثيقة التسليم.
         </p>
       </header>
 
