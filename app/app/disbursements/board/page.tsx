@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { LayoutDashboard } from 'lucide-react'
+import { LayoutDashboard, LayoutGrid, List, ArrowUp, ArrowDown } from 'lucide-react'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 
 export const dynamic = 'force-dynamic'
@@ -77,6 +77,9 @@ export default async function DisbursementsBoardPage({
     from?: string
     to?: string
     q?: string
+    view?: string   // 'board' (default) | 'list'
+    sort?: string   // 'date' | 'amount' | 'case_number'  (list view)
+    dir?: string    // 'asc' | 'desc' (list view)
   }
 }) {
   const supabase = createSupabaseServer()
@@ -109,6 +112,10 @@ export default async function DisbursementsBoardPage({
   const fFrom     = (f.from     ?? '').trim() || null
   const fTo       = (f.to       ?? '').trim() || null
   const fQ        = (f.q        ?? '').trim() || null
+  // View mode: 'board' = current kanban (default), 'list' = sortable table.
+  const view      = (f.view === 'list') ? 'list' : 'board'
+  const sortKey   = (['amount', 'date', 'case_number'].includes((f.sort ?? '')) ? f.sort : 'date') as 'amount' | 'date' | 'case_number'
+  const sortDir   = (f.dir === 'asc') ? 'asc' : 'desc'
 
   // Resolve project IDs the employee filter restricts us to. An employee
   // can be linked to a project either via the legacy assigned_employee_id
@@ -196,6 +203,61 @@ export default async function DisbursementsBoardPage({
   const signedCount = byStatus.get('signed')?.length ?? 0
   const sentBackCount = byStatus.get('sent_back_to_developer')?.length ?? 0
 
+  // ---------- List-view sort ----------
+  // `cases` is already ordered by created_at desc from the DB query. For the
+  // list view we resort in JS based on the user's chosen key/direction.
+  const sortedCases = view === 'list' ? [...cases].sort((a, b) => {
+    let cmp = 0
+    if (sortKey === 'amount') {
+      cmp = (a.amount_sar ?? 0) - (b.amount_sar ?? 0)
+    } else if (sortKey === 'case_number') {
+      cmp = a.case_number.localeCompare(b.case_number, 'ar', { numeric: true })
+    } else {
+      // 'date' — uses submitted_at, falls back to created_at
+      const ad = new Date(a.submitted_at ?? a.created_at).getTime()
+      const bd = new Date(b.submitted_at ?? b.created_at).getTime()
+      cmp = ad - bd
+    }
+    return sortDir === 'asc' ? cmp : -cmp
+  }) : cases
+
+  // ---------- URL builders — preserve every filter, mutate view/sort/dir ----------
+  const currentParams = new URLSearchParams()
+  if (fClient)   currentParams.set('client', fClient)
+  if (fProject)  currentParams.set('project', fProject)
+  if (fEmployee) currentParams.set('employee', fEmployee)
+  if (fFrom)     currentParams.set('from', fFrom)
+  if (fTo)       currentParams.set('to', fTo)
+  if (fQ)        currentParams.set('q', fQ)
+
+  function urlWith(overrides: Record<string, string | null>): string {
+    const p = new URLSearchParams(currentParams.toString())
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === null || v === '') p.delete(k)
+      else p.set(k, v)
+    }
+    const qs = p.toString()
+    return qs ? `?${qs}` : '?'
+  }
+
+  // Convenience: URL that swaps direction on the currently-active sort col.
+  function sortHref(key: 'date' | 'amount' | 'case_number'): string {
+    const nextDir = (sortKey === key && sortDir === 'desc') ? 'asc' : 'desc'
+    return urlWith({ view: 'list', sort: key, dir: nextDir })
+  }
+
+  // Status label + colour classes for the list view's status pill column.
+  function statusPill(s: string): { cls: string; label: string } {
+    switch (s) {
+      case 'with_employee':          return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار الموظف' }
+      case 'with_supervisor':        return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار السوبرفايزر' }
+      case 'with_owner':             return { cls: 'bg-amber-50 text-amber-700 ring-amber-200', label: 'بانتظار مدير المراجعة' }
+      case 'signed':                 return { cls: 'bg-green-50 text-green-700 ring-green-200', label: 'جاهزة للتسليم' }
+      case 'sent_back_to_developer': return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'أعيدت إلى المطور' }
+      default:                       return { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: s }
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
       {/* Header */}
@@ -240,7 +302,108 @@ export default async function DisbursementsBoardPage({
         hideStatus
       />
 
-      {/* Pipeline */}
+      {/* View toggle — kanban vs list. Preserves all other filter params. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Link
+          href={urlWith({ view: 'board', sort: null, dir: null })}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+            view === 'board'
+              ? 'border-teal-300 bg-teal-50 text-teal-800'
+              : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <LayoutGrid className="w-3.5 h-3.5" aria-hidden="true" />
+          لوحة
+        </Link>
+        <Link
+          href={urlWith({ view: 'list' })}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+            view === 'list'
+              ? 'border-teal-300 bg-teal-50 text-teal-800'
+              : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <List className="w-3.5 h-3.5" aria-hidden="true" />
+          قائمة
+        </Link>
+      </div>
+
+      {/* List view — table across the full width, sortable columns. */}
+      {view === 'list' && (
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          {sortedCases.length === 0 ? (
+            <div className="p-10 text-center text-sm text-slate-500">لا توجد نتائج.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr className="text-right">
+                    <SortableTh href={sortHref('case_number')} active={sortKey === 'case_number'} dir={sortDir}>
+                      رقم الطلب
+                    </SortableTh>
+                    <Th>المرحلة</Th>
+                    <Th>المشروع</Th>
+                    <Th>العميل</Th>
+                    <Th>رقم السند</Th>
+                    <Th>المستفيد</Th>
+                    <SortableTh href={sortHref('amount')} active={sortKey === 'amount'} dir={sortDir}>
+                      المبلغ
+                    </SortableTh>
+                    <SortableTh href={sortHref('date')} active={sortKey === 'date'} dir={sortDir}>
+                      تاريخ الإرسال
+                    </SortableTh>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedCases.map((c) => {
+                    const proj = single(c.project)
+                    const dev = single(c.developer)
+                    const pill = statusPill(c.status)
+                    return (
+                      <tr key={c.id} className="hover:bg-slate-50 transition">
+                        <Td>
+                          <Link
+                            href={`/app/disbursements/${c.id}`}
+                            className="font-mono text-xs font-semibold text-teal-700 hover:text-teal-900"
+                          >
+                            {c.case_number}
+                          </Link>
+                        </Td>
+                        <Td>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ring-1 ring-inset ${pill.cls}`}>
+                            {pill.label}
+                          </span>
+                        </Td>
+                        <Td>
+                          {proj ? (
+                            <span>
+                              <span className="font-mono text-xs text-slate-500">{proj.code}</span>
+                              <span className="text-slate-400 mx-1">·</span>
+                              <span className="text-slate-900">{proj.name_ar}</span>
+                            </span>
+                          ) : '—'}
+                        </Td>
+                        <Td>{dev?.company_name_ar ?? '—'}</Td>
+                        <Td>
+                          <span className="font-mono text-xs">{c.voucher_number_text ?? '—'}</span>
+                        </Td>
+                        <Td>{c.extracted_fields?.beneficiary_name_ar ?? '—'}</Td>
+                        <Td>
+                          <span className="font-mono font-semibold text-slate-900">{fmtSar(c.amount_sar)}</span>
+                        </Td>
+                        <Td>{fmtDate(c.submitted_at ?? c.created_at)}</Td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Pipeline (kanban) — default view. */}
+      {view === 'board' && (
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="p-4 sm:p-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -316,6 +479,45 @@ export default async function DisbursementsBoardPage({
           </div>
         </div>
       </section>
+      )}
     </div>
   )
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+      {children}
+    </th>
+  )
+}
+
+function SortableTh({
+  children,
+  href,
+  active,
+  dir,
+}: {
+  children: React.ReactNode
+  href: string
+  active: boolean
+  dir: 'asc' | 'desc'
+}) {
+  return (
+    <th className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+      <Link
+        href={href}
+        className={`inline-flex items-center gap-1 hover:text-teal-700 transition ${active ? 'text-teal-700' : ''}`}
+      >
+        {children}
+        {active && (dir === 'asc'
+          ? <ArrowUp className="w-3 h-3" aria-hidden="true" />
+          : <ArrowDown className="w-3 h-3" aria-hidden="true" />)}
+      </Link>
+    </th>
+  )
+}
+
+function Td({ children }: { children: React.ReactNode }) {
+  return <td className="px-3 py-2 text-sm text-slate-700 align-top">{children}</td>
 }
