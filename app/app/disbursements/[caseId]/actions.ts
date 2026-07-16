@@ -8,6 +8,7 @@ import {
   sendSupervisorApprovedEmail,
   sendSentBackToDeveloperEmail,
   sendSignedEmail,
+  sendReadyForDeliveryEmail,
   isDeveloperNotificationEnabled,
 } from '@/lib/email/disbursement-emails'
 
@@ -45,6 +46,49 @@ async function resolveCaller(): Promise<
     userId: profile.id as string,
     dsbRole: (profile.dsb_role as DsbRole | null) ?? null,
     email: user.email,
+  }
+}
+
+/**
+ * Fire "ready for delivery" emails to every deliverer assigned to this
+ * project — via the dsb_project_employees junction, filtered by role.
+ * Deliverers deliberately don't get the "uploaded" email; this is their
+ * first touchpoint on a case.
+ *
+ * Fire-and-forget — logs but never throws, so signing never fails on an
+ * SMTP hiccup.
+ */
+async function emailDeliverersOnSigned(
+  svc: ReturnType<typeof createSupabaseService>,
+  tenantId: string,
+  projectId: string | null,
+  ctx: {
+    caseNumber: string
+    projectName: string
+    developerName: string
+    amountSar: number | null
+    caseUrl: string
+  },
+): Promise<void> {
+  if (!projectId) return
+  const { data: junctionRows } = await svc
+    .from('dsb_project_employees')
+    .select('user_id')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+  const userIds = ((junctionRows ?? []) as { user_id: string }[]).map((r) => r.user_id)
+  if (userIds.length === 0) return
+  const { data: userRows } = await svc
+    .from('users')
+    .select('email, dsb_role')
+    .in('id', userIds)
+  const deliverers = ((userRows ?? []) as { email: string | null; dsb_role: string | null }[])
+    .filter((u) => u.dsb_role === 'deliverer' && u.email)
+    .map((u) => u.email as string)
+  for (const to of deliverers) {
+    sendReadyForDeliveryEmail({ ...ctx, to }).catch(
+      (e) => console.error('[dsb] emailDeliverersOnSigned failed', e),
+    )
   }
 }
 
@@ -452,6 +496,8 @@ export async function signCase(input: { case_id: string }): Promise<{ ok: true }
     if (empEmail) {
       sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
     }
+    // Notify all deliverers assigned to this project — their queue starts now.
+    await emailDeliverersOnSigned(svc, caller.tenantId, project?.id ?? null, ctx)
   }
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
@@ -726,6 +772,8 @@ export async function moveCaseToStage(
     if (empEmail) {
       sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
     }
+    // Notify all deliverers assigned to this project — their queue starts now.
+    await emailDeliverersOnSigned(svc, caller.tenantId, project?.id ?? null, ctx)
   }
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
@@ -1609,6 +1657,8 @@ export async function signCaseWithUploadedDocument(
     if (empEmail) {
       sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
     }
+    // Notify all deliverers assigned to this project — their queue starts now.
+    await emailDeliverersOnSigned(svc, caller.tenantId, project?.id ?? null, ctx)
   }
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
@@ -2113,6 +2163,8 @@ export async function signCaseWithDrawnSignature(
     if (empEmail) {
       sendSignedEmail({ to: empEmail, ...ctx }).catch((e) => console.error('[dsb] email failed', e))
     }
+    // Notify all deliverers assigned to this project — their queue starts now.
+    await emailDeliverersOnSigned(svc, caller.tenantId, project?.id ?? null, ctx)
   }
 
   revalidatePath(`/app/disbursements/${input.case_id}`)

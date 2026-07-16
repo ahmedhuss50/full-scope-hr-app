@@ -159,6 +159,27 @@ export function sendSignedEmail(ctx: CaseEmailContext) {
 }
 
 /**
+ * Sent to a deliverer when a case becomes ready to hand off (status → signed
+ * / جاهزة للتسليم). Deliverers deliberately do NOT get the "uploaded" email
+ * — their job starts here. Same context payload as sendSignedEmail; only the
+ * subject + call-to-action wording changes.
+ */
+export function sendReadyForDeliveryEmail(ctx: CaseEmailContext) {
+  const body = html(`
+    <h2 style="margin:0 0 12px;">طلب صرف جاهز للتسليم</h2>
+    <p>طلب الصرف <strong>${ctx.caseNumber}</strong> (مشروع ${ctx.projectName}، المطوّر ${ctx.developerName})، والمبلغ ${fmtAmount(ctx.amountSar)} — أصبح جاهزًا للتسليم.</p>
+    <p><a href="${ctx.caseUrl}" style="display:inline-block;padding:10px 16px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:700;">تسليم الوثيقة</a></p>
+  `)
+  return withTimeout(sendEmail({
+    to: ctx.to,
+    from: DSB_FROM,
+    subject: 'طلب صرف جاهز للتسليم',
+    html: body,
+    locale: 'ar',
+  }))
+}
+
+/**
  * Welcome email — sent to a newly-added staff member to give them their
  * sign-in link and a one-paragraph orientation. Owner-triggered from the
  * admin page (single button or per-row).

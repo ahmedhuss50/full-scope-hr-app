@@ -328,12 +328,17 @@ export async function finalizeStaffUpload(
   )
 
   if (recipients.length > 0) {
+    // Fetch role too so we can filter out deliverers — deliverers only care
+    // about signed docs (ready to hand off), not fresh uploads. They'll get
+    // a targeted email at the sign stage instead. See sign* actions in
+    // [caseId]/actions.ts.
     const { data: empRows } = await svc
       .from('users')
-      .select('email')
+      .select('email, dsb_role')
       .in('id', recipients)
-    const emails = ((empRows ?? []) as { email: string | null }[])
-      .map((e) => e.email)
+    const emails = ((empRows ?? []) as { email: string | null; dsb_role: string | null }[])
+      .filter((r) => r.dsb_role !== 'deliverer')
+      .map((r) => r.email)
       .filter((e): e is string => !!e)
     const origin = process.env.NEXT_PUBLIC_APP_URL || 'https://app.fullscope.sa'
     for (const to of emails) {
