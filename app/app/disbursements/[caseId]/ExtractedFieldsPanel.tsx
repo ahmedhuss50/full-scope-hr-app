@@ -41,6 +41,13 @@ export type ExtractedFields = {
   invoice_total_sar?: number | null
   invoice_vat_sar?: number | null
   issued_to?: string | null
+  invoices?: Array<{
+    number?: string | null
+    date?: string | null
+    total_sar?: number | null
+    vat_sar?: number | null
+    issued_to?: string | null
+  }> | null
   disbursement_type_label_ar?: string | null
   disbursement_type_code?: DisbursementTypeCode | null
   line_items?: Array<{
@@ -204,6 +211,16 @@ export function ExtractedFieldsPanel({
     null
 
   const lineItems = Array.isArray(extracted.line_items) ? extracted.line_items : []
+  const invoices = Array.isArray(extracted.invoices) ? extracted.invoices : []
+  const hasMultipleInvoices = invoices.length > 1
+  const invoicesTotalSar = invoices.reduce(
+    (sum, inv) => sum + (typeof inv.total_sar === 'number' && Number.isFinite(inv.total_sar) ? inv.total_sar : 0),
+    0,
+  )
+  const invoicesVatSar = invoices.reduce(
+    (sum, inv) => sum + (typeof inv.vat_sar === 'number' && Number.isFinite(inv.vat_sar) ? inv.vat_sar : 0),
+    0,
+  )
 
   // Disbursement type — prefer the literal label the AI read off the document;
   // fall back to the canonical label for the matched code; only show the dash
@@ -259,27 +276,83 @@ export function ExtractedFieldsPanel({
             value={extracted.beneficiary_iban ?? dash}
             mono={!!extracted.beneficiary_iban}
           />
-          <Row
-            label="رقم الفاتورة"
-            value={extracted.invoice_number ?? dash}
-            mono={!!extracted.invoice_number}
-          />
-          <Row label="تاريخ الفاتورة" value={fmtDate(extracted.invoice_date ?? null)} />
-          <Row
-            label="إجمالي الفاتورة"
-            value={fmtSar(extracted.invoice_total_sar ?? null)}
-            mono={extracted.invoice_total_sar != null}
-          />
-          <Row
-            label="ضريبة القيمة المضافة"
-            value={fmtSar(extracted.invoice_vat_sar ?? null)}
-            mono={extracted.invoice_vat_sar != null}
-          />
-          {extracted.issued_to && (
-            <Row label="صادرة إلى" value={extracted.issued_to} />
+          {!hasMultipleInvoices && (
+            <>
+              <Row
+                label="رقم الفاتورة"
+                value={extracted.invoice_number ?? dash}
+                mono={!!extracted.invoice_number}
+              />
+              <Row label="تاريخ الفاتورة" value={fmtDate(extracted.invoice_date ?? null)} />
+              <Row
+                label="إجمالي الفاتورة"
+                value={fmtSar(extracted.invoice_total_sar ?? null)}
+                mono={extracted.invoice_total_sar != null}
+              />
+              <Row
+                label="ضريبة القيمة المضافة"
+                value={fmtSar(extracted.invoice_vat_sar ?? null)}
+                mono={extracted.invoice_vat_sar != null}
+              />
+              {extracted.issued_to && (
+                <Row label="صادرة إلى" value={extracted.issued_to} />
+              )}
+            </>
           )}
         </div>
       </div>
+
+      {hasMultipleInvoices && (
+        <div className="space-y-2">
+          <h3 className="serif font-bold text-sm text-slate-900">
+            الفواتير <span className="text-xs font-normal text-slate-500">({invoices.length})</span>
+          </h3>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs font-semibold text-slate-500 bg-slate-50 border-b border-slate-200">
+                  <th className="text-start py-2 px-3">رقم</th>
+                  <th className="text-start py-2 px-3 w-32">التاريخ</th>
+                  <th className="text-end py-2 px-3 w-28">الإجمالي</th>
+                  <th className="text-end py-2 px-3 w-28">الضريبة</th>
+                  <th className="text-start py-2 px-3">صادرة إلى</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv, i) => (
+                  <tr key={i} className="border-b border-slate-100 last:border-b-0">
+                    <td className="py-2 px-3 text-slate-900 font-mono tracking-tight break-all">
+                      {inv.number ?? dash}
+                    </td>
+                    <td className="py-2 px-3 text-slate-900">{fmtDate(inv.date ?? null)}</td>
+                    <td className="py-2 px-3 text-end text-slate-900 font-mono">
+                      {fmtSar(inv.total_sar ?? null)}
+                    </td>
+                    <td className="py-2 px-3 text-end text-slate-900 font-mono">
+                      {fmtSar(inv.vat_sar ?? null)}
+                    </td>
+                    <td className="py-2 px-3 text-slate-900">{inv.issued_to ?? dash}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-50 border-t border-slate-200">
+                  <td className="py-2 px-3 text-xs font-semibold text-slate-500" colSpan={2}>
+                    الإجمالي
+                  </td>
+                  <td className="py-2 px-3 text-end text-slate-900 font-mono font-semibold">
+                    {fmtSar(invoicesTotalSar)}
+                  </td>
+                  <td className="py-2 px-3 text-end text-slate-900 font-mono font-semibold">
+                    {fmtSar(invoicesVatSar)}
+                  </td>
+                  <td className="py-2 px-3" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
 
       {lineItems.length > 0 && (
         <div className="space-y-2">

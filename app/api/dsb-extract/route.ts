@@ -99,6 +99,7 @@ const SYSTEM_PROMPT = `Classify and extract fields from a Saudi real-estate disb
       "beneficiary_account_number": string|null, "beneficiary_bank_name": string|null, "beneficiary_iban": string|null,
       "invoice_number": string|null, "invoice_date": "YYYY-MM-DD"|null,
       "invoice_total_sar": number|null, "invoice_vat_sar": number|null, "issued_to": string|null,
+      "invoices": [{ "number": string|null, "date": "YYYY-MM-DD"|null, "total_sar": number|null, "vat_sar": number|null, "issued_to": string|null }]|null,
       "disbursement_type_label_ar": string|null,
       "disbursement_type_code": "admin_marketing"|"construction"|"bank_financing"|"moh_incentive"|"unit_seriousness_fees"|"vat_project_registry"|"vat_sales_payment"|"other"|null,
       "line_items": [{ "description_ar": string|null, "description_en": string|null, "quantity": number|null, "unit_price_sar": number|null, "line_total_sar": number|null }]|null,
@@ -114,6 +115,7 @@ Rules:
 - Money: numeric only (60000, not "60,000 SAR").
 - Dates: ISO YYYY-MM-DD. Convert Hijri/Arabic-numerals.
 - confidence_overall ∈ [0,1].
+- Multiple invoices: extract EACH invoice as its own object in the "invoices" array. Copy the first invoice's number/date/total/vat/issued_to into the singular fields for compatibility. Never concatenate invoice numbers into a single string.
 
 "نوع الصرف" (disbursement type) — find the TICKED option and map:
 "مصاريف إدارية وتسويقية"→admin_marketing | "مصاريف إنشائية"→construction | "من قيمة تمويل بنكي"→bank_financing | "من قيمة حافز وزارة الإسكان"→moh_incentive | "رسوم الجدية في شراء الوحدة العقارية المختارة"→unit_seriousness_fees | "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"→vat_project_registry | "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"→vat_sales_payment | other text→other. If nothing ticked → both fields null. Multiple ticks → pick best fit, note ambiguity in case_metadata.notes.`

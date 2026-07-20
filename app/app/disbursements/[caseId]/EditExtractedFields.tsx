@@ -25,6 +25,14 @@ type LineItem = {
   line_total_sar?: number | null
 }
 
+type InvoiceEntry = {
+  number?: string | null
+  date?: string | null
+  total_sar?: number | null
+  vat_sar?: number | null
+  issued_to?: string | null
+}
+
 /**
  * Editable wrapper over the AI extraction. Click "تعديل" → all extracted
  * fields become editable inputs (Arabic + English names, IBAN, invoice
@@ -74,6 +82,9 @@ export function EditExtractedFields({
   const [lineItems, setLineItems] = useState<LineItem[]>(
     Array.isArray(e.line_items) ? (e.line_items as LineItem[]) : [],
   )
+  const [invoices, setInvoices] = useState<InvoiceEntry[]>(
+    Array.isArray(e.invoices) ? (e.invoices as InvoiceEntry[]) : [],
+  )
 
   function reset() {
     setDeveloperAr((e.developer_name_ar as string | null) ?? '')
@@ -91,6 +102,7 @@ export function EditExtractedFields({
     setDtypeLabel((e.disbursement_type_label_ar as string | null) ?? '')
     setDtypeCode((e.disbursement_type_code as DisbursementTypeCode | null) ?? '')
     setLineItems(Array.isArray(e.line_items) ? (e.line_items as LineItem[]) : [])
+    setInvoices(Array.isArray(e.invoices) ? (e.invoices as InvoiceEntry[]) : [])
     setError(null)
   }
 
@@ -117,6 +129,32 @@ export function EditExtractedFields({
     setLineItems((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  function updateInvoice(idx: number, key: keyof InvoiceEntry, value: string) {
+    setInvoices((prev) => {
+      const next = prev.slice()
+      const row = { ...(next[idx] ?? {}) }
+      if (key === 'total_sar' || key === 'vat_sar') {
+        const n = value.trim() === '' ? null : Number(value)
+        ;(row as Record<string, unknown>)[key] = Number.isFinite(n as number) ? n : null
+      } else {
+        ;(row as Record<string, unknown>)[key] = value.trim() === '' ? null : value
+      }
+      next[idx] = row
+      return next
+    })
+  }
+
+  function addInvoice() {
+    setInvoices((prev) => [
+      ...prev,
+      { number: '', date: '', total_sar: null, vat_sar: null, issued_to: '' },
+    ])
+  }
+
+  function removeInvoice(idx: number) {
+    setInvoices((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   function parseNumberField(v: string): number | null {
     if (v.trim() === '') return null
     const n = Number(v)
@@ -132,6 +170,51 @@ export function EditExtractedFields({
       setError('تاريخ الفاتورة يجب أن يكون YYYY-MM-DD.')
       return
     }
+    // Per-row date validation for the invoices[] array (empty allowed).
+    for (const inv of invoices) {
+      const d = (inv.date ?? '').trim()
+      if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        setError('تواريخ الفواتير يجب أن تكون YYYY-MM-DD.')
+        return
+      }
+    }
+
+    // Reconcile the invoices[] array with the singular scalar fields.
+    //   - 0 rows  → singulars stand alone; invoices set to null.
+    //   - 1 row   → mirror the singulars into invoices[0] so the two stay
+    //               consistent on save (the editor exposes the singulars as
+    //               the primary UI when there's just one invoice).
+    //   - 2+ rows → keep the array intact; copy row 0 into the singulars so
+    //               downstream consumers reading singulars see the primary
+    //               invoice, not stale data from a prior extraction.
+    const singular: InvoiceEntry = {
+      number: invoiceNumber.trim() || null,
+      date: invoiceDate || null,
+      total_sar: parseNumberField(invoiceTotal),
+      vat_sar: parseNumberField(invoiceVat),
+      issued_to: issuedTo.trim() || null,
+    }
+
+    let invoicesOut: InvoiceEntry[] | null
+    let primary: InvoiceEntry
+    if (invoices.length === 0) {
+      invoicesOut = null
+      primary = singular
+    } else if (invoices.length === 1) {
+      // Editor shows only the singulars in this case, so the singulars are
+      // the source of truth — overwrite invoices[0] with them.
+      invoicesOut = [singular]
+      primary = singular
+    } else {
+      invoicesOut = invoices.map((inv) => ({
+        number: (inv.number ?? '') === '' ? null : inv.number,
+        date: (inv.date ?? '') === '' ? null : inv.date,
+        total_sar: typeof inv.total_sar === 'number' && Number.isFinite(inv.total_sar) ? inv.total_sar : null,
+        vat_sar: typeof inv.vat_sar === 'number' && Number.isFinite(inv.vat_sar) ? inv.vat_sar : null,
+        issued_to: (inv.issued_to ?? '') === '' ? null : inv.issued_to,
+      }))
+      primary = invoicesOut[0]!
+    }
 
     const fields: Record<string, unknown> = {
       developer_name_ar: developerAr.trim() || null,
@@ -141,11 +224,12 @@ export function EditExtractedFields({
       beneficiary_account_number: beneAccount.trim() || null,
       beneficiary_bank_name: beneBank.trim() || null,
       beneficiary_iban: beneIban.trim() || null,
-      invoice_number: invoiceNumber.trim() || null,
-      invoice_date: invoiceDate || null,
-      invoice_total_sar: parseNumberField(invoiceTotal),
-      invoice_vat_sar: parseNumberField(invoiceVat),
-      issued_to: issuedTo.trim() || null,
+      invoice_number: primary.number ?? null,
+      invoice_date: primary.date ?? null,
+      invoice_total_sar: primary.total_sar ?? null,
+      invoice_vat_sar: primary.vat_sar ?? null,
+      issued_to: primary.issued_to ?? null,
+      invoices: invoicesOut,
       disbursement_type_label_ar: dtypeLabel.trim() || null,
       disbursement_type_code: dtypeCode || null,
       line_items: lineItems.length > 0 ? lineItems : null,
@@ -242,28 +326,163 @@ export function EditExtractedFields({
         </div>
       </div>
 
-      {/* Invoice */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>رقم الفاتورة</label>
-          <input className={inputCls} value={invoiceNumber} onChange={(ev) => setInvoiceNumber(ev.target.value)} disabled={saving} />
+      {/* Invoice — singulars shown when the case has 0 or 1 invoices in the
+          array. When 2+ invoices exist, the multi-invoice table below
+          becomes the source of truth and the singulars are hidden (they get
+          re-populated from invoices[0] on save). */}
+      {invoices.length < 2 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>رقم الفاتورة</label>
+            <input className={inputCls} value={invoiceNumber} onChange={(ev) => setInvoiceNumber(ev.target.value)} disabled={saving} />
+          </div>
+          <div>
+            <label className={labelCls}>تاريخ الفاتورة</label>
+            <input type="date" className={inputCls} value={invoiceDate} onChange={(ev) => setInvoiceDate(ev.target.value)} disabled={saving} dir="ltr" />
+          </div>
+          <div>
+            <label className={labelCls}>إجمالي الفاتورة (ر.س)</label>
+            <input type="number" min="0" step="0.01" className={inputCls} value={invoiceTotal} onChange={(ev) => setInvoiceTotal(ev.target.value)} disabled={saving} dir="ltr" />
+          </div>
+          <div>
+            <label className={labelCls}>ضريبة القيمة المضافة (ر.س)</label>
+            <input type="number" min="0" step="0.01" className={inputCls} value={invoiceVat} onChange={(ev) => setInvoiceVat(ev.target.value)} disabled={saving} dir="ltr" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelCls}>صادرة إلى</label>
+            <input className={inputCls} value={issuedTo} onChange={(ev) => setIssuedTo(ev.target.value)} disabled={saving} />
+          </div>
         </div>
-        <div>
-          <label className={labelCls}>تاريخ الفاتورة</label>
-          <input type="date" className={inputCls} value={invoiceDate} onChange={(ev) => setInvoiceDate(ev.target.value)} disabled={saving} dir="ltr" />
+      )}
+
+      {/* Multi-invoice editor: shown when 2+ invoices exist. The "+ إضافة
+          فاتورة" button below promotes the singular into invoices[0] and
+          appends a blank row so the operator can start adding entries. */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h4 className="serif font-bold text-sm text-slate-900">
+            الفواتير
+            {invoices.length > 0 && (
+              <span className="text-xs font-normal text-slate-500 ms-1">({invoices.length})</span>
+            )}
+          </h4>
+          <button
+            type="button"
+            onClick={() => {
+              // If we're still in "single invoice" mode, capture the singulars
+              // as invoices[0] before appending a blank row — otherwise the
+              // switch to table mode would drop the singular values.
+              if (invoices.length < 2) {
+                const seed: InvoiceEntry = {
+                  number: invoiceNumber.trim() || null,
+                  date: invoiceDate || null,
+                  total_sar: parseNumberField(invoiceTotal),
+                  vat_sar: parseNumberField(invoiceVat),
+                  issued_to: issuedTo.trim() || null,
+                }
+                const existing = invoices.length === 1 ? invoices[0]! : seed
+                setInvoices([
+                  existing,
+                  { number: '', date: '', total_sar: null, vat_sar: null, issued_to: '' },
+                ])
+              } else {
+                addInvoice()
+              }
+            }}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+            إضافة فاتورة
+          </button>
         </div>
-        <div>
-          <label className={labelCls}>إجمالي الفاتورة (ر.س)</label>
-          <input type="number" min="0" step="0.01" className={inputCls} value={invoiceTotal} onChange={(ev) => setInvoiceTotal(ev.target.value)} disabled={saving} dir="ltr" />
-        </div>
-        <div>
-          <label className={labelCls}>ضريبة القيمة المضافة (ر.س)</label>
-          <input type="number" min="0" step="0.01" className={inputCls} value={invoiceVat} onChange={(ev) => setInvoiceVat(ev.target.value)} disabled={saving} dir="ltr" />
-        </div>
-        <div className="sm:col-span-2">
-          <label className={labelCls}>صادرة إلى</label>
-          <input className={inputCls} value={issuedTo} onChange={(ev) => setIssuedTo(ev.target.value)} disabled={saving} />
-        </div>
+        {invoices.length < 2 ? (
+          <div className="text-xs text-slate-500 text-center py-3 border border-dashed border-slate-200 rounded-md">
+            الفاتورة الحالية معروضة أعلاه. اضغط «إضافة فاتورة» لبدء إضافة فواتير متعددة.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-slate-200">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] font-semibold text-slate-500 bg-slate-50 border-b border-slate-200">
+                  <th className="text-start py-1.5 px-2">رقم</th>
+                  <th className="text-start py-1.5 px-2 w-32">التاريخ</th>
+                  <th className="text-end py-1.5 px-2 w-28">الإجمالي</th>
+                  <th className="text-end py-1.5 px-2 w-28">الضريبة</th>
+                  <th className="text-start py-1.5 px-2">صادرة إلى</th>
+                  <th className="w-10" />
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv, idx) => (
+                  <tr key={idx} className="border-b border-slate-100 last:border-b-0">
+                    <td className="py-1.5 px-1.5">
+                      <input
+                        className={inputCls + ' text-xs font-mono'}
+                        value={(inv.number as string | null) ?? ''}
+                        onChange={(ev) => updateInvoice(idx, 'number', ev.target.value)}
+                        disabled={saving}
+                      />
+                    </td>
+                    <td className="py-1.5 px-1.5">
+                      <input
+                        type="date"
+                        className={inputCls + ' text-xs'}
+                        value={(inv.date as string | null) ?? ''}
+                        onChange={(ev) => updateInvoice(idx, 'date', ev.target.value)}
+                        disabled={saving}
+                        dir="ltr"
+                      />
+                    </td>
+                    <td className="py-1.5 px-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className={inputCls + ' text-xs font-mono'}
+                        value={inv.total_sar != null ? String(inv.total_sar) : ''}
+                        onChange={(ev) => updateInvoice(idx, 'total_sar', ev.target.value)}
+                        disabled={saving}
+                        dir="ltr"
+                      />
+                    </td>
+                    <td className="py-1.5 px-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className={inputCls + ' text-xs font-mono'}
+                        value={inv.vat_sar != null ? String(inv.vat_sar) : ''}
+                        onChange={(ev) => updateInvoice(idx, 'vat_sar', ev.target.value)}
+                        disabled={saving}
+                        dir="ltr"
+                      />
+                    </td>
+                    <td className="py-1.5 px-1.5">
+                      <input
+                        className={inputCls + ' text-xs'}
+                        value={(inv.issued_to as string | null) ?? ''}
+                        onChange={(ev) => updateInvoice(idx, 'issued_to', ev.target.value)}
+                        disabled={saving}
+                      />
+                    </td>
+                    <td className="py-1.5 px-1.5 text-center">
+                      <button
+                        type="button"
+                        onClick={() => removeInvoice(idx)}
+                        disabled={saving}
+                        title="حذف الفاتورة"
+                        className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition disabled:opacity-40"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Line items */}
