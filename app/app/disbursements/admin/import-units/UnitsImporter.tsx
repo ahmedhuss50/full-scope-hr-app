@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, Loader2, CheckCircle2, AlertTriangle, X } from 'lucide-react'
+import { Upload, Loader2, CheckCircle2, AlertTriangle, X, Wand2 } from 'lucide-react'
 import {
   bulkImportUnitsFromRows,
   type BulkImportUnitRow,
@@ -21,6 +21,7 @@ type SheetSource = 'active' | 'cancelled_resold' | 'cancelled' | 'completed'
 
 type ParsedRow = {
   sheetKey: SheetSource
+  sheetName: string
   rowNumber: number
   projectRaw: string
   matchedProjectId: string | null
@@ -30,7 +31,7 @@ type ParsedRow = {
   unit_number: string
   zone_number: string | null
   block_number: string | null
-  unit_type: string | null
+  unit_type: 'villa' | 'apartment' | 'other' | null
   area_m2: number | null
   district: string | null
   city: string | null
@@ -51,14 +52,103 @@ type ParsedRow = {
   price_before_tax_sar: number | null
   vat_sar: number | null
   price_with_vat_sar: number | null
-  delivery_status: string | null
+  delivery_status: 'delivered' | 'pending' | 'other' | null
   delivery_date: string | null
 }
 
-type Mode = 'idle' | 'parsing' | 'preview' | 'importing' | 'done'
+type Mode =
+  | 'idle'
+  | 'parsing'   // reading file locally
+  | 'mapping'   // Claude figuring out columns
+  | 'manualMap' // AI failed, owner picks columns by hand
+  | 'preview'
+  | 'importing'
+  | 'done'
 
 // -----------------------------------------------------------------------------
-// Helpers
+// AI mapping types — mirror the /api/dsb-units-map-columns response.
+// -----------------------------------------------------------------------------
+
+const MAPPING_FIELDS = [
+  'unit_number',
+  'block_number',
+  'zone_number',
+  'unit_type',
+  'area_m2',
+  'district',
+  'city',
+  'region',
+  'project_name',
+  'buyer_name',
+  'buyer_id_type',
+  'buyer_id_number',
+  'buyer_nationality',
+  'buyer_phone',
+  'contract_number',
+  'contract_type',
+  'financing_type',
+  'financing_bank',
+  'sale_date',
+  'price_before_tax_sar',
+  'vat_sar',
+  'price_with_vat_sar',
+  'delivery_status',
+  'delivery_date',
+  'sale_count',
+] as const
+
+type MappingField = (typeof MAPPING_FIELDS)[number]
+
+interface ColumnMap {
+  header_row_index: number
+  columns: Record<MappingField, number | null>
+  notes_ar: string
+}
+
+// Arabic labels shown in the mapping strip + manual-mapping UI. Keep in sync
+// with MAPPING_FIELDS — one entry per key.
+const FIELD_LABELS_AR: Record<MappingField, string> = {
+  unit_number: 'رقم الوحدة',
+  block_number: 'رقم البلوك',
+  zone_number: 'رقم المنطقة (ZONE)',
+  unit_type: 'نوع الوحدة',
+  area_m2: 'المساحة',
+  district: 'الحي',
+  city: 'المدينة',
+  region: 'المنطقة',
+  project_name: 'اسم المشروع',
+  buyer_name: 'اسم العميل',
+  buyer_id_type: 'نوع الهوية',
+  buyer_id_number: 'رقم الهوية',
+  buyer_nationality: 'الجنسية',
+  buyer_phone: 'رقم الجوال',
+  contract_number: 'رقم العقد',
+  contract_type: 'نوع العقد',
+  financing_type: 'نوع التمويل',
+  financing_bank: 'الجهة التمويلية',
+  sale_date: 'تاريخ البيع',
+  price_before_tax_sar: 'السعر قبل الضريبة',
+  vat_sar: 'ضريبة القيمة المضافة',
+  price_with_vat_sar: 'السعر شامل الضريبة',
+  delivery_status: 'حالة التسليم',
+  delivery_date: 'تاريخ التسليم',
+  sale_count: 'عدد مرات البيع',
+}
+
+// One entry per sheet after step 1. Preserved through preview so we can
+// re-run the parser if the owner tweaks a mapping manually.
+interface SheetPack {
+  name: string
+  key: SheetSource
+  aoa: unknown[][]
+  mapping: ColumnMap | null   // null while awaiting AI or after AI failure
+  aiError: string | null
+  aiCostUsd: number | null
+  aiModel: string | null
+}
+
+// -----------------------------------------------------------------------------
+// Helpers — Arabic normalization + cell coercion
 // -----------------------------------------------------------------------------
 
 function normAr(s: string): string {
@@ -166,169 +256,107 @@ function toDeliveryStatus(v: unknown): 'delivered' | 'pending' | 'other' | null 
   return 'other'
 }
 
-// -----------------------------------------------------------------------------
-// Per-sheet column maps.
-//
-// Sheet 1 layout (from spec, header on row 7 → index 6):
-//   0:م  1:اسم العميل  2:نوع الـ ID  3:رقم الهوية  4:الجنسية
-//   5:نوع الإقامة  6:رقم الجوال  7:اسم المشروع  8:المنطقة  9:المدينة
-//   10:الحي  11:المساحة  12:نوع الوحدة  13:رقم المنطقة (ZONE)
-//   14:رقم الوحدة  15:عدد مرات بيع الوحدة  16:رقم البلوك  17:رقم العقد
-//   18:نوع العقد  19:نوع التمويل  20:اسم الجهة التمويلية
-//   21:تاريخ بيع الوحدة  22:سعر الوحدة قبل ضريبة  23:حالة التسليم
-//   24:تاريخ التسليم  25:VAT  26:سعر شامل ضريبة
-//
-// Sheets 2–4 use a similar layout but WITHOUT the "رقم المنطقة (ZONE)" column,
-// so every index from 13 onwards shifts LEFT by 1.
-// -----------------------------------------------------------------------------
-
-interface ColumnMap {
-  buyer_name_ar: number
-  buyer_id_type: number
-  buyer_id_number: number
-  buyer_nationality: number
-  buyer_residency_type: number
-  buyer_phone: number
-  project_name: number
-  region: number
-  city: number
-  district: number
-  area_m2: number
-  unit_type: number
-  zone_number: number | null // sheet 1 only
-  unit_number: number
-  sale_count: number
-  block_number: number
-  contract_number: number
-  contract_type: number
-  financing_type: number
-  financing_bank: number
-  sale_date: number
-  price_before_tax_sar: number
-  delivery_status: number
-  delivery_date: number
-  vat_sar: number
-  price_with_vat_sar: number
-}
-
-const SHEET1_MAP: ColumnMap = {
-  buyer_name_ar: 1,
-  buyer_id_type: 2,
-  buyer_id_number: 3,
-  buyer_nationality: 4,
-  buyer_residency_type: 5,
-  buyer_phone: 6,
-  project_name: 7,
-  region: 8,
-  city: 9,
-  district: 10,
-  area_m2: 11,
-  unit_type: 12,
-  zone_number: 13,
-  unit_number: 14,
-  sale_count: 15,
-  block_number: 16,
-  contract_number: 17,
-  contract_type: 18,
-  financing_type: 19,
-  financing_bank: 20,
-  sale_date: 21,
-  price_before_tax_sar: 22,
-  delivery_status: 23,
-  delivery_date: 24,
-  vat_sar: 25,
-  price_with_vat_sar: 26,
-}
-
-// Sheets 2–4 — same order minus the ZONE column (was index 13). Every index
-// from 14 onwards shifts down by 1.
-const SHEET_NO_ZONE_MAP: ColumnMap = {
-  buyer_name_ar: 1,
-  buyer_id_type: 2,
-  buyer_id_number: 3,
-  buyer_nationality: 4,
-  buyer_residency_type: 5,
-  buyer_phone: 6,
-  project_name: 7,
-  region: 8,
-  city: 9,
-  district: 10,
-  area_m2: 11,
-  unit_type: 12,
-  zone_number: null,
-  unit_number: 13,
-  sale_count: 14,
-  block_number: 15,
-  contract_number: 16,
-  contract_type: 17,
-  financing_type: 18,
-  financing_bank: 19,
-  sale_date: 20,
-  price_before_tax_sar: 21,
-  delivery_status: 22,
-  delivery_date: 23,
-  vat_sar: 24,
-  price_with_vat_sar: 25,
-}
-
-// -----------------------------------------------------------------------------
-// Sheet-name matching. The user's workbook has fixed Arabic sheet titles;
-// we normalize before comparing so trailing/leading whitespace or minor
-// spelling variants don't break the router.
-// -----------------------------------------------------------------------------
-
-interface SheetPlan {
-  key: SheetSource
-  headerRowIndex: number // 0-based row where headers live
-  columns: ColumnMap
-  nameHints: string[]    // normalized Arabic tokens that identify this sheet
-}
-
-const SHEET_PLANS: SheetPlan[] = [
-  {
-    key: 'active',
-    headerRowIndex: 6, // row 7 in spec (1-based)
-    columns: SHEET1_MAP,
-    nameHints: ['سجل المشترين وحدات قائمة', 'المشترين', 'قائمه'],
-  },
-  {
-    key: 'cancelled_resold',
-    headerRowIndex: 0,
-    columns: SHEET_NO_ZONE_MAP,
-    nameHints: ['الوحدات الملغيه والمعاد بيعها', 'المعاد بيعها', 'ملغيه والمعاد'],
-  },
-  {
-    key: 'cancelled',
-    headerRowIndex: 0,
-    columns: SHEET_NO_ZONE_MAP,
-    // "الوحدات الملغية" — must not match cancelled_resold; we pick the more
-    // specific match first below.
-    nameHints: ['الوحدات الملغيه', 'ملغيه'],
-  },
-  {
-    key: 'completed',
-    headerRowIndex: 0,
-    columns: SHEET_NO_ZONE_MAP,
-    nameHints: ['الوحدات المنجزه', 'منجزه', 'مسلمه'],
-  },
-]
-
-function planForSheetName(sheetName: string): SheetPlan | null {
-  const norm = normAr(sheetName)
-  // Prefer plans whose most-specific hint (first in the list) is a substring.
-  // Rank by the longest hint match to disambiguate "الملغية" vs
-  // "الملغية والمعاد بيعها" (the resold one is longer).
-  let best: { plan: SheetPlan; score: number } | null = null
-  for (const plan of SHEET_PLANS) {
-    for (const hint of plan.nameHints) {
-      const h = normAr(hint)
-      if (norm.includes(h)) {
-        const score = h.length
-        if (!best || score > best.score) best = { plan, score }
-      }
-    }
+/**
+ * Guess the sale-status bucket from an Arabic sheet name. Defaults to
+ * `active` if nothing matches — the owner can always re-tag rows in preview.
+ *
+ * Order matters: `cancelled_resold` must be checked BEFORE `cancelled` so a
+ * name containing both "ملغية" and "معاد بيعها" doesn't get labelled as
+ * plain cancelled.
+ */
+function sheetKeyFromName(sheetName: string): SheetSource {
+  const n = normAr(sheetName)
+  // Resold first — most specific.
+  if ((n.includes('ملغ') || n.includes('لغيه') || n.includes('لغيت')) &&
+      (n.includes('معاد') || n.includes('بيعها') || n.includes('اعاد'))) {
+    return 'cancelled_resold'
   }
-  return best?.plan ?? null
+  if (n.includes('ملغ') || n.includes('لغيه') || n.includes('لغيت')) {
+    return 'cancelled'
+  }
+  if (n.includes('منجز') || n.includes('مسلم') || n.includes('مسلمه')) {
+    return 'completed'
+  }
+  return 'active'
+}
+
+// Convert 0-based column index to Excel letters (0 → A, 25 → Z, 26 → AA…).
+function colIndexToLetter(i: number): string {
+  let n = i
+  let s = ''
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s
+    n = Math.floor(n / 26) - 1
+  }
+  return s
+}
+
+// -----------------------------------------------------------------------------
+// Row builder — pure function of (aoa, mapping, sheetKey). Kept outside the
+// component so the manual-mapping UI can call it too.
+// -----------------------------------------------------------------------------
+
+function buildRowsFromMapping(pack: SheetPack): ParsedRow[] {
+  if (!pack.mapping) return []
+  const { header_row_index, columns } = pack.mapping
+  const aoa = pack.aoa
+  const at = (row: unknown[], idx: number | null): unknown =>
+    idx === null || idx < 0 ? '' : row[idx]
+
+  const out: ParsedRow[] = []
+  for (let i = header_row_index + 1; i < aoa.length; i++) {
+    const row = (aoa[i] ?? []) as unknown[]
+
+    const buyerName = toStr(at(row, columns.buyer_name))
+    const unitNumber = toStr(at(row, columns.unit_number))
+
+    // Template / placeholder rows: skip if both key fields empty.
+    if (!buyerName && !unitNumber) continue
+    // Rows with no unit_number are almost always subtotal rows; skip.
+    if (!unitNumber) continue
+
+    const projectRaw = toStr(at(row, columns.project_name))
+
+    out.push({
+      sheetKey: pack.key,
+      sheetName: pack.name,
+      rowNumber: i + 1,
+      projectRaw,
+      matchedProjectId: null,
+      selectedProjectId: '',
+
+      unit_number: unitNumber,
+      zone_number: toStr(at(row, columns.zone_number)) || null,
+      block_number: toStr(at(row, columns.block_number)) || null,
+      unit_type: toUnitType(at(row, columns.unit_type)),
+      area_m2: toNumOrNull(at(row, columns.area_m2)),
+      district: toStr(at(row, columns.district)) || null,
+      city: toStr(at(row, columns.city)) || null,
+      region: toStr(at(row, columns.region)) || null,
+
+      sale_count: toNumOrNull(at(row, columns.sale_count)) ?? 1,
+      buyer_name_ar: buyerName || null,
+      buyer_id_type: toIdType(at(row, columns.buyer_id_type)),
+      buyer_id_number: toStr(at(row, columns.buyer_id_number)) || null,
+      buyer_nationality: toStr(at(row, columns.buyer_nationality)) || null,
+      // No dedicated AI field for residency subtype — the older layout stored
+      // it in a separate column; new layouts merge it into id_type. Left null
+      // and the owner can add it manually if required downstream.
+      buyer_residency_type: null,
+      buyer_phone: toStr(at(row, columns.buyer_phone)) || null,
+      contract_number: toStr(at(row, columns.contract_number)) || null,
+      contract_type: toStr(at(row, columns.contract_type)) || null,
+      financing_type: toStr(at(row, columns.financing_type)) || null,
+      financing_bank: toStr(at(row, columns.financing_bank)) || null,
+      sale_date: toIsoDateOrNull(at(row, columns.sale_date)),
+      price_before_tax_sar: toNumOrNull(at(row, columns.price_before_tax_sar)),
+      vat_sar: toNumOrNull(at(row, columns.vat_sar)),
+      price_with_vat_sar: toNumOrNull(at(row, columns.price_with_vat_sar)),
+      delivery_status: toDeliveryStatus(at(row, columns.delivery_status)),
+      delivery_date: toIsoDateOrNull(at(row, columns.delivery_date)),
+    })
+  }
+  return out
 }
 
 // -----------------------------------------------------------------------------
@@ -338,12 +366,15 @@ function planForSheetName(sheetName: string): SheetPlan | null {
 export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
   const router = useRouter()
   const [mode, setMode] = useState<Mode>('idle')
+  const [packs, setPacks] = useState<SheetPack[]>([])
   const [rows, setRows] = useState<ParsedRow[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [doneStats, setDoneStats] = useState<
     | { units: number; sales: number }
     | null
   >(null)
+  const [totalAiCostUsd, setTotalAiCostUsd] = useState<number>(0)
 
   const projectByNorm = useMemo(() => {
     const m = new Map<string, ProjectLite>()
@@ -353,7 +384,14 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
 
   async function handleFile(file: File) {
     setError(null)
+    setWarnings([])
+    setDoneStats(null)
+    setRows([])
+    setPacks([])
+    setTotalAiCostUsd(0)
     setMode('parsing')
+
+    let aoaPacks: SheetPack[] = []
     try {
       // Dynamic import — Next.js statically picks this up and bundles xlsx
       // as an async chunk. Using a non-literal specifier here breaks
@@ -364,10 +402,7 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
       const buf = await file.arrayBuffer()
       const wb = XLSX.read(buf, { type: 'array', cellDates: true })
 
-      const collected: ParsedRow[] = []
       for (const name of wb.SheetNames as string[]) {
-        const plan = planForSheetName(name)
-        if (!plan) continue // sheet we don't recognise
         const sheet = wb.Sheets[name]
         const aoa: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
           header: 1,
@@ -375,99 +410,131 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
           raw: false,
           blankrows: false,
         })
-        const parsedRows = parseSheet(aoa, plan, collected.length)
-        collected.push(...parsedRows)
+        if (!aoa || aoa.length === 0) continue
+        aoaPacks.push({
+          name,
+          key: sheetKeyFromName(name),
+          aoa,
+          mapping: null,
+          aiError: null,
+          aiCostUsd: null,
+          aiModel: null,
+        })
       }
-
-      if (collected.length === 0) {
-        setError('لم نعثر على صفوف صالحة. تأكد من أسماء الصفحات وترتيب الأعمدة.')
-        setMode('idle')
-        return
-      }
-
-      // Auto-match every row's project.
-      const matched = collected.map((r) => {
-        if (!r.projectRaw) return r
-        const proj = projectByNorm.get(normAr(r.projectRaw))
-        if (!proj) return r
-        return { ...r, matchedProjectId: proj.id, selectedProjectId: proj.id }
-      })
-
-      setRows(matched)
-      setMode('preview')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'فشل قراءة الملف.')
       setMode('idle')
+      return
     }
+
+    if (aoaPacks.length === 0) {
+      setError('لم نعثر على أي صفحات تحتوي على بيانات.')
+      setMode('idle')
+      return
+    }
+
+    // ----- Step 1: ask Claude for the column mapping of each sheet -----
+    setMode('mapping')
+    const nextPacks: SheetPack[] = []
+    let costRunning = 0
+    for (const pack of aoaPacks) {
+      // Send at most the first 10 rows — enough for the header + a couple of
+      // data rows so Claude can double-check its guess.
+      const sample = pack.aoa.slice(0, 10)
+      try {
+        const resp = await fetch('/api/dsb-units-map-columns', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sample_rows: sample, sheet_name: pack.name }),
+        })
+        const json = (await resp.json()) as
+          | { ok: true; mapping: ColumnMap; cost_usd: number; model: string }
+          | { ok: false; error: string }
+        if (!resp.ok || !json.ok) {
+          const errMsg = !json.ok ? json.error : `HTTP ${resp.status}`
+          nextPacks.push({ ...pack, aiError: errMsg })
+          continue
+        }
+        costRunning += json.cost_usd || 0
+        nextPacks.push({
+          ...pack,
+          mapping: json.mapping,
+          aiCostUsd: json.cost_usd,
+          aiModel: json.model,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        nextPacks.push({ ...pack, aiError: msg })
+      }
+    }
+
+    setPacks(nextPacks)
+    setTotalAiCostUsd(costRunning)
+
+    // If EVERY sheet failed the AI call, drop to manual-mapping mode so the
+    // owner isn't stuck. (Individual per-sheet failures also route through
+    // the same UI but only for the affected sheet.)
+    const anyOk = nextPacks.some((p) => p.mapping !== null)
+    if (!anyOk) {
+      setMode('manualMap')
+      setError(
+        'تعذّر تحليل بنية الملف بالذكاء الاصطناعي. راجع أعمدة الملف يدويًا.',
+      )
+      return
+    }
+
+    // Any partial failures produce warnings; only sheets with a mapping are
+    // parsed. The manual-mapping UI is available from the preview screen if
+    // the owner wants to fix a partial failure.
+    finalizePreview(nextPacks)
   }
 
   /**
-   * Turn a 2-D array of cells (from SheetJS) into ParsedRow[] using the
-   * given per-sheet column map. Skips template placeholder rows (no buyer
-   * name AND no unit number) and any rows above the header.
+   * Build ParsedRow[] from every pack that has a mapping, auto-match project
+   * names, and land on the preview screen. Called on both the happy path and
+   * after the owner completes a manual mapping.
    */
-  function parseSheet(
-    aoa: unknown[][],
-    plan: SheetPlan,
-    idOffset: number,
-  ): ParsedRow[] {
-    const out: ParsedRow[] = []
-    // Data starts on the row after the header.
-    for (let i = plan.headerRowIndex + 1; i < aoa.length; i++) {
-      const raw = aoa[i] ?? []
-      const cells = raw as unknown[]
-      const at = (idx: number | null): unknown => (idx === null ? '' : cells[idx])
-
-      const buyerName = toStr(at(plan.columns.buyer_name_ar))
-      const unitNumber = toStr(at(plan.columns.unit_number))
-
-      // Template / placeholder rows: skip.
-      if (!buyerName && !unitNumber) continue
-      // Sheet 1 in particular has a "totals" row that has no unit; drop those
-      // too, but only when unit is empty (buyer alone can be a real active
-      // sale awaiting a unit assignment — keep for the owner to inspect).
-      if (!unitNumber) continue
-
-      const projectRaw = toStr(at(plan.columns.project_name))
-
-      out.push({
-        sheetKey: plan.key,
-        rowNumber: i + 1,
-        projectRaw,
-        matchedProjectId: null,
-        selectedProjectId: '',
-
-        unit_number: unitNumber,
-        zone_number: toStr(at(plan.columns.zone_number)) || null,
-        block_number: toStr(at(plan.columns.block_number)) || null,
-        unit_type: toUnitType(at(plan.columns.unit_type)),
-        area_m2: toNumOrNull(at(plan.columns.area_m2)),
-        district: toStr(at(plan.columns.district)) || null,
-        city: toStr(at(plan.columns.city)) || null,
-        region: toStr(at(plan.columns.region)) || null,
-
-        sale_count: toNumOrNull(at(plan.columns.sale_count)) ?? 1,
-        buyer_name_ar: buyerName || null,
-        buyer_id_type: toIdType(at(plan.columns.buyer_id_type)),
-        buyer_id_number: toStr(at(plan.columns.buyer_id_number)) || null,
-        buyer_nationality: toStr(at(plan.columns.buyer_nationality)) || null,
-        buyer_residency_type: toStr(at(plan.columns.buyer_residency_type)) || null,
-        buyer_phone: toStr(at(plan.columns.buyer_phone)) || null,
-        contract_number: toStr(at(plan.columns.contract_number)) || null,
-        contract_type: toStr(at(plan.columns.contract_type)) || null,
-        financing_type: toStr(at(plan.columns.financing_type)) || null,
-        financing_bank: toStr(at(plan.columns.financing_bank)) || null,
-        sale_date: toIsoDateOrNull(at(plan.columns.sale_date)),
-        price_before_tax_sar: toNumOrNull(at(plan.columns.price_before_tax_sar)),
-        vat_sar: toNumOrNull(at(plan.columns.vat_sar)),
-        price_with_vat_sar: toNumOrNull(at(plan.columns.price_with_vat_sar)),
-        delivery_status: toDeliveryStatus(at(plan.columns.delivery_status)),
-        delivery_date: toIsoDateOrNull(at(plan.columns.delivery_date)),
-      })
+  function finalizePreview(packList: SheetPack[]) {
+    const warns: string[] = []
+    const collected: ParsedRow[] = []
+    for (const pack of packList) {
+      if (!pack.mapping) {
+        warns.push(
+          `تعذّر تحليل صفحة «${pack.name}» بالذكاء الاصطناعي — تم تخطّيها.` +
+            (pack.aiError ? ` (${pack.aiError})` : ''),
+        )
+        continue
+      }
+      try {
+        const built = buildRowsFromMapping(pack)
+        if (built.length === 0) {
+          warns.push(`صفحة «${pack.name}» لم تُنتِج أي صفوف صالحة.`)
+        }
+        collected.push(...built)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        warns.push(`فشل تحويل صفحة «${pack.name}»: ${msg}`)
+      }
     }
-    // idOffset is only for React keys later — no-op here.
-    void idOffset
-    return out
+
+    if (collected.length === 0) {
+      setWarnings(warns)
+      setError('لم نعثر على صفوف صالحة بعد تحليل الأعمدة.')
+      setMode('idle')
+      return
+    }
+
+    // Auto-match every row's project.
+    const matched = collected.map((r) => {
+      if (!r.projectRaw) return r
+      const proj = projectByNorm.get(normAr(r.projectRaw))
+      if (!proj) return r
+      return { ...r, matchedProjectId: proj.id, selectedProjectId: proj.id }
+    })
+
+    setRows(matched)
+    setWarnings(warns)
+    setMode('preview')
   }
 
   async function confirmImport() {
@@ -524,8 +591,11 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
 
   function reset() {
     setRows([])
+    setPacks([])
     setError(null)
+    setWarnings([])
     setDoneStats(null)
+    setTotalAiCostUsd(0)
     setMode('idle')
   }
 
@@ -541,6 +611,17 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
         >
           {error}
         </div>
+      )}
+
+      {warnings.length > 0 && (
+        <ul
+          role="alert"
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 space-y-1 list-disc ms-5"
+        >
+          {warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
       )}
 
       {mode === 'idle' && (
@@ -569,8 +650,33 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
         </div>
       )}
 
+      {mode === 'mapping' && (
+        <div className="flex items-center gap-2 text-sm text-slate-600">
+          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          <Wand2 className="w-4 h-4 text-teal-600" aria-hidden="true" />
+          جاري تحليل بنية الملف بالذكاء الاصطناعي…
+        </div>
+      )}
+
+      {mode === 'manualMap' && (
+        <ManualMappingPanel
+          packs={packs}
+          onCancel={reset}
+          onDone={(updated) => {
+            setPacks(updated)
+            finalizePreview(updated)
+          }}
+        />
+      )}
+
       {mode === 'preview' && (
         <>
+          <MappingSummary
+            packs={packs}
+            totalAiCostUsd={totalAiCostUsd}
+            onRemap={() => setMode('manualMap')}
+          />
+
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-slate-700">
               <span className="font-semibold">{rows.length}</span> صف ·{' '}
@@ -717,6 +823,227 @@ export function UnitsImporter({ projects }: { projects: ProjectLite[] }) {
         </div>
       )}
     </section>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Sub-components
+// -----------------------------------------------------------------------------
+
+/**
+ * Compact per-sheet strip showing which fields the AI mapped and to which
+ * Excel column. Also surfaces the ~cost so the owner can eyeball spend.
+ * A "تعديل يدوي" button drops back into the manual-mapping UI to override.
+ */
+function MappingSummary({
+  packs,
+  totalAiCostUsd,
+  onRemap,
+}: {
+  packs: SheetPack[]
+  totalAiCostUsd: number
+  onRemap: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-900">
+          <Wand2 className="w-3.5 h-3.5" aria-hidden="true" />
+          تحليل الذكاء الاصطناعي لأعمدة الملف
+          <span className="mx-1 text-[10px] font-mono text-teal-700">
+            (${totalAiCostUsd.toFixed(4)})
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRemap}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-teal-200 bg-white text-[11px] font-semibold text-teal-800 hover:bg-teal-50 transition"
+        >
+          تعديل يدوي
+        </button>
+      </div>
+      <ul className="space-y-1.5">
+        {packs.map((p) => (
+          <li key={p.name} className="text-[11px] text-slate-700">
+            <div className="font-semibold text-slate-900 mb-0.5">
+              «{p.name}»
+              {p.mapping && (
+                <span className="ms-1 font-normal text-slate-500">
+                  · الرأس على الصف {p.mapping.header_row_index + 1}
+                </span>
+              )}
+            </div>
+            {p.mapping ? (
+              <div className="flex flex-wrap gap-1">
+                {MAPPING_FIELDS.map((f) => {
+                  const idx = p.mapping!.columns[f]
+                  const label = FIELD_LABELS_AR[f]
+                  return (
+                    <span
+                      key={f}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ring-1 ring-inset ${
+                        idx === null
+                          ? 'bg-slate-100 text-slate-500 ring-slate-200'
+                          : 'bg-white text-teal-800 ring-teal-200'
+                      }`}
+                      title={idx === null ? 'غير موجود' : `العمود ${colIndexToLetter(idx)} (${idx})`}
+                    >
+                      {label}
+                      <span className="font-mono text-[10px] text-slate-500">
+                        {idx === null ? 'غير موجود' : colIndexToLetter(idx)}
+                      </span>
+                    </span>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="text-red-700">
+                فشل التحليل الآلي{p.aiError ? ` — ${p.aiError}` : ''}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * Manual-mapping fallback. For each sheet the owner picks the header row and
+ * a column index for every field via dropdowns. On "استمرار" we commit the
+ * mapping back onto each pack and rebuild the preview.
+ */
+function ManualMappingPanel({
+  packs,
+  onCancel,
+  onDone,
+}: {
+  packs: SheetPack[]
+  onCancel: () => void
+  onDone: (updated: SheetPack[]) => void
+}) {
+  // Local editable copy of each pack's mapping. Start from AI's mapping when
+  // available, otherwise seed with header_row_index=0 and all nulls.
+  const [draft, setDraft] = useState<SheetPack[]>(() =>
+    packs.map((p) => ({
+      ...p,
+      mapping:
+        p.mapping ??
+        ({
+          header_row_index: 0,
+          columns: MAPPING_FIELDS.reduce(
+            (acc, k) => {
+              acc[k] = null
+              return acc
+            },
+            {} as Record<MappingField, number | null>,
+          ),
+          notes_ar: '',
+        } as ColumnMap),
+    })),
+  )
+
+  function updatePack(name: string, mut: (m: ColumnMap) => ColumnMap) {
+    setDraft((prev) =>
+      prev.map((p) => (p.name === name && p.mapping ? { ...p, mapping: mut(p.mapping) } : p)),
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-4">
+      <div className="text-sm text-amber-900 font-semibold">
+        مطابقة أعمدة يدوية — اختر رقم العمود لكل حقل، ثم اضغط «استمرار».
+      </div>
+      {draft.map((p) => {
+        const mapping = p.mapping!
+        const headerRow = (p.aoa[mapping.header_row_index] ?? []) as unknown[]
+        // Build a "column N — first-value preview" list to help the owner
+        // pick the right column even when the label is ambiguous.
+        const colOptions = headerRow.map((cell, i) => {
+          const label = toStr(cell) || '(فارغ)'
+          return { i, label: `${colIndexToLetter(i)} · ${label}` }
+        })
+
+        // If the header row the AI (or the seed) picked is way past the AOA,
+        // fall back to using the first row so the dropdowns aren't empty.
+        const usableColOptions =
+          colOptions.length > 0
+            ? colOptions
+            : ((p.aoa[0] ?? []) as unknown[]).map((cell, i) => ({
+                i,
+                label: `${colIndexToLetter(i)} · ${toStr(cell) || '(فارغ)'}`,
+              }))
+
+        return (
+          <div key={p.name} className="rounded-md border border-amber-200 bg-white p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs font-semibold text-slate-900">«{p.name}»</div>
+              <label className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                صف رأس الجدول (0-based):
+                <input
+                  type="number"
+                  min={0}
+                  max={Math.max(0, p.aoa.length - 1)}
+                  value={mapping.header_row_index}
+                  onChange={(e) => {
+                    const v = Math.max(0, Number(e.target.value) || 0)
+                    updatePack(p.name, (m) => ({ ...m, header_row_index: v }))
+                  }}
+                  className="w-16 px-1.5 py-0.5 rounded border border-slate-200 text-xs"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-1.5">
+              {MAPPING_FIELDS.map((f) => {
+                const val = mapping.columns[f]
+                return (
+                  <label key={f} className="flex items-center gap-2 text-[11px]">
+                    <span className="min-w-[9rem] text-slate-700">{FIELD_LABELS_AR[f]}</span>
+                    <select
+                      value={val === null ? '' : String(val)}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        const next = raw === '' ? null : Number(raw)
+                        updatePack(p.name, (m) => ({
+                          ...m,
+                          columns: { ...m.columns, [f]: next },
+                        }))
+                      }}
+                      className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px]"
+                    >
+                      <option value="">— غير موجود —</option>
+                      {usableColOptions.map((o) => (
+                        <option key={o.i} value={o.i}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+        >
+          <X className="w-3.5 h-3.5" aria-hidden="true" />
+          إلغاء
+        </button>
+        <button
+          type="button"
+          onClick={() => onDone(draft)}
+          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition"
+        >
+          <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+          استمرار
+        </button>
+      </div>
+    </div>
   )
 }
 
