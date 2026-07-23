@@ -1,8 +1,10 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import {
+  Archive,
   ArrowRight,
   Building2,
+  Coins,
   FileSignature,
   FileSpreadsheet,
   Users,
@@ -59,6 +61,22 @@ const CARDS: CardConfig[] = [
       'الاستيراد الشامل من ملف الأستاذ الكامل (٤ صفحات: نشطة، ملغاة/معاد، ملغاة، منجزة). يُنشئ الوحدات ويضيف سجلات البيع في خطوة واحدة.',
     Icon: FileSpreadsheet,
     accentCls: 'border-amber-200 hover:border-amber-400 bg-amber-50/40',
+  },
+  {
+    href: '/app/disbursements/admin/imports/historical-cases',
+    title: 'الصرفيات السابقة (تاريخية)',
+    description:
+      'استيراد سجلات الصرف القديمة (سندات، ملفات ورقية) مباشرةً كطلبات مؤرشَفة — تظهر في الأرشيف بشارة «تاريخي» بدون المرور بمسار المراجعة.',
+    Icon: Archive,
+    accentCls: 'border-orange-200 hover:border-orange-400 bg-orange-50/40',
+  },
+  {
+    href: '/app/disbursements/admin/imports/payments',
+    title: 'دفعات (سجل مالي)',
+    description:
+      'سجل المعاملات المالية المستقل — تاريخ الدفع، المبلغ، المستفيد، المرجع، طريقة الدفع. الربط بمشروع/حساب/طلب/وحدة اختياري.',
+    Icon: Coins,
+    accentCls: 'border-emerald-200 hover:border-emerald-400 bg-emerald-50/40',
   },
 ]
 

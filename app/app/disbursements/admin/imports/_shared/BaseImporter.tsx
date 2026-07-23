@@ -103,8 +103,17 @@ export interface BaseImporterProps<TPayload> {
   /** Inject the freshly-picked project id into each row's payload right
    *  before submission. parseRow runs at file-parse time, before the user
    *  has chosen a project, so the payload can't know its project_id up
-   *  front. Default: return the payload unchanged. */
+   *  front. Default: return the payload unchanged. When `allowOrphan` is
+   *  true this is also called for rows with no project (projectId = ""). */
   attachProjectId?: (payload: TPayload, projectId: string) => TPayload
+
+  /** When true, rows without a selected project are ALSO submitted (with
+   *  empty-string projectId flowing through attachProjectId). Used by the
+   *  payments importer, where a payment row can legitimately be orphan
+   *  (no matching project in the tenant's project list). Default: false —
+   *  matches the original "you must pick a project" behavior all four
+   *  earlier importers rely on. */
+  allowOrphan?: boolean
 }
 
 type Mode =
@@ -129,6 +138,7 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
     checkExisting,
     onSubmit,
     attachProjectId,
+    allowOrphan,
   } = props
 
   const [mode, setMode] = useState<Mode>('idle')
@@ -327,15 +337,22 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
     const payloads: TPayload[] = []
     const projectIds = new Set<string>()
     for (const r of rows) {
-      if (!r.selectedProjectId) continue
+      // Skip only if the importer requires a project AND the user didn't
+      // pick one. `allowOrphan` importers (e.g. payments) let orphan rows
+      // through with an empty projectId.
+      if (!r.selectedProjectId && !allowOrphan) continue
       const finalPayload = attachProjectId
         ? attachProjectId(r.payload, r.selectedProjectId)
         : r.payload
       payloads.push(finalPayload)
-      projectIds.add(r.selectedProjectId)
+      if (r.selectedProjectId) projectIds.add(r.selectedProjectId)
     }
     if (payloads.length === 0) {
-      setError('لم تختر أي صف للاستيراد. يجب تحديد المشروع لكل صف على الأقل.')
+      setError(
+        allowOrphan
+          ? 'لا توجد صفوف صالحة للاستيراد.'
+          : 'لم تختر أي صف للاستيراد. يجب تحديد المشروع لكل صف على الأقل.',
+      )
       return
     }
     setMode('importing')
@@ -375,7 +392,11 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
   }
 
   const matchedCount = rows.filter((r) => !!r.matchedProjectId).length
-  const willImportCount = rows.filter((r) => !!r.selectedProjectId).length
+  // When allowOrphan is on, EVERY parsed row counts toward the import — the
+  // "no project" case is legitimate rather than "skip".
+  const willImportCount = allowOrphan
+    ? rows.length
+    : rows.filter((r) => !!r.selectedProjectId).length
   const unmatchedUnitCount = rows.filter(
     (r) => !!r.selectedProjectId && r.unitExists === false,
   ).length

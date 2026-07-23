@@ -80,6 +80,20 @@ const FIELD_KEYS = [
   'remaining_amount_sar',
   'collection_percentage',
   'price_per_meter_sar',
+  // Historical-case + payments-ledger targets (migration 056).
+  'case_number',
+  'voucher_number_text',
+  'voucher_date',
+  'case_amount_sar',
+  'disbursement_type_ar',
+  'beneficiary_name',
+  'payment_date',
+  'payment_amount',
+  'payment_reference',
+  'payment_method',
+  'payment_description',
+  'account_number',
+  'account_label',
 ] as const
 
 type FieldKey = (typeof FIELD_KEYS)[number]
@@ -98,6 +112,10 @@ Field targets — return null if the column isn't present in the sheet:
 - retention_percentage, installment_number
 - total_collected_before_tax_sar, total_collected_with_tax_sar
 - remaining_amount_sar, collection_percentage, price_per_meter_sar
+- case_number, voucher_number_text, voucher_date, case_amount_sar
+- disbursement_type_ar, beneficiary_name
+- payment_date, payment_amount, payment_reference, payment_method, payment_description
+- account_number, account_label
 
 Match by Arabic header semantics (not exact string). Examples:
   "رقم الوحدة" / "الوحدة" / "unit no" → unit_number
@@ -129,6 +147,19 @@ Match by Arabic header semantics (not exact string). Examples:
   "المبلغ المتبقي من قيمة الوحدة" / "المبلغ المتبقي" → remaining_amount_sar
   "نسبة التحصيل" / "نسبة المحصل" → collection_percentage
   "سعر المتر" / "سعر المتر المربع" → price_per_meter_sar
+  "رقم الطلب" / "رقم السند" (case identifier) → case_number
+  "رقم السند" (voucher no) → voucher_number_text
+  "تاريخ السند" → voucher_date
+  "مبلغ السند" / "قيمة السند" → case_amount_sar
+  "نوع الصرف" / "نوع المصروف" → disbursement_type_ar
+  "اسم المستفيد" / "المستفيد" → beneficiary_name
+  "تاريخ الدفع" / "تاريخ الصرف" → payment_date
+  "مبلغ الدفع" / "قيمة الدفع" / "المبلغ" (ledger row) → payment_amount
+  "رقم مرجع الدفع" / "رقم التحويل" / "المرجع" → payment_reference
+  "طريقة الدفع" / "وسيلة الدفع" → payment_method
+  "بيان" / "وصف الدفع" / "البيان" → payment_description
+  "رقم الحساب" → account_number
+  "اسم الحساب" / "الحساب" → account_label
 
 Rules:
 - Column indices are 0-based (column A = 0). Header row index is 0-based (first row = 0).
@@ -156,7 +187,14 @@ Return ONE JSON object only — no prose, no fences:
     "retention_percentage": int|null, "installment_number": int|null,
     "total_collected_before_tax_sar": int|null, "total_collected_with_tax_sar": int|null,
     "remaining_amount_sar": int|null, "collection_percentage": int|null,
-    "price_per_meter_sar": int|null
+    "price_per_meter_sar": int|null,
+    "case_number": int|null, "voucher_number_text": int|null,
+    "voucher_date": int|null, "case_amount_sar": int|null,
+    "disbursement_type_ar": int|null, "beneficiary_name": int|null,
+    "payment_date": int|null, "payment_amount": int|null,
+    "payment_reference": int|null, "payment_method": int|null,
+    "payment_description": int|null,
+    "account_number": int|null, "account_label": int|null
   },
   "notes_ar": string
 }`

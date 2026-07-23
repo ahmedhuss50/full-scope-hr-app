@@ -44,6 +44,20 @@ export const MAPPING_FIELDS = [
   'remaining_amount_sar',
   'collection_percentage',
   'price_per_meter_sar',
+  // Historical-case + payments-ledger targets (migration 056).
+  'case_number',
+  'voucher_number_text',
+  'voucher_date',
+  'case_amount_sar',
+  'disbursement_type_ar',
+  'beneficiary_name',
+  'payment_date',
+  'payment_amount',
+  'payment_reference',
+  'payment_method',
+  'payment_description',
+  'account_number',
+  'account_label',
 ] as const
 
 export type MappingField = (typeof MAPPING_FIELDS)[number]
@@ -88,6 +102,19 @@ export const FIELD_LABELS_AR: Record<MappingField, string> = {
   remaining_amount_sar: 'المبلغ المتبقي من قيمة الوحدة',
   collection_percentage: 'نسبة التحصيل',
   price_per_meter_sar: 'سعر المتر',
+  case_number: 'رقم الطلب / رقم السند',
+  voucher_number_text: 'رقم السند',
+  voucher_date: 'تاريخ السند',
+  case_amount_sar: 'مبلغ السند',
+  disbursement_type_ar: 'نوع الصرف',
+  beneficiary_name: 'اسم المستفيد',
+  payment_date: 'تاريخ الدفع',
+  payment_amount: 'مبلغ الدفع',
+  payment_reference: 'رقم المرجع',
+  payment_method: 'طريقة الدفع',
+  payment_description: 'بيان الدفع',
+  account_number: 'رقم الحساب',
+  account_label: 'اسم الحساب',
 }
 
 // Subsets used by the three focused importers. Kept as a `readonly` array so
@@ -137,6 +164,40 @@ export const CONTRACT_FIELDS: readonly MappingField[] = [
   'remaining_amount_sar',
   'collection_percentage',
   'price_per_meter_sar',
+]
+
+// Historical cases: past voucher/disbursement records loaded into dsb_cases
+// as delivered/archived. Includes case identifier + voucher info + amount +
+// disbursement type + beneficiary + delivery timing.
+export const HISTORICAL_CASE_FIELDS: readonly MappingField[] = [
+  'project_name',
+  'unit_number',
+  'case_number',
+  'voucher_number_text',
+  'voucher_date',
+  'case_amount_sar',
+  'disbursement_type_ar',
+  'beneficiary_name',
+  'sale_date',
+  'delivery_date',
+]
+
+// Payments ledger: standalone financial transactions. Every FK is optional
+// so the importer should feel free to ship ledger rows without a linked
+// project / case / unit — the server lookup fills what it can.
+export const PAYMENT_FIELDS: readonly MappingField[] = [
+  'project_name',
+  'unit_number',
+  'case_number',
+  'account_number',
+  'account_label',
+  'payment_date',
+  'payment_amount',
+  'vat_sar',
+  'beneficiary_name',
+  'payment_description',
+  'payment_reference',
+  'payment_method',
 ]
 
 // -----------------------------------------------------------------------------

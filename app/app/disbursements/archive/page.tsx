@@ -48,6 +48,10 @@ type DeliveredRow = {
   recipient_phone: string | null
   paid_from_account_id: string | null
   paid_at: string | null
+  // Flag set by the historical-cases importer (migration 056). Rendered
+  // as a "تاريخي" chip in the row so the reader can tell workflow-driven
+  // deliveries apart from bulk-imported legacy records at a glance.
+  is_historical: boolean | null
   // Only beneficiary_name_ar is pulled from the JSONB — matches the
   // kanban cards on the dashboard.
   extracted_fields: { beneficiary_name_ar?: string | null } | null
@@ -146,7 +150,7 @@ export default async function ArchivePage({
     .select(
       `id, case_number, voucher_number_text, amount_sar, delivered_at,
        delivered_by_user_id, recipient_name, recipient_phone,
-       paid_from_account_id, paid_at, extracted_fields,
+       paid_from_account_id, paid_at, extracted_fields, is_historical,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar),
        paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label)`,
@@ -355,6 +359,7 @@ export default async function ArchivePage({
                       paidFromLabel={paidFrom?.label ?? null}
                       accountOptions={projectAccounts}
                       paidAt={c.paid_at}
+                      isHistorical={!!c.is_historical}
                     />
                   )
                 })}

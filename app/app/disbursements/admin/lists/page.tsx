@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import {
   ArrowRight,
   Building2,
+  Coins,
   FileSignature,
   ListChecks,
   Users,
@@ -53,6 +54,14 @@ const CARDS: CardConfig[] = [
     Icon: FileSignature,
     accentCls: 'border-violet-200 hover:border-violet-400 bg-violet-50/40',
   },
+  {
+    href: '/app/disbursements/admin/lists/payments',
+    title: 'الدفعات (سجل مالي)',
+    description:
+      'السجل المالي المستقل — كل الدفعات المستوردة من ملفات الأستاذ القديمة، قابلة للترتيب حسب التاريخ أو المبلغ والتصفية حسب المشروع/الحساب.',
+    Icon: Coins,
+    accentCls: 'border-emerald-200 hover:border-emerald-400 bg-emerald-50/40',
+  },
 ]
 
 export default async function ListsHubPage() {
@@ -96,7 +105,7 @@ export default async function ListsHubPage() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {CARDS.map((card) => (
           <Link
             key={card.href}

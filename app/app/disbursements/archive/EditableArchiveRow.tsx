@@ -36,6 +36,7 @@ export function EditableArchiveRow({
   paidFromLabel,
   accountOptions,
   paidAt,
+  isHistorical,
 }: {
   caseId: string
   caseNumber: string
@@ -59,6 +60,10 @@ export function EditableArchiveRow({
   accountOptions: PaidFromOption[]
   // Date the disbursement was actually paid (YYYY-MM-DD).
   paidAt: string | null
+  // Flag: true when this row came from the historical-cases bulk importer
+  // (migration 056). Renders a "تاريخي" chip next to the case number so the
+  // reader can tell it apart from workflow-completed deliveries.
+  isHistorical?: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -114,12 +119,22 @@ export function EditableArchiveRow({
   return (
     <tr className="hover:bg-slate-50 transition">
       <Td>
-        <Link
-          href={`/app/disbursements/${caseId}`}
-          className="font-mono text-xs font-semibold text-teal-700 hover:text-teal-900"
-        >
-          {caseNumber}
-        </Link>
+        <div className="inline-flex items-center gap-1.5">
+          <Link
+            href={`/app/disbursements/${caseId}`}
+            className="font-mono text-xs font-semibold text-teal-700 hover:text-teal-900"
+          >
+            {caseNumber}
+          </Link>
+          {isHistorical && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-50 text-orange-800 ring-1 ring-inset ring-orange-200"
+              title="سجل تاريخي مستورد — لم يمر بمسار المراجعة"
+            >
+              تاريخي
+            </span>
+          )}
+        </div>
       </Td>
       <Td>
         {project ? (
