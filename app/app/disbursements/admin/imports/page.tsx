@@ -1,0 +1,140 @@
+import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import {
+  ArrowRight,
+  Building2,
+  FileSignature,
+  FileSpreadsheet,
+  Users,
+} from 'lucide-react'
+import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+
+/**
+ * Owner-only hub for the four master-list importers. Presents four cards
+ * so the owner can update ONE dimension of a project's inventory at a time
+ * (or all at once via the master importer).
+ *
+ * All four importers reuse the same AI column-mapping endpoint
+ * (/api/dsb-units-map-columns) and match rows by (project_id, unit_number).
+ */
+export const dynamic = 'force-dynamic'
+
+type CardConfig = {
+  href: string
+  title: string
+  description: string
+  Icon: typeof FileSpreadsheet
+  accentCls: string
+}
+
+const CARDS: CardConfig[] = [
+  {
+    href: '/app/disbursements/admin/imports/units',
+    title: 'قائمة الوحدات (المواصفات)',
+    description:
+      'استيراد أو تحديث مواصفات الوحدات فقط: البلوك، المنطقة، المساحة، الحي، المدينة. لا يمس بيانات المشترين أو العقود.',
+    Icon: Building2,
+    accentCls: 'border-teal-200 hover:border-teal-400 bg-teal-50/40',
+  },
+  {
+    href: '/app/disbursements/admin/imports/buyers',
+    title: 'قائمة المشترين',
+    description:
+      'تحديث بيانات المشترين للوحدات الموجودة: الاسم، الهوية، الجنسية، الجوال. يبحث عن الوحدة بواسطة رقمها ثم يحدّث سجل البيع النشط.',
+    Icon: Users,
+    accentCls: 'border-blue-200 hover:border-blue-400 bg-blue-50/40',
+  },
+  {
+    href: '/app/disbursements/admin/imports/contracts',
+    title: 'قائمة العقود',
+    description:
+      'تحديث بيانات العقود للوحدات الموجودة: رقم العقد، تاريخ البيع، السعر، التمويل، حالة التسليم. يحدّث سجل البيع النشط.',
+    Icon: FileSignature,
+    accentCls: 'border-violet-200 hover:border-violet-400 bg-violet-50/40',
+  },
+  {
+    href: '/app/disbursements/admin/imports/master',
+    title: 'القائمة الرئيسية (كل شيء دفعة واحدة)',
+    description:
+      'الاستيراد الشامل من ملف الأستاذ الكامل (٤ صفحات: نشطة، ملغاة/معاد، ملغاة، منجزة). يُنشئ الوحدات ويضيف سجلات البيع في خطوة واحدة.',
+    Icon: FileSpreadsheet,
+    accentCls: 'border-amber-200 hover:border-amber-400 bg-amber-50/40',
+  },
+]
+
+export default async function ImportsHubPage() {
+  const supabase = createSupabaseServer()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email!)
+    .maybeSingle()
+  if (!profile) redirect('/login')
+  if (profile.dsb_role !== 'owner') {
+    redirect('/app/disbursements/admin')
+  }
+
+  return (
+    <div className="space-y-6 max-w-5xl mx-auto" dir="rtl">
+      <header className="space-y-2">
+        <Link
+          href="/app/disbursements/admin"
+          className="inline-flex items-center text-xs text-slate-500 hover:text-slate-700"
+        >
+          <ArrowRight className="w-3.5 h-3.5 ms-1 rotate-180" aria-hidden="true" />
+          العودة إلى الإدارة
+        </Link>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+          <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
+          استيراد قوائم الوحدات
+        </div>
+        <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
+          اختر نوع الاستيراد
+        </h1>
+        <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
+          كل الاستيرادات تطابق الصفوف بواسطة (المشروع + رقم الوحدة). استخدم
+          الاستيرادات الجزئية عند تحديث بُعد واحد فقط، أو الاستيراد الرئيسي
+          عند إدخال ملف الأستاذ الكامل لأول مرة.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {CARDS.map((card) => (
+          <Link
+            key={card.href}
+            href={card.href}
+            className={`group block rounded-xl border ${card.accentCls} shadow-sm p-5 transition`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="inline-flex items-center gap-2">
+                <card.Icon className="w-5 h-5 text-slate-700" aria-hidden="true" />
+                <h2 className="serif font-bold text-base text-slate-900">
+                  {card.title}
+                </h2>
+              </div>
+              <ArrowRight
+                className="w-4 h-4 text-slate-400 rotate-180 group-hover:text-slate-700 transition"
+                aria-hidden="true"
+              />
+            </div>
+            <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+              {card.description}
+            </p>
+            <div className="mt-4">
+              <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-white text-xs font-semibold text-slate-800 border border-slate-200 group-hover:bg-slate-50 transition">
+                فتح
+                <ArrowRight className="w-3 h-3 rotate-180" aria-hidden="true" />
+              </span>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
+}

@@ -71,6 +71,15 @@ const FIELD_KEYS = [
   'delivery_status',
   'delivery_date',
   'sale_count',
+  // Financial tracking (added in migration 055). See the mapping prompt below
+  // for the Arabic header hints Claude uses to identify each column.
+  'retention_percentage',
+  'installment_number',
+  'total_collected_before_tax_sar',
+  'total_collected_with_tax_sar',
+  'remaining_amount_sar',
+  'collection_percentage',
+  'price_per_meter_sar',
 ] as const
 
 type FieldKey = (typeof FIELD_KEYS)[number]
@@ -86,6 +95,9 @@ Field targets — return null if the column isn't present in the sheet:
 - contract_number, contract_type, financing_type, financing_bank
 - sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar
 - delivery_status, delivery_date, sale_count
+- retention_percentage, installment_number
+- total_collected_before_tax_sar, total_collected_with_tax_sar
+- remaining_amount_sar, collection_percentage, price_per_meter_sar
 
 Match by Arabic header semantics (not exact string). Examples:
   "رقم الوحدة" / "الوحدة" / "unit no" → unit_number
@@ -108,6 +120,15 @@ Match by Arabic header semantics (not exact string). Examples:
   "VAT" / "ضريبة القيمة المضافة" → vat_sar
   "سعر شامل ضريبة" / "السعر شامل" → price_with_vat_sar
   "حالة التسليم" → delivery_status  ·  "تاريخ التسليم" → delivery_date
+  "النسبة المستقطعة" / "نسبة الاستقطاع" → retention_percentage
+  "رقم الدفعة" / "رقم القسط" → installment_number
+  "إجمالي المبالغ المحصل قيمتها دون الضريبة منذ بداية المشروع" /
+    "إجمالي المحصل قبل الضريبة" → total_collected_before_tax_sar
+  "إجمالي المبالغ المحصل قيمتها شامل الضريبة منذ بداية المشروع" /
+    "إجمالي المحصل شامل الضريبة" → total_collected_with_tax_sar
+  "المبلغ المتبقي من قيمة الوحدة" / "المبلغ المتبقي" → remaining_amount_sar
+  "نسبة التحصيل" / "نسبة المحصل" → collection_percentage
+  "سعر المتر" / "سعر المتر المربع" → price_per_meter_sar
 
 Rules:
 - Column indices are 0-based (column A = 0). Header row index is 0-based (first row = 0).
@@ -115,6 +136,8 @@ Rules:
 - The "م" / serial-number column is NOT a mapped field — ignore it.
 - If two columns could both match a field, pick the more specific one (e.g. "رقم المنطقة" → zone_number, not region).
 - If the header spans two rows (merged label + subtitle), pick the row with the most non-empty cells.
+- "المبلغ المتبقي من قيمة الوحدة" is remaining_amount_sar (per-unit balance), NOT total_collected_*.
+- Percentage columns (retention_percentage, collection_percentage) may appear as "0.35" or "35%" — return the column index either way; we normalize on the server.
 
 Return ONE JSON object only — no prose, no fences:
 {
@@ -129,7 +152,11 @@ Return ONE JSON object only — no prose, no fences:
     "financing_type": int|null, "financing_bank": int|null,
     "sale_date": int|null, "price_before_tax_sar": int|null,
     "vat_sar": int|null, "price_with_vat_sar": int|null,
-    "delivery_status": int|null, "delivery_date": int|null, "sale_count": int|null
+    "delivery_status": int|null, "delivery_date": int|null, "sale_count": int|null,
+    "retention_percentage": int|null, "installment_number": int|null,
+    "total_collected_before_tax_sar": int|null, "total_collected_with_tax_sar": int|null,
+    "remaining_amount_sar": int|null, "collection_percentage": int|null,
+    "price_per_meter_sar": int|null
   },
   "notes_ar": string
 }`

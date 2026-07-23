@@ -93,6 +93,16 @@ export interface BulkImportUnitRow {
   price_with_vat_sar?: number | null
   delivery_status?: string | null           // delivered | pending | other
   delivery_date?: string | null             // YYYY-MM-DD
+
+  // Financial tracking (migration 055). All optional — many older files
+  // won't ship every field, and rows without them should still import.
+  retention_percentage?: number | null
+  installment_number?: number | null
+  total_collected_before_tax_sar?: number | null
+  total_collected_with_tax_sar?: number | null
+  remaining_amount_sar?: number | null
+  collection_percentage?: number | null
+  price_per_meter_sar?: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +284,14 @@ export async function bulkImportUnitsFromRows(
         price_with_vat_sar: r.price_with_vat_sar ?? null,
         delivery_status: r.delivery_status ?? null,
         delivery_date: r.delivery_date ?? null,
+        // Financial tracking (055).
+        retention_percentage: r.retention_percentage ?? null,
+        installment_number: r.installment_number ?? null,
+        total_collected_before_tax_sar: r.total_collected_before_tax_sar ?? null,
+        total_collected_with_tax_sar: r.total_collected_with_tax_sar ?? null,
+        remaining_amount_sar: r.remaining_amount_sar ?? null,
+        collection_percentage: r.collection_percentage ?? null,
+        price_per_meter_sar: r.price_per_meter_sar ?? null,
       }
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -292,6 +310,705 @@ export async function bulkImportUnitsFromRows(
     ok: true,
     units_upserted: unitUpsertRows.length,
     sales_inserted: salesRows.length,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// checkExistingUnits — owner only. Used by the buyers/contracts importers'
+// preview to flag rows whose (project_id, unit_number) doesn't exist yet in
+// dsb_project_units, so the UI can render an amber warning next to them.
+//
+// Returns the SUBSET of the input pairs that DO exist. Any missing pair is
+// implicitly "not found". Tenant-scoped.
+// ---------------------------------------------------------------------------
+
+export async function checkExistingUnits(
+  input: { pairs: Array<{ project_id: string; unit_number: string }> },
+): Promise<
+  | { ok: true; existing: Array<{ project_id: string; unit_number: string }> }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+
+  const pairs = Array.isArray(input.pairs) ? input.pairs : []
+  if (pairs.length === 0) return { ok: true, existing: [] }
+
+  // Group by project so we can use one IN() per project instead of a
+  // per-pair query. Also validates tenant-scoping on the projects side.
+  const byProject = new Map<string, Set<string>>()
+  for (const p of pairs) {
+    const pid = (p.project_id ?? '').trim()
+    const un = (p.unit_number ?? '').trim()
+    if (!pid || !un) continue
+    const set = byProject.get(pid) ?? new Set<string>()
+    set.add(un)
+    byProject.set(pid, set)
+  }
+  if (byProject.size === 0) return { ok: true, existing: [] }
+
+  const svc = createSupabaseService()
+
+  // Verify all project ids belong to caller's tenant in one query.
+  const projectIds = Array.from(byProject.keys())
+  const { data: projRows, error: projErr } = await svc
+    .from('dsb_projects')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .in('id', projectIds)
+  if (projErr) return { ok: false, error: projErr.message }
+  const validProjectIds = new Set(((projRows ?? []) as { id: string }[]).map((r) => r.id))
+
+  const existing: Array<{ project_id: string; unit_number: string }> = []
+  for (const [pid, unitSet] of byProject.entries()) {
+    if (!validProjectIds.has(pid)) continue
+    const units = Array.from(unitSet)
+    // Chunk very large lists to stay under PostgREST URL length limits.
+    const CHUNK = 200
+    for (let i = 0; i < units.length; i += CHUNK) {
+      const slice = units.slice(i, i + CHUNK)
+      const { data: found, error } = await svc
+        .from('dsb_project_units')
+        .select('project_id, unit_number')
+        .eq('tenant_id', caller.tenantId)
+        .eq('project_id', pid)
+        .in('unit_number', slice)
+      if (error) return { ok: false, error: error.message }
+      for (const r of (found ?? []) as { project_id: string; unit_number: string }[]) {
+        existing.push(r)
+      }
+    }
+  }
+  return { ok: true, existing }
+}
+
+// ---------------------------------------------------------------------------
+// bulkImportUnitsOnly — owner only. Focused importer #1 of 3.
+// ---------------------------------------------------------------------------
+// Upserts JUST the unit-spec fields into dsb_project_units. Leaves
+// dsb_unit_sales untouched. Use when the owner wants to correct/enrich
+// specs (block, zone, area, district) without changing buyer/contract data.
+//
+// Match key: (project_id, unit_number). Rows missing unit_number are
+// silently skipped and reported back to the client.
+// ---------------------------------------------------------------------------
+
+export interface BulkImportUnitOnlyRow {
+  project_id: string
+  unit_number: string
+  zone_number?: string | null
+  block_number?: string | null
+  unit_type?: 'villa' | 'apartment' | 'other' | null
+  area_m2?: number | null
+  district?: string | null
+  city?: string | null
+  region?: string | null
+}
+
+export async function bulkImportUnitsOnly(
+  input: { rows: BulkImportUnitOnlyRow[] },
+): Promise<
+  | { ok: true; upsertedUnits: number; skippedRows: number }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+
+  if (!Array.isArray(input.rows) || input.rows.length === 0) {
+    return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
+  }
+
+  // Normalize + partition into usable vs. skipped.
+  const usable: BulkImportUnitOnlyRow[] = []
+  let skipped = 0
+  for (const r of input.rows) {
+    const projectId = (r.project_id ?? '').trim()
+    const unitNumber = (r.unit_number ?? '').trim()
+    if (!projectId || !unitNumber) {
+      skipped++
+      continue
+    }
+    usable.push({ ...r, project_id: projectId, unit_number: unitNumber })
+  }
+  if (usable.length === 0) {
+    return { ok: false, error: 'كل الصفوف تفتقد رقم الوحدة أو المشروع.' }
+  }
+
+  const svc = createSupabaseService()
+
+  // Tenant-isolation check up-front.
+  const uniqueProjectIds = Array.from(new Set(usable.map((r) => r.project_id)))
+  const { data: projRows, error: projErr } = await svc
+    .from('dsb_projects')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .in('id', uniqueProjectIds)
+  if (projErr) return { ok: false, error: projErr.message }
+  const validProjectIds = new Set(
+    ((projRows ?? []) as { id: string }[]).map((r) => r.id),
+  )
+  const mismatched = usable
+    .map((r, i) => (validProjectIds.has(r.project_id) ? -1 : i + 1))
+    .filter((x) => x > 0)
+  if (mismatched.length > 0) {
+    return {
+      ok: false,
+      error: `صفوف تشير إلى مشاريع خارج مؤسستك (المواضع: ${mismatched.slice(0, 20).join(', ')}${mismatched.length > 20 ? '…' : ''}).`,
+    }
+  }
+
+  type SpecKey =
+    | 'zone_number'
+    | 'block_number'
+    | 'unit_type'
+    | 'area_m2'
+    | 'district'
+    | 'city'
+    | 'region'
+  const unitSpecKeys: SpecKey[] = [
+    'zone_number',
+    'block_number',
+    'unit_type',
+    'area_m2',
+    'district',
+    'city',
+    'region',
+  ]
+
+  // Dedupe by (project_id, unit_number) — first row wins.
+  const bucket = new Map<string, BulkImportUnitOnlyRow>()
+  for (const r of usable) {
+    const key = `${r.project_id}::${r.unit_number}`
+    if (!bucket.has(key)) bucket.set(key, r)
+  }
+
+  // Fetch existing to preserve non-null spec fields when the sheet is empty.
+  type ExistingUnit = { project_id: string; unit_number: string } & {
+    [K in SpecKey]?: unknown
+  }
+  const existingByKey = new Map<string, ExistingUnit>()
+  const CHUNK = 300
+  for (let i = 0; i < uniqueProjectIds.length; i += CHUNK) {
+    const slice = uniqueProjectIds.slice(i, i + CHUNK)
+    const { data: existing } = await svc
+      .from('dsb_project_units')
+      .select(
+        'project_id, unit_number, zone_number, block_number, unit_type, area_m2, district, city, region',
+      )
+      .eq('tenant_id', caller.tenantId)
+      .in('project_id', slice)
+    for (const u of (existing ?? []) as ExistingUnit[]) {
+      existingByKey.set(`${u.project_id}::${u.unit_number}`, u)
+    }
+  }
+
+  const upsertRows: Record<string, unknown>[] = []
+  for (const [key, r] of bucket.entries()) {
+    const existing = existingByKey.get(key)
+    const row: Record<string, unknown> = {
+      tenant_id: caller.tenantId,
+      project_id: r.project_id,
+      unit_number: r.unit_number,
+    }
+    for (const k of unitSpecKeys) {
+      const fromSheet = (r as unknown as Record<string, unknown>)[k]
+      const chosen =
+        fromSheet !== null && fromSheet !== undefined && fromSheet !== ''
+          ? fromSheet
+          : existing?.[k] ?? null
+      row[k] = chosen ?? null
+    }
+    upsertRows.push(row)
+  }
+
+  const { error: upsertErr } = await svc
+    .from('dsb_project_units')
+    .upsert(upsertRows, { onConflict: 'project_id,unit_number' })
+  if (upsertErr) return { ok: false, error: upsertErr.message }
+
+  revalidatePath('/app/disbursements/admin')
+  for (const pid of uniqueProjectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+  }
+  return {
+    ok: true,
+    upsertedUnits: upsertRows.length,
+    skippedRows: skipped,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// bulkImportBuyersFromRows — owner only. Focused importer #2 of 3.
+// ---------------------------------------------------------------------------
+// Match each row by (project_id, unit_number) → dsb_project_units.id. Then
+// for that unit, find the ACTIVE dsb_unit_sales row (sale_status='active').
+//   - If exists → UPDATE buyer fields.
+//   - If missing → INSERT a fresh active sale row with just the buyer fields.
+// Rows whose unit doesn't exist yet are returned in `unmatched` so the UI
+// can surface them; those rows must be created via the units-only importer.
+// ---------------------------------------------------------------------------
+
+export interface BulkImportBuyerRow {
+  project_id: string
+  unit_number: string
+  sale_count?: number | null
+  buyer_name_ar?: string | null
+  buyer_id_type?: 'national' | 'residency' | 'passport' | null
+  buyer_id_number?: string | null
+  buyer_nationality?: string | null
+  buyer_residency_type?: string | null
+  buyer_phone?: string | null
+}
+
+export interface UnmatchedRowRef {
+  project_id: string
+  unit_number: string
+}
+
+export async function bulkImportBuyersFromRows(
+  input: { rows: BulkImportBuyerRow[] },
+): Promise<
+  | {
+      ok: true
+      updatedSales: number
+      insertedSales: number
+      unmatched: UnmatchedRowRef[]
+      skippedRows: number
+    }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+
+  if (!Array.isArray(input.rows) || input.rows.length === 0) {
+    return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
+  }
+
+  // Normalize + drop rows missing the match key.
+  const usable: BulkImportBuyerRow[] = []
+  let skipped = 0
+  for (const r of input.rows) {
+    const projectId = (r.project_id ?? '').trim()
+    const unitNumber = (r.unit_number ?? '').trim()
+    if (!projectId || !unitNumber) {
+      skipped++
+      continue
+    }
+    usable.push({ ...r, project_id: projectId, unit_number: unitNumber })
+  }
+  if (usable.length === 0) {
+    return { ok: false, error: 'كل الصفوف تفتقد رقم الوحدة أو المشروع.' }
+  }
+
+  const svc = createSupabaseService()
+
+  // Tenant-isolation.
+  const uniqueProjectIds = Array.from(new Set(usable.map((r) => r.project_id)))
+  const { data: projRows, error: projErr } = await svc
+    .from('dsb_projects')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .in('id', uniqueProjectIds)
+  if (projErr) return { ok: false, error: projErr.message }
+  const validProjectIds = new Set(
+    ((projRows ?? []) as { id: string }[]).map((r) => r.id),
+  )
+  const mismatched = usable
+    .map((r, i) => (validProjectIds.has(r.project_id) ? -1 : i + 1))
+    .filter((x) => x > 0)
+  if (mismatched.length > 0) {
+    return {
+      ok: false,
+      error: `صفوف تشير إلى مشاريع خارج مؤسستك (المواضع: ${mismatched.slice(0, 20).join(', ')}${mismatched.length > 20 ? '…' : ''}).`,
+    }
+  }
+
+  // Load ALL units for these projects. Chunked to be safe.
+  type UnitLite = { id: string; project_id: string; unit_number: string }
+  const unitByKey = new Map<string, UnitLite>()
+  const CHUNK = 300
+  for (let i = 0; i < uniqueProjectIds.length; i += CHUNK) {
+    const slice = uniqueProjectIds.slice(i, i + CHUNK)
+    const { data: units } = await svc
+      .from('dsb_project_units')
+      .select('id, project_id, unit_number')
+      .eq('tenant_id', caller.tenantId)
+      .in('project_id', slice)
+    for (const u of (units ?? []) as UnitLite[]) {
+      unitByKey.set(`${u.project_id}::${u.unit_number}`, u)
+    }
+  }
+
+  // Partition rows: matched (unit exists) vs unmatched.
+  const matched: Array<{ row: BulkImportBuyerRow; unit: UnitLite }> = []
+  const unmatched: UnmatchedRowRef[] = []
+  for (const r of usable) {
+    const u = unitByKey.get(`${r.project_id}::${r.unit_number}`)
+    if (!u) {
+      unmatched.push({ project_id: r.project_id, unit_number: r.unit_number })
+      continue
+    }
+    matched.push({ row: r, unit: u })
+  }
+
+  if (matched.length === 0) {
+    return {
+      ok: true,
+      updatedSales: 0,
+      insertedSales: 0,
+      unmatched,
+      skippedRows: skipped,
+    }
+  }
+
+  // Load existing active sales for matched units (one query).
+  const unitIds = Array.from(new Set(matched.map((m) => m.unit.id)))
+  type SaleLite = { id: string; unit_id: string }
+  const activeSaleByUnitId = new Map<string, SaleLite>()
+  for (let i = 0; i < unitIds.length; i += CHUNK) {
+    const slice = unitIds.slice(i, i + CHUNK)
+    const { data: sales } = await svc
+      .from('dsb_unit_sales')
+      .select('id, unit_id')
+      .eq('tenant_id', caller.tenantId)
+      .in('unit_id', slice)
+      .eq('sale_status', 'active')
+    for (const s of (sales ?? []) as SaleLite[]) {
+      // First active sale per unit wins; ties shouldn't happen in practice.
+      if (!activeSaleByUnitId.has(s.unit_id)) activeSaleByUnitId.set(s.unit_id, s)
+    }
+  }
+
+  const buyerFieldKeys = [
+    'sale_count',
+    'buyer_name_ar',
+    'buyer_id_type',
+    'buyer_id_number',
+    'buyer_nationality',
+    'buyer_residency_type',
+    'buyer_phone',
+  ] as const
+
+  // Partition matched → update vs insert.
+  const toUpdate: Array<{ saleId: string; patch: Record<string, unknown> }> = []
+  const toInsert: Record<string, unknown>[] = []
+
+  // Dedupe by unit_id — last row for a given unit wins on updates (they
+  // typically arrive in file order, so the last is the freshest).
+  const rowByUnitId = new Map<string, BulkImportBuyerRow>()
+  const unitById = new Map<string, UnitLite>()
+  for (const { row, unit } of matched) {
+    rowByUnitId.set(unit.id, row)
+    unitById.set(unit.id, unit)
+  }
+
+  for (const [unitId, row] of rowByUnitId.entries()) {
+    const patch: Record<string, unknown> = {}
+    for (const k of buyerFieldKeys) {
+      const v = (row as unknown as Record<string, unknown>)[k]
+      if (v !== undefined) patch[k] = v === '' ? null : v
+    }
+    const existingSale = activeSaleByUnitId.get(unitId)
+    if (existingSale) {
+      if (Object.keys(patch).length > 0) {
+        toUpdate.push({ saleId: existingSale.id, patch })
+      }
+    } else {
+      // Fresh active sale — copy in the buyer fields plus defaults.
+      toInsert.push({
+        tenant_id: caller.tenantId,
+        unit_id: unitId,
+        sale_count: row.sale_count ?? 1,
+        sale_status: 'active',
+        buyer_name_ar: row.buyer_name_ar ?? null,
+        buyer_id_type: row.buyer_id_type ?? null,
+        buyer_id_number: row.buyer_id_number ?? null,
+        buyer_nationality: row.buyer_nationality ?? null,
+        buyer_residency_type: row.buyer_residency_type ?? null,
+        buyer_phone: row.buyer_phone ?? null,
+      })
+    }
+  }
+
+  // Apply updates one-by-one (no bulk UPDATE by-id in supabase-js). N stays
+  // in the low hundreds so this is acceptable; if it becomes hot we can move
+  // to a stored procedure.
+  let updated = 0
+  for (const { saleId, patch } of toUpdate) {
+    const { error } = await svc
+      .from('dsb_unit_sales')
+      .update(patch)
+      .eq('id', saleId)
+      .eq('tenant_id', caller.tenantId)
+    if (error) return { ok: false, error: error.message }
+    updated++
+  }
+
+  let inserted = 0
+  if (toInsert.length > 0) {
+    const { error } = await svc.from('dsb_unit_sales').insert(toInsert)
+    if (error) return { ok: false, error: error.message }
+    inserted = toInsert.length
+  }
+
+  revalidatePath('/app/disbursements/admin')
+  for (const pid of uniqueProjectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+  }
+  return {
+    ok: true,
+    updatedSales: updated,
+    insertedSales: inserted,
+    unmatched,
+    skippedRows: skipped,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// bulkImportContractsFromRows — owner only. Focused importer #3 of 3.
+// ---------------------------------------------------------------------------
+// Same pattern as buyers: match by (project_id, unit_number), then update
+// the active sale's contract/pricing/delivery fields, or insert a new
+// active sale row if none exists.
+// ---------------------------------------------------------------------------
+
+export interface BulkImportContractRow {
+  project_id: string
+  unit_number: string
+  contract_number?: string | null
+  contract_type?: string | null
+  financing_type?: string | null
+  financing_bank?: string | null
+  sale_date?: string | null
+  price_before_tax_sar?: number | null
+  vat_sar?: number | null
+  price_with_vat_sar?: number | null
+  delivery_status?: 'delivered' | 'pending' | 'other' | null
+  delivery_date?: string | null
+
+  // Financial tracking (migration 055). All optional.
+  retention_percentage?: number | null
+  installment_number?: number | null
+  total_collected_before_tax_sar?: number | null
+  total_collected_with_tax_sar?: number | null
+  remaining_amount_sar?: number | null
+  collection_percentage?: number | null
+  price_per_meter_sar?: number | null
+}
+
+export async function bulkImportContractsFromRows(
+  input: { rows: BulkImportContractRow[] },
+): Promise<
+  | {
+      ok: true
+      updatedSales: number
+      insertedSales: number
+      unmatched: UnmatchedRowRef[]
+      skippedRows: number
+    }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+
+  if (!Array.isArray(input.rows) || input.rows.length === 0) {
+    return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
+  }
+
+  const usable: BulkImportContractRow[] = []
+  let skipped = 0
+  for (const r of input.rows) {
+    const projectId = (r.project_id ?? '').trim()
+    const unitNumber = (r.unit_number ?? '').trim()
+    if (!projectId || !unitNumber) {
+      skipped++
+      continue
+    }
+    usable.push({ ...r, project_id: projectId, unit_number: unitNumber })
+  }
+  if (usable.length === 0) {
+    return { ok: false, error: 'كل الصفوف تفتقد رقم الوحدة أو المشروع.' }
+  }
+
+  const svc = createSupabaseService()
+
+  // Tenant-isolation.
+  const uniqueProjectIds = Array.from(new Set(usable.map((r) => r.project_id)))
+  const { data: projRows, error: projErr } = await svc
+    .from('dsb_projects')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .in('id', uniqueProjectIds)
+  if (projErr) return { ok: false, error: projErr.message }
+  const validProjectIds = new Set(
+    ((projRows ?? []) as { id: string }[]).map((r) => r.id),
+  )
+  const mismatched = usable
+    .map((r, i) => (validProjectIds.has(r.project_id) ? -1 : i + 1))
+    .filter((x) => x > 0)
+  if (mismatched.length > 0) {
+    return {
+      ok: false,
+      error: `صفوف تشير إلى مشاريع خارج مؤسستك (المواضع: ${mismatched.slice(0, 20).join(', ')}${mismatched.length > 20 ? '…' : ''}).`,
+    }
+  }
+
+  // Load units in the referenced projects.
+  type UnitLite = { id: string; project_id: string; unit_number: string }
+  const unitByKey = new Map<string, UnitLite>()
+  const CHUNK = 300
+  for (let i = 0; i < uniqueProjectIds.length; i += CHUNK) {
+    const slice = uniqueProjectIds.slice(i, i + CHUNK)
+    const { data: units } = await svc
+      .from('dsb_project_units')
+      .select('id, project_id, unit_number')
+      .eq('tenant_id', caller.tenantId)
+      .in('project_id', slice)
+    for (const u of (units ?? []) as UnitLite[]) {
+      unitByKey.set(`${u.project_id}::${u.unit_number}`, u)
+    }
+  }
+
+  const matched: Array<{ row: BulkImportContractRow; unit: UnitLite }> = []
+  const unmatched: UnmatchedRowRef[] = []
+  for (const r of usable) {
+    const u = unitByKey.get(`${r.project_id}::${r.unit_number}`)
+    if (!u) {
+      unmatched.push({ project_id: r.project_id, unit_number: r.unit_number })
+      continue
+    }
+    matched.push({ row: r, unit: u })
+  }
+
+  if (matched.length === 0) {
+    return {
+      ok: true,
+      updatedSales: 0,
+      insertedSales: 0,
+      unmatched,
+      skippedRows: skipped,
+    }
+  }
+
+  const unitIds = Array.from(new Set(matched.map((m) => m.unit.id)))
+  type SaleLite = { id: string; unit_id: string }
+  const activeSaleByUnitId = new Map<string, SaleLite>()
+  for (let i = 0; i < unitIds.length; i += CHUNK) {
+    const slice = unitIds.slice(i, i + CHUNK)
+    const { data: sales } = await svc
+      .from('dsb_unit_sales')
+      .select('id, unit_id')
+      .eq('tenant_id', caller.tenantId)
+      .in('unit_id', slice)
+      .eq('sale_status', 'active')
+    for (const s of (sales ?? []) as SaleLite[]) {
+      if (!activeSaleByUnitId.has(s.unit_id)) activeSaleByUnitId.set(s.unit_id, s)
+    }
+  }
+
+  const contractFieldKeys = [
+    'contract_number',
+    'contract_type',
+    'financing_type',
+    'financing_bank',
+    'sale_date',
+    'price_before_tax_sar',
+    'vat_sar',
+    'price_with_vat_sar',
+    'delivery_status',
+    'delivery_date',
+    // Financial tracking (055) — patched into the same active sale row.
+    'retention_percentage',
+    'installment_number',
+    'total_collected_before_tax_sar',
+    'total_collected_with_tax_sar',
+    'remaining_amount_sar',
+    'collection_percentage',
+    'price_per_meter_sar',
+  ] as const
+
+  const toUpdate: Array<{ saleId: string; patch: Record<string, unknown> }> = []
+  const toInsert: Record<string, unknown>[] = []
+
+  const rowByUnitId = new Map<string, BulkImportContractRow>()
+  for (const { row, unit } of matched) {
+    rowByUnitId.set(unit.id, row)
+  }
+
+  for (const [unitId, row] of rowByUnitId.entries()) {
+    const patch: Record<string, unknown> = {}
+    for (const k of contractFieldKeys) {
+      const v = (row as unknown as Record<string, unknown>)[k]
+      if (v !== undefined) patch[k] = v === '' ? null : v
+    }
+    const existingSale = activeSaleByUnitId.get(unitId)
+    if (existingSale) {
+      if (Object.keys(patch).length > 0) {
+        toUpdate.push({ saleId: existingSale.id, patch })
+      }
+    } else {
+      toInsert.push({
+        tenant_id: caller.tenantId,
+        unit_id: unitId,
+        sale_count: 1,
+        sale_status: 'active',
+        contract_number: row.contract_number ?? null,
+        contract_type: row.contract_type ?? null,
+        financing_type: row.financing_type ?? null,
+        financing_bank: row.financing_bank ?? null,
+        sale_date: row.sale_date ?? null,
+        price_before_tax_sar: row.price_before_tax_sar ?? null,
+        vat_sar: row.vat_sar ?? null,
+        price_with_vat_sar: row.price_with_vat_sar ?? null,
+        delivery_status: row.delivery_status ?? null,
+        delivery_date: row.delivery_date ?? null,
+        retention_percentage: row.retention_percentage ?? null,
+        installment_number: row.installment_number ?? null,
+        total_collected_before_tax_sar: row.total_collected_before_tax_sar ?? null,
+        total_collected_with_tax_sar: row.total_collected_with_tax_sar ?? null,
+        remaining_amount_sar: row.remaining_amount_sar ?? null,
+        collection_percentage: row.collection_percentage ?? null,
+        price_per_meter_sar: row.price_per_meter_sar ?? null,
+      })
+    }
+  }
+
+  let updated = 0
+  for (const { saleId, patch } of toUpdate) {
+    const { error } = await svc
+      .from('dsb_unit_sales')
+      .update(patch)
+      .eq('id', saleId)
+      .eq('tenant_id', caller.tenantId)
+    if (error) return { ok: false, error: error.message }
+    updated++
+  }
+
+  let inserted = 0
+  if (toInsert.length > 0) {
+    const { error } = await svc.from('dsb_unit_sales').insert(toInsert)
+    if (error) return { ok: false, error: error.message }
+    inserted = toInsert.length
+  }
+
+  revalidatePath('/app/disbursements/admin')
+  for (const pid of uniqueProjectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+  }
+  return {
+    ok: true,
+    updatedSales: updated,
+    insertedSales: inserted,
+    unmatched,
+    skippedRows: skipped,
   }
 }
 
@@ -378,6 +1095,15 @@ export interface UpdateSaleInput {
     price_with_vat_sar?: number | null
     delivery_status?: string | null
     delivery_date?: string | null
+    // Financial tracking (055) — read-only in the drawer today, but the
+    // update surface is here so an owner can correct a stray value.
+    retention_percentage?: number | null
+    installment_number?: number | null
+    total_collected_before_tax_sar?: number | null
+    total_collected_with_tax_sar?: number | null
+    remaining_amount_sar?: number | null
+    collection_percentage?: number | null
+    price_per_meter_sar?: number | null
   }
 }
 

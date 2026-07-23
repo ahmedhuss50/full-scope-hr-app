@@ -68,6 +68,14 @@ export type SaleRow = {
   delivery_status: string | null
   delivery_date: string | null
   created_at: string
+  // Financial tracking (migration 055) — read-only in the drawer.
+  retention_percentage: number | null
+  installment_number: number | null
+  total_collected_before_tax_sar: number | null
+  total_collected_with_tax_sar: number | null
+  remaining_amount_sar: number | null
+  collection_percentage: number | null
+  price_per_meter_sar: number | null
 }
 
 export type ContractRow = {
@@ -220,11 +228,11 @@ export function UnitsSection({
             }}
           />
           <Link
-            href="/app/disbursements/admin/import-units"
+            href="/app/disbursements/admin/imports"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
           >
             <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-            استيراد قائمة الوحدات
+            استيراد قوائم
           </Link>
           <button
             type="button"
@@ -326,8 +334,9 @@ export function UnitsSection({
                 return (
                   <tr
                     key={u.id}
+                    id={`unit-${u.unit_number}`}
                     onClick={() => setOpenUnitId(u.id)}
-                    className="hover:bg-slate-50 cursor-pointer transition"
+                    className="hover:bg-slate-50 cursor-pointer transition scroll-mt-24 target:bg-teal-50/60"
                   >
                     <Td className="font-mono text-xs">{u.unit_number}</Td>
                     <Td>{u.block_number ?? '—'}</Td>
@@ -926,14 +935,54 @@ function SaleCard({ sale, onChange }: { sale: SaleRow; onChange: () => void }) {
           <ReadCell label="رقم العقد" value={sale.contract_number} />
           <ReadCell label="الجوال" value={sale.buyer_phone} mono />
           <ReadCell label="الجنسية" value={sale.buyer_nationality} />
-          <ReadCell label="السعر" value={sale.price_before_tax_sar != null ? `${sale.price_before_tax_sar}` : null} />
+          <ReadCell label="السعر" value={sale.price_before_tax_sar != null ? fmtSarInt(sale.price_before_tax_sar) : null} />
           <ReadCell label="تاريخ البيع" value={sale.sale_date} />
           <ReadCell label="التمويل" value={sale.financing_bank ?? sale.financing_type} />
           <ReadCell label="التسليم" value={deliveryStatusLabel(sale.delivery_status)} />
+
+          {/* Financial tracking (055) — only rendered when populated so the
+              drawer stays clean for older sale rows that never captured
+              these columns. */}
+          {sale.retention_percentage != null && (
+            <ReadCell label="النسبة المستقطعة" value={fmtPercent(sale.retention_percentage)} />
+          )}
+          {sale.installment_number != null && (
+            <ReadCell label="رقم الدفعة الحالية" value={String(sale.installment_number)} />
+          )}
+          {sale.total_collected_with_tax_sar != null && (
+            <ReadCell
+              label="إجمالي المحصل (شامل الضريبة)"
+              value={fmtSarInt(sale.total_collected_with_tax_sar)}
+            />
+          )}
+          {sale.remaining_amount_sar != null && (
+            <ReadCell label="المبلغ المتبقي" value={fmtSarInt(sale.remaining_amount_sar)} />
+          )}
+          {sale.collection_percentage != null && (
+            <ReadCell label="نسبة التحصيل" value={fmtPercent(sale.collection_percentage)} />
+          )}
+          {sale.price_per_meter_sar != null && (
+            <ReadCell label="سعر المتر" value={fmtSarInt(sale.price_per_meter_sar)} />
+          )}
         </dl>
       )}
     </div>
   )
+}
+
+// Format an SAR-ish integer with locale grouping. Numeric-only, no currency
+// suffix — the label carries the unit context.
+function fmtSarInt(v: number): string {
+  const n = Math.round(v)
+  if (Math.abs(v - n) < 0.005) return n.toLocaleString('en-US')
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+// Percentages are stored as either 0..1 fractions or 0..100 raw depending on
+// the source sheet. Anything ≤ 1 in absolute value is treated as a fraction.
+function fmtPercent(v: number): string {
+  const pct = Math.abs(v) <= 1 ? v * 100 : v
+  return `${pct.toFixed(pct >= 100 ? 0 : 1)}%`
 }
 
 function ContractPreviewLink({ contractId }: { contractId: string }) {

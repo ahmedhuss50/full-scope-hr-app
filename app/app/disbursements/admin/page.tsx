@@ -493,30 +493,40 @@ export default async function DisbursementsAdminPage({
         </section>
       )}
 
-      {/* Units + buyers — owner-only. Bulk import + running total. */}
+      {/* Imports + tenant-wide lists — owner-only. Two side-by-side actions:
+          Excel importers (units / buyers / contracts / master) and the
+          browse-by-dimension lists (units / buyers / contracts) added in
+          migration 055's follow-up. */}
       {isOwner && (
         <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <h2 className="serif font-bold text-lg text-slate-900">
-                الوحدات والمشترون
+                الاستيراد والقوائم
               </h2>
               <span className="text-xs text-slate-500 font-mono">
                 ({totalUnitsCount ?? 0} وحدة)
               </span>
             </div>
             <p className="text-xs text-slate-600 max-w-2xl">
-              استيراد الوحدات العقارية والمشترين لكل مشروع من ملف الأستاذ
-              (Excel). العقود المرفوعة تُستخرج بياناتها تلقائيًا وتُربط بالبيع
-              المناسب.
+              أدوات إدارة الوحدات العقارية: استيراد من ملفات Excel، أو
+              استعراض القوائم الكاملة (وحدات، مشترون، عقود) على مستوى
+              المؤسسة بأسلوب جدول واحد قابل للبحث والتصفية.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Link
-              href="/app/disbursements/admin/import-units"
+              href="/app/disbursements/admin/imports"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
             >
-              استيراد قائمة الوحدات
+              أداة الاستيراد
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
+            </Link>
+            <Link
+              href="/app/disbursements/admin/lists"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              استعراض القوائم
               <ArrowRight className="w-3.5 h-3.5 rotate-180" aria-hidden="true" />
             </Link>
           </div>

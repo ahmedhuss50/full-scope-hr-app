@@ -256,7 +256,7 @@ export default async function ProjectDetailPage({
       const { data: salesRows } = await svc
         .from('dsb_unit_sales')
         .select(
-          'id, unit_id, sale_count, sale_status, buyer_name_ar, buyer_id_type, buyer_id_number, buyer_nationality, buyer_phone, contract_number, contract_type, financing_type, financing_bank, sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar, delivery_status, delivery_date, created_at',
+          'id, unit_id, sale_count, sale_status, buyer_name_ar, buyer_id_type, buyer_id_number, buyer_nationality, buyer_phone, contract_number, contract_type, financing_type, financing_bank, sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar, delivery_status, delivery_date, created_at, retention_percentage, installment_number, total_collected_before_tax_sar, total_collected_with_tax_sar, remaining_amount_sar, collection_percentage, price_per_meter_sar',
         )
         .eq('tenant_id', tenantId)
         .in('unit_id', unitIds)
