@@ -317,8 +317,7 @@ export default async function ArchivePage({
                   <Th>حساب الدفع</Th>
                   <Th>تاريخ السداد</Th>
                   <Th>المستلم</Th>
-                  <Th>وقت التسليم</Th>
-                  <Th>سلَّم</Th>
+                  <Th>وقت التسليم / سلَّم</Th>
                   <Th>الإجراء</Th>
                 </tr>
               </thead>
@@ -386,13 +385,15 @@ function KpiCard({ label, value, mono }: { label: string; value: string; mono?: 
 }
 
 function Th({ children }: { children: React.ReactNode }) {
+  // Tightened padding to match the row Td (px-2 py-2) so the whole archive
+  // table fits without horizontal scroll on typical laptop widths.
   return (
-    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+    <th className="px-2 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
       {children}
     </th>
   )
 }
 
 function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 text-sm text-slate-700 align-top">{children}</td>
+  return <td className="px-2 py-2 text-sm text-slate-700 align-top">{children}</td>
 }

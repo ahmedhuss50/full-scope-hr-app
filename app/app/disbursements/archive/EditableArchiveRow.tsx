@@ -224,7 +224,9 @@ export function EditableArchiveRow({
         )}
       </Td>
 
-      {/* Delivery time cell — editable */}
+      {/* Delivery time + deliverer — merged into one stacked cell so the
+          wide archive table needs less horizontal space. Time on top,
+          deliverer name below in smaller muted text. */}
       <Td>
         {editing ? (
           <input
@@ -236,14 +238,15 @@ export function EditableArchiveRow({
             className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50"
           />
         ) : (
-          <span className="inline-flex items-center gap-1 text-slate-700">
-            <PackageCheck className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
-            {fmtDateTime(deliveredAt)}
-          </span>
+          <div className="leading-tight">
+            <div className="inline-flex items-center gap-1 text-slate-700">
+              <PackageCheck className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
+              {fmtDateTime(deliveredAt)}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">{delivererName}</div>
+          </div>
         )}
       </Td>
-
-      <Td>{delivererName}</Td>
 
       {/* Action cell — open OR edit / save / cancel */}
       <Td>
@@ -335,5 +338,7 @@ function toLocalDateTimeInput(iso: string | null): string {
 }
 
 function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 text-sm text-slate-700 align-top">{children}</td>
+  // Tightened padding (was px-4 py-3) so the wide archive table fits without
+  // horizontal scroll on typical laptop screens.
+  return <td className="px-2 py-2 text-sm text-slate-700 align-top">{children}</td>
 }
