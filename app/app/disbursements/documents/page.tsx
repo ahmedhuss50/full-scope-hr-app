@@ -30,6 +30,9 @@ type SignedCaseRow = {
   amount_sar: number | null
   signed_at: string | null
   signed_by_user_id: string | null
+  // Only beneficiary_name_ar is displayed — matches the kanban card + archive
+  // treatment so the same JSONB shape is used everywhere.
+  extracted_fields: { beneficiary_name_ar?: string | null } | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
 }
@@ -124,7 +127,7 @@ export default async function DeliveryDocumentsRegisterPage({
   let casesQuery = svc
     .from('dsb_cases')
     .select(
-      `id, case_number, voucher_number_text, amount_sar, signed_at, signed_by_user_id,
+      `id, case_number, voucher_number_text, amount_sar, signed_at, signed_by_user_id, extracted_fields,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -209,6 +212,7 @@ export default async function DeliveryDocumentsRegisterPage({
                   <Th>العميل</Th>
                   <Th>رقم السند</Th>
                   <Th>المبلغ</Th>
+                  <Th>المستفيد</Th>
                   <Th>تاريخ التوقيع</Th>
                   <Th>وقّع</Th>
                   <Th>الإجراء</Th>
@@ -249,6 +253,7 @@ export default async function DeliveryDocumentsRegisterPage({
                       <Td>
                         <span className="font-mono">{fmtSar(c.amount_sar)}</span>
                       </Td>
+                      <Td>{c.extracted_fields?.beneficiary_name_ar ?? '—'}</Td>
                       <Td>{fmtDateTime(c.signed_at)}</Td>
                       <Td>{signer}</Td>
                       <Td>
