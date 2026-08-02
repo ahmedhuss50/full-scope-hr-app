@@ -280,7 +280,12 @@ export function toIntOrNull(v: unknown): number | null {
 export function toIsoDateOrNull(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10)
+    // Use LOCAL-time parts, NOT toISOString(). SheetJS with cellDates:true
+    // constructs the Date at the user's local midnight to represent the
+    // Excel cell date. In a UTC+3 (Riyadh) browser that Date is 21:00 UTC
+    // of the previous day, so toISOString().slice(0,10) shifts the whole
+    // column back by one day. Reading local parts keeps the intended date.
+    return isoFromLocalParts(v)
   }
   if (typeof v === 'number' && Number.isFinite(v)) {
     const epoch = Date.UTC(1899, 11, 30)
@@ -292,8 +297,24 @@ export function toIsoDateOrNull(v: unknown): string | null {
   const s = String(v).trim()
   if (!s) return null
   if (/[؀-ۿ]/.test(s) && !/\d{4}-\d{2}-\d{2}/.test(s)) return null
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)
+  if (iso) {
+    const y = iso[1]
+    let a = Number.parseInt(iso[2], 10) // 2nd segment (usually month)
+    let b = Number.parseInt(iso[3], 10) // 3rd segment (usually day)
+    // Some Excel exports write YYYY-DD-MM (typed manually or exported from
+    // a locale that puts day first). Detect and correct: if the middle
+    // segment can't be a valid month but the last one can, swap them.
+    // Prevents "date/time field value out of range: 2024-29-09" from
+    // Postgres and yields the intended 2024-09-29.
+    if (a > 12 && b >= 1 && b <= 12) {
+      const t = a
+      a = b
+      b = t
+    }
+    if (a < 1 || a > 12 || b < 1 || b > 31) return null
+    return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`
+  }
   const dmy = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/.exec(s)
   if (dmy) {
     const dd = dmy[1].padStart(2, '0')
@@ -301,8 +322,16 @@ export function toIsoDateOrNull(v: unknown): string | null {
     return `${dmy[3]}-${mm}-${dd}`
   }
   const d = new Date(s)
-  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  if (!Number.isNaN(d.getTime())) return isoFromLocalParts(d)
   return null
+}
+
+/** YYYY-MM-DD from a Date's LOCAL parts — never shifts across TZ. */
+function isoFromLocalParts(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 export function toUnitType(v: unknown): 'villa' | 'apartment' | 'other' | null {
