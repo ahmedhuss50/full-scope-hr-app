@@ -148,6 +148,12 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
   const [error, setError] = useState<string | null>(null)
   const [totalAiCostUsd, setTotalAiCostUsd] = useState<number>(0)
   const [doneResult, setDoneResult] = useState<BaseImporterResult | null>(null)
+  // "Default project" applied to every row that doesn't have a per-row match
+  // (Excel had no اسم المشروع column, or that cell was blank). Per-row picks
+  // and Excel-matched rows always take priority — this is a fallback so the
+  // owner can import a single-project file without having to add a redundant
+  // column to Excel.
+  const [defaultProjectId, setDefaultProjectId] = useState<string>('')
 
   const projectByNorm = useMemo(() => {
     const m = new Map<string, ProjectLite>()
@@ -337,12 +343,13 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
     const payloads: TPayload[] = []
     const projectIds = new Set<string>()
     for (const r of rows) {
-      // Skip only if the importer requires a project AND the user didn't
-      // pick one. `allowOrphan` importers (e.g. payments) let orphan rows
-      // through with an empty projectId.
-      if (!r.selectedProjectId && !allowOrphan) continue
+      // Effective project id: per-row pick wins; otherwise fall back to the
+      // "default project" the owner set at the top of the preview. Only
+      // rows with NEITHER get skipped (unless allowOrphan is on).
+      const effectiveProjectId = r.selectedProjectId || defaultProjectId
+      if (!effectiveProjectId && !allowOrphan) continue
       const finalPayload = attachProjectId
-        ? attachProjectId(r.payload, r.selectedProjectId)
+        ? attachProjectId(r.payload, effectiveProjectId)
         : r.payload
       payloads.push(finalPayload)
       if (r.selectedProjectId) projectIds.add(r.selectedProjectId)
@@ -394,9 +401,13 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
   const matchedCount = rows.filter((r) => !!r.matchedProjectId).length
   // When allowOrphan is on, EVERY parsed row counts toward the import — the
   // "no project" case is legitimate rather than "skip".
+  // Otherwise a row imports if it has either a per-row pick OR the default
+  // project fallback is set.
   const willImportCount = allowOrphan
     ? rows.length
-    : rows.filter((r) => !!r.selectedProjectId).length
+    : rows.filter((r) => !!r.selectedProjectId || !!defaultProjectId).length
+  // How many rows would inherit the default (had no per-row match)?
+  const fallbackCount = rows.filter((r) => !r.selectedProjectId).length
   const unmatchedUnitCount = rows.filter(
     (r) => !!r.selectedProjectId && r.unitExists === false,
   ).length
@@ -489,6 +500,35 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
             relevantFields={relevantFields}
             onRemap={() => setMode('manualMap')}
           />
+
+          {/* Default-project fallback. Applies to any row whose Excel didn't
+              carry a project name (or whose name didn't match). Per-row picks
+              always win. Helpful when the file is for one project and doesn't
+              carry a اسم المشروع column at all. */}
+          {fallbackCount > 0 && (
+            <div className="rounded-lg border border-teal-200 bg-teal-50/50 px-3 py-2.5 flex items-center gap-3 flex-wrap">
+              <div className="text-xs font-semibold text-teal-900 shrink-0">
+                المشروع الافتراضي:
+              </div>
+              <select
+                value={defaultProjectId}
+                onChange={(e) => setDefaultProjectId(e.target.value)}
+                className="flex-1 min-w-[220px] rounded-md border border-teal-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              >
+                <option value="">— بدون افتراضي —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name_ar}</option>
+                ))}
+              </select>
+              <div className="text-[11px] text-teal-800">
+                {defaultProjectId ? (
+                  <>سيُطبَّق على <span className="font-mono font-bold">{fallbackCount}</span> صف بلا مشروع مطابق</>
+                ) : (
+                  <>اختر مشروعًا لتطبيقه على <span className="font-mono font-bold">{fallbackCount}</span> صف بلا مطابقة</>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-slate-700">
