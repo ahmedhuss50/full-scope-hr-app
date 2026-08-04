@@ -83,6 +83,9 @@ type CaseRow = {
   recipient_notes: string | null
   delivery_notes: string | null
   paid_from_account_id: string | null
+  unit_id: string | null
+  sale_id: string | null
+  contract_id: string | null
   project:
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }
     | { id: string; code: string; name_ar: string; assigned_employee_id: string | null; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
@@ -92,6 +95,18 @@ type CaseRow = {
     | { id: string; company_name_ar: string; bank_name: string | null; bank_account: string | null; bank_iban: string | null }[]
     | null
   paid_from: PaidFromLite | PaidFromLite[] | null
+  linked_unit:
+    | { id: string; unit_number: string | null; unit_type: string | null }
+    | { id: string; unit_number: string | null; unit_type: string | null }[]
+    | null
+  linked_sale:
+    | { id: string; buyer_name_ar: string | null; buyer_phone: string | null; contract_number: string | null }
+    | { id: string; buyer_name_ar: string | null; buyer_phone: string | null; contract_number: string | null }[]
+    | null
+  linked_contract:
+    | { id: string; filename: string | null; storage_path: string; storage_bucket: string | null }
+    | { id: string; filename: string | null; storage_path: string; storage_bucket: string | null }[]
+    | null
 }
 
 function single<T>(maybe: T | T[] | null | undefined): T | null {
@@ -122,10 +137,13 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
-             paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label)`)
+             paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label),
+             linked_unit:dsb_project_units!dsb_cases_unit_id_fkey(id, unit_number, unit_type),
+             linked_sale:dsb_unit_sales!dsb_cases_sale_id_fkey(id, buyer_name_ar, buyer_phone, contract_number),
+             linked_contract:dsb_unit_contracts!dsb_cases_contract_id_fkey(id, filename, storage_path, storage_bucket)`)
     .eq('tenant_id', tenantId)
     .eq('id', params.caseId)
     .maybeSingle()
@@ -414,6 +432,75 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               </div>
             )}
           </section>
+
+          {/* Auto-linked unit / sale (buyer) / contract PDF — populated by
+              /api/dsb-extract §7.5 when the AI reads unit_number etc. from
+              the voucher PDF. Only renders when at least one link exists. */}
+          {(() => {
+            const linkedUnit = single(kase.linked_unit)
+            const linkedSale = single(kase.linked_sale)
+            const linkedContract = single(kase.linked_contract)
+            if (!linkedUnit && !linkedSale && !linkedContract) return null
+            return (
+              <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h2 className="serif font-bold text-lg text-slate-900">الروابط المكتشفة</h2>
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">AI-linked</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-lg border border-teal-200 bg-teal-50/40 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-teal-700 mb-1">الوحدة</div>
+                    {linkedUnit ? (
+                      <>
+                        <div className="font-mono text-slate-900 font-semibold">
+                          {linkedUnit.unit_number ?? '—'}
+                        </div>
+                        {linkedUnit.unit_type && (
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            {linkedUnit.unit_type}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-slate-400 italic text-xs">لم تُربط</div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-indigo-700 mb-1">المشتري</div>
+                    {linkedSale ? (
+                      <>
+                        <div className="text-slate-900 font-semibold">
+                          {linkedSale.buyer_name_ar ?? '—'}
+                        </div>
+                        {linkedSale.buyer_phone && (
+                          <div className="text-[11px] text-slate-500 font-mono mt-0.5" dir="ltr">
+                            {linkedSale.buyer_phone}
+                          </div>
+                        )}
+                        {linkedSale.contract_number && (
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            عقد <span className="font-mono">{linkedSale.contract_number}</span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-slate-400 italic text-xs">لم يُربط</div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 mb-1">ملف العقد</div>
+                    {linkedContract ? (
+                      <div className="text-slate-900 text-xs truncate" title={linkedContract.filename ?? undefined}>
+                        {linkedContract.filename ?? 'contract.pdf'}
+                      </div>
+                    ) : (
+                      <div className="text-slate-400 italic text-xs">لم يُربط</div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )
+          })()}
 
           {(() => {
             // Project-level bank wins (حساب المشروع). When the project hasn't been

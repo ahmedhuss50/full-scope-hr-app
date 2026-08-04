@@ -100,6 +100,10 @@ const SYSTEM_PROMPT = `Classify and extract fields from a Saudi real-estate disb
       "invoice_number": string|null, "invoice_date": "YYYY-MM-DD"|null,
       "invoice_total_sar": number|null, "invoice_vat_sar": number|null, "issued_to": string|null,
       "invoices": [{ "number": string|null, "date": "YYYY-MM-DD"|null, "total_sar": number|null, "vat_sar": number|null, "issued_to": string|null }]|null,
+      "unit_number": string|null,
+      "contract_number": string|null,
+      "buyer_name_ar": string|null,
+      "buyer_id_number": string|null,
       "disbursement_type_label_ar": string|null,
       "disbursement_type_code": "admin_marketing"|"construction"|"bank_financing"|"moh_incentive"|"unit_seriousness_fees"|"vat_project_registry"|"vat_sales_payment"|"other"|null,
       "line_items": [{ "description_ar": string|null, "description_en": string|null, "quantity": number|null, "unit_price_sar": number|null, "line_total_sar": number|null }]|null,
@@ -116,6 +120,13 @@ Rules:
 - Dates: ISO YYYY-MM-DD. Convert Hijri/Arabic-numerals.
 - confidence_overall ∈ [0,1].
 - Multiple invoices: extract EACH invoice as its own object in the "invoices" array. Copy the first invoice's number/date/total/vat/issued_to into the singular fields for compatibility. Never concatenate invoice numbers into a single string.
+
+Unit / contract / buyer identifiers — the app uses these to auto-link a case to a specific unit, sale, and contract PDF in the project database:
+- "unit_number" — the physical unit label (e.g. "V-101", "شقة 12", "قطعة 45"). Look for "رقم الوحدة" / "الوحدة" / "رقم الفيلا" / "رقم الشقة".
+- "contract_number" — "رقم العقد" / "عقد البيع رقم". Not the invoice number.
+- "buyer_name_ar" — the person the unit is sold to. Look for "اسم المشتري" / "المشتري" / "اسم العميل" (only when the voucher relates to a specific unit sale — otherwise null).
+- "buyer_id_number" — "رقم الهوية" / "رقم الإقامة" if next to the buyer.
+- Return null for any of these if the document doesn't clearly reference a single unit / sale (e.g. project-wide overhead vouchers).
 
 "نوع الصرف" (disbursement type) — find the TICKED option and map:
 "مصاريف إدارية وتسويقية"→admin_marketing | "مصاريف إنشائية"→construction | "من قيمة تمويل بنكي"→bank_financing | "من قيمة حافز وزارة الإسكان"→moh_incentive | "رسوم الجدية في شراء الوحدة العقارية المختارة"→unit_seriousness_fees | "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"→vat_project_registry | "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"→vat_sales_payment | other text→other. If nothing ticked → both fields null. Multiple ticks → pick best fit, note ambiguity in case_metadata.notes.`
@@ -223,20 +234,61 @@ export async function POST(req: Request) {
 
   try {
     // ----- 1. Load case + first upload -----
-    const { data: caseRow, error: caseErr } = await svc
-      .from('dsb_cases')
-      .select(
-        `
-        id, tenant_id, project_id, developer_id, case_number,
-        voucher_number_text, voucher_date, amount_sar, delivery_date, notes,
-        uploads:dsb_uploads(id, filename, storage_path, storage_bucket, file_size_bytes, mime_type, page_count),
-        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
-        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)
-        `,
-      )
-      .eq('id', case_id)
-      .eq('tenant_id', tenant_id)
-      .maybeSingle()
+    // Try the extended select (with the migration-057 columns sale_id +
+    // contract_id + unit_id). If that fails because migration 057 hasn't
+    // been applied yet in this environment, fall back to the base select
+    // and skip the auto-linker step. This lets a code deploy land before
+    // its migration without breaking extraction on already-uploaded cases.
+    let caseRow: Record<string, unknown> | null = null
+    let hasLinkColumns = true
+    {
+      const extended = await svc
+        .from('dsb_cases')
+        .select(
+          `
+          id, tenant_id, project_id, developer_id, case_number,
+          voucher_number_text, voucher_date, amount_sar, delivery_date, notes,
+          unit_id, sale_id, contract_id,
+          uploads:dsb_uploads(id, filename, storage_path, storage_bucket, file_size_bytes, mime_type, page_count),
+          project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
+          developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)
+          `,
+        )
+        .eq('id', case_id)
+        .eq('tenant_id', tenant_id)
+        .maybeSingle()
+      if (extended.error) {
+        // Most likely: `column dsb_cases.sale_id does not exist` because
+        // migration 057 hasn't been applied yet. Retry with the base
+        // columns; unit_id shipped in migration 056 so it should be safe
+        // on its own.
+        console.warn(
+          '[dsb-extract] extended select failed, falling back:',
+          extended.error.message,
+        )
+        hasLinkColumns = false
+        const base = await svc
+          .from('dsb_cases')
+          .select(
+            `
+            id, tenant_id, project_id, developer_id, case_number,
+            voucher_number_text, voucher_date, amount_sar, delivery_date, notes,
+            unit_id,
+            uploads:dsb_uploads(id, filename, storage_path, storage_bucket, file_size_bytes, mime_type, page_count),
+            project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
+            developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)
+            `,
+          )
+          .eq('id', case_id)
+          .eq('tenant_id', tenant_id)
+          .maybeSingle()
+        if (base.error) throw new Error('case fetch failed: ' + base.error.message)
+        caseRow = base.data as Record<string, unknown> | null
+      } else {
+        caseRow = extended.data as Record<string, unknown> | null
+      }
+    }
+    const caseErr = null as { message: string } | null // legacy shape used below
 
     if (caseErr) throw new Error('case fetch failed: ' + caseErr.message)
     if (!caseRow) return jsonError('case not found', 404)
@@ -613,8 +665,32 @@ export async function POST(req: Request) {
     const extractedBlob =
       metaRaw.extracted && typeof metaRaw.extracted === 'object' ? metaRaw.extracted : null
 
+    // ----- 7.5 Auto-link unit / sale / contract from extracted fields -----
+    // The AI reads the PDF for unit_number, contract_number, buyer_name,
+    // buyer_id_number. If any of those match records in the case's project,
+    // we populate dsb_cases.unit_id / .sale_id / .contract_id. Never
+    // overwrite existing links — human-set linkage always wins.
+    //
+    // If migration 057 isn't applied yet (sale_id/contract_id columns
+    // absent) we only compute unit_id and skip sale/contract linking.
+    const linkPatch = await autoLinkCaseFromExtracted({
+      svc,
+      tenantId: tenant_id,
+      caseProjectId: (caseRow as { project_id?: string }).project_id ?? null,
+      existingUnitId: ((caseRow as Record<string, unknown>).unit_id as string | null) ?? null,
+      existingSaleId: hasLinkColumns
+        ? ((caseRow as Record<string, unknown>).sale_id as string | null) ?? null
+        : null,
+      existingContractId: hasLinkColumns
+        ? ((caseRow as Record<string, unknown>).contract_id as string | null) ?? null
+        : null,
+      extracted: extractedBlob as Record<string, unknown> | null,
+      writeSaleAndContract: hasLinkColumns,
+    })
+
     const updateBody = {
       ...metadataUpdate,
+      ...linkPatch.patch,
       extracted_fields: extractedBlob,
       // Cost tracking — written on every extraction. extracted_at lets us
       // tell "extracted but cost not yet captured" (legacy rows) apart from
@@ -641,10 +717,13 @@ export async function POST(req: Request) {
     if (patchErr) throw new Error('patch case failed: ' + patchErr.message)
 
     // ----- 10. Audit log -----
+    const linkedKeys = Object.keys(linkPatch.patch)
     const auditNotes =
       `AI extracted ${rows.length} sections` +
       (chunkCount > 1 ? ` (split into ${chunkCount} chunks)` : '') +
-      (autofilledKeys.length > 0 ? `; autofilled: ${autofilledKeys.join(',')}` : '')
+      (autofilledKeys.length > 0 ? `; autofilled: ${autofilledKeys.join(',')}` : '') +
+      (linkedKeys.length > 0 ? `; linked: ${linkedKeys.join(',')}` : '') +
+      (linkPatch.notes.length > 0 ? ` [${linkPatch.notes.join(' | ')}]` : '')
     await svc.from('dsb_audit_log').insert({
       tenant_id,
       case_id,
@@ -668,6 +747,8 @@ export async function POST(req: Request) {
       ok: true,
       sections: rows.length,
       autofilled: autofilledKeys,
+      linked: linkPatch.patch,          // { unit_id?, sale_id?, contract_id? }
+      link_notes: linkPatch.notes,      // human-readable trail: what matched / what didn't
       cost_usd: Number(costUsd.toFixed(6)),
       model: usedModel,
       tokens: {
@@ -696,4 +777,179 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
+}
+
+// ---------------------------------------------------------------------------
+// autoLinkCaseFromExtracted
+// ---------------------------------------------------------------------------
+// After Claude returns the extracted_fields blob, try to link the case to
+// (a) a unit in the project, (b) the active sale for that unit — which
+// carries the buyer info inline — and (c) a contract PDF associated with
+// that unit.
+//
+// Never overwrites existing links (owner may have set them manually).
+// Silent on failure — a missing match just means no link is written and
+// the case still saves cleanly.
+//
+// Matching rules:
+//   unit_id     — normalize unit_number → exact match on
+//                 dsb_project_units(project_id, unit_number).
+//   sale_id     — prefer the sale whose contract_number matches the
+//                 extracted contract_number; else the most recent
+//                 sale_status='active' sale for the unit.
+//   contract_id — if a dsb_unit_contracts row exists for the matched
+//                 sale_id, use that; else fall back to the newest
+//                 contract linked to the unit.
+// ---------------------------------------------------------------------------
+type LinkPatch = {
+  patch: { unit_id?: string; sale_id?: string; contract_id?: string }
+  notes: string[]
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function autoLinkCaseFromExtracted(args: {
+  svc: any
+  tenantId: string
+  caseProjectId: string | null
+  existingUnitId: string | null
+  existingSaleId: string | null
+  existingContractId: string | null
+  extracted: Record<string, unknown> | null
+  // When migration 057 hasn't been applied yet the sale_id + contract_id
+  // columns don't exist on dsb_cases. In that mode we still compute the
+  // unit_id (available since migration 056) but skip writing the other two.
+  writeSaleAndContract?: boolean
+}): Promise<LinkPatch> {
+  const patch: LinkPatch['patch'] = {}
+  const notes: string[] = []
+  const {
+    svc,
+    tenantId,
+    caseProjectId,
+    existingUnitId,
+    existingSaleId,
+    existingContractId,
+    extracted,
+    writeSaleAndContract = true,
+  } = args
+
+  if (!extracted || !caseProjectId) return { patch, notes }
+
+  // Extract candidate identifiers from the AI JSON blob. Each is defensively
+  // coerced — the AI is instructed to output nulls but sometimes returns
+  // empty strings or numbers.
+  const asTrimmedString = (v: unknown): string | null => {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+    return null
+  }
+  const unitNumberRaw = asTrimmedString(extracted.unit_number)
+    ?? asTrimmedString((extracted as Record<string, unknown>).unit_no)
+  const contractNumberRaw = asTrimmedString(extracted.contract_number)
+    ?? asTrimmedString(extracted.invoice_number) // some vouchers reuse invoice_number = contract ref
+
+  // ------------------------- unit_id -------------------------
+  let matchedUnitId: string | null = existingUnitId
+  if (!existingUnitId && unitNumberRaw) {
+    // Case-insensitive exact match; also strip common Arabic tatweel /
+    // whitespace variations. Real files might store "V-101", "v101", "١٠١" —
+    // we try the raw form first, then a normalized form.
+    const cleaned = unitNumberRaw.replace(/[\sـ]+/g, '').trim()
+    const { data: unitRows } = await svc
+      .from('dsb_project_units')
+      .select('id, unit_number')
+      .eq('tenant_id', tenantId)
+      .eq('project_id', caseProjectId)
+    const candidates = (unitRows ?? []) as Array<{ id: string; unit_number: string | null }>
+    const exact = candidates.find(
+      (u) => (u.unit_number ?? '').trim().toLowerCase() === unitNumberRaw.toLowerCase(),
+    )
+    const looseMatch =
+      exact ??
+      candidates.find(
+        (u) =>
+          (u.unit_number ?? '').replace(/[\sـ]+/g, '').toLowerCase() ===
+          cleaned.toLowerCase(),
+      )
+    if (looseMatch) {
+      patch.unit_id = looseMatch.id
+      matchedUnitId = looseMatch.id
+      notes.push(`unit ${unitNumberRaw} → ${looseMatch.unit_number ?? '?'}`)
+    } else {
+      notes.push(`unit ${unitNumberRaw}: no match in project`)
+    }
+  }
+
+  // ------------------------- sale_id -------------------------
+  // Only try if we now have a unit_id (either pre-set or freshly matched)
+  // AND the case doesn't already have a sale_id.
+  let matchedSaleId: string | null = existingSaleId
+  if (!existingSaleId && matchedUnitId) {
+    const { data: saleRows } = await svc
+      .from('dsb_unit_sales')
+      .select('id, contract_number, sale_status, created_at')
+      .eq('tenant_id', tenantId)
+      .eq('unit_id', matchedUnitId)
+      .order('created_at', { ascending: false })
+    const sales = (saleRows ?? []) as Array<{
+      id: string
+      contract_number: string | null
+      sale_status: string | null
+      created_at: string | null
+    }>
+    let picked: (typeof sales)[number] | null = null
+    if (contractNumberRaw) {
+      picked =
+        sales.find(
+          (s) =>
+            (s.contract_number ?? '').trim().toLowerCase() ===
+            contractNumberRaw.toLowerCase(),
+        ) ?? null
+    }
+    if (!picked) {
+      picked = sales.find((s) => s.sale_status === 'active') ?? sales[0] ?? null
+    }
+    if (picked) {
+      if (writeSaleAndContract) patch.sale_id = picked.id
+      matchedSaleId = picked.id
+      notes.push(
+        (contractNumberRaw && picked.contract_number === contractNumberRaw
+          ? `sale by contract ${contractNumberRaw}`
+          : `sale (active/newest) for unit`) +
+          (writeSaleAndContract ? '' : ' [mig 057 pending, not written]'),
+      )
+    }
+  }
+
+  // ------------------------- contract_id -------------------------
+  if (!existingContractId && matchedUnitId && writeSaleAndContract) {
+    // Try sale-scoped first, then unit-scoped.
+    let contractHit: { id: string } | null = null
+    if (matchedSaleId) {
+      const { data: contractsBySale } = await svc
+        .from('dsb_unit_contracts')
+        .select('id, uploaded_at')
+        .eq('tenant_id', tenantId)
+        .eq('sale_id', matchedSaleId)
+        .order('uploaded_at', { ascending: false })
+        .limit(1)
+      contractHit = ((contractsBySale ?? []) as Array<{ id: string }>)[0] ?? null
+    }
+    if (!contractHit) {
+      const { data: contractsByUnit } = await svc
+        .from('dsb_unit_contracts')
+        .select('id, uploaded_at')
+        .eq('tenant_id', tenantId)
+        .eq('unit_id', matchedUnitId)
+        .order('uploaded_at', { ascending: false })
+        .limit(1)
+      contractHit = ((contractsByUnit ?? []) as Array<{ id: string }>)[0] ?? null
+    }
+    if (contractHit) {
+      patch.contract_id = contractHit.id
+      notes.push('contract PDF linked')
+    }
+  }
+
+  return { patch, notes }
 }

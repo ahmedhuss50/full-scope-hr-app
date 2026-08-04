@@ -1,10 +1,11 @@
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FolderKanban, FileText, Plus } from 'lucide-react'
+import { FolderKanban, FileText, Plus, Users, Scale } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
+import { ProjectQuickUpload } from './ProjectQuickUpload'
 import {
   UnitsSection,
   type UnitRow,
@@ -444,6 +445,68 @@ export default async function ProjectDetailPage({
             <div className="text-sm text-slate-700 whitespace-pre-wrap">{project.notes}</div>
           </div>
         )}
+      </section>
+
+      {/* One-click voucher upload — auto-assigned to this project. AI extracts
+          metadata and links to the matching unit/sale/contract. Only shown
+          when the project has a linked developer (createCaseByStaff requires
+          both project_id and developer_id). */}
+      {developer && (
+        <ProjectQuickUpload
+          projectId={project.id}
+          projectName={project.name_ar}
+          developerId={developer.id}
+          developerName={developer.company_name_ar}
+        />
+      )}
+
+      {/* Reports quick links — سجل المشترين + حساب الضمان.
+          Both are read-only rolled-up views built on top of the units /
+          sales / cases / payments tables. Available to everyone who can
+          see the project (owner, supervisor, employee, viewer). */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h2 className="serif font-black text-lg text-slate-900">التقارير</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              عرضٌ مجمَّع للوحدات والعقود والتحصيل والصرف على مستوى المشروع.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Link
+            href={`/app/disbursements/admin/projects/${project.id}/reports/buyers-register`}
+            className="group flex items-start gap-3 rounded-xl border border-teal-200 bg-teal-50/40 hover:bg-teal-50 hover:border-teal-300 transition p-4"
+          >
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center">
+              <Users className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-slate-900 group-hover:text-teal-800 transition">
+                سجل المشترين
+              </div>
+              <div className="text-xs text-slate-600 mt-0.5">
+                كل وحدة مع مشتريها وعقدها وسجل الدفعات المرتبطة.
+              </div>
+            </div>
+          </Link>
+          <Link
+            href={`/app/disbursements/admin/projects/${project.id}/reports/escrow-account`}
+            className="group flex items-start gap-3 rounded-xl border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50 hover:border-indigo-300 transition p-4"
+          >
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center">
+              <Scale className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-slate-900 group-hover:text-indigo-800 transition">
+                حساب الضمان
+              </div>
+              <div className="text-xs text-slate-600 mt-0.5">
+                تحصيل داخل − صرف خارج = الرصيد الجاري، مع فلترة حسب الحساب.
+              </div>
+            </div>
+          </Link>
+        </div>
       </section>
 
       {/* Per-project payment accounts — owner-only */}
