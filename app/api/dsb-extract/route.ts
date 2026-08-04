@@ -222,10 +222,27 @@ export async function POST(req: Request) {
   } catch {
     return jsonError('invalid JSON body')
   }
-  const { case_id, tenant_id } = (body || {}) as { case_id?: unknown; tenant_id?: unknown }
+  const {
+    case_id,
+    tenant_id,
+    skip_sections: skipSectionsRaw,
+    merge_extracted: mergeExtractedRaw,
+  } = (body || {}) as {
+    case_id?: unknown
+    tenant_id?: unknown
+    skip_sections?: unknown
+    merge_extracted?: unknown
+  }
   if (!isUuid(case_id) || !isUuid(tenant_id)) {
     return jsonError('case_id and tenant_id must be UUIDs')
   }
+  // Relink-mode flags. Set both true when the caller (dsb-relink-batch) is
+  // re-running extraction on a case that already has breakdown_items and
+  // populated metadata — we only want the freshly-parsed identifier fields
+  // to flow into extracted_fields + drive the auto-linker, without
+  // duplicating sections or clobbering existing voucher metadata.
+  const skipSections = skipSectionsRaw === true
+  const mergeExtracted = mergeExtractedRaw === true
 
   const svc = createSupabaseService()
 
@@ -247,7 +264,7 @@ export async function POST(req: Request) {
         .select(
           `
           id, tenant_id, project_id, developer_id, case_number,
-          voucher_number_text, voucher_date, amount_sar, delivery_date, notes,
+          voucher_number_text, voucher_date, amount_sar, delivery_date, notes, extracted_fields,
           unit_id, sale_id, contract_id,
           uploads:dsb_uploads(id, filename, storage_path, storage_bucket, file_size_bytes, mime_type, page_count),
           project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
@@ -627,7 +644,11 @@ export async function POST(req: Request) {
       })
     }
 
-    if (rows.length === 0) {
+    // In relink mode, we don't care about sections at all — we're re-running
+    // the AI only to refresh extracted_fields with the new identifier keys
+    // (unit_number, contract_number, buyer_name_ar). An empty sections list
+    // is fine; only original-mode extraction requires them.
+    if (rows.length === 0 && !skipSections) {
       throw new Error('no valid sections returned by Claude')
     }
 
@@ -661,9 +682,32 @@ export async function POST(req: Request) {
 
     const autofilledKeys = Object.keys(metadataUpdate)
 
-    // ----- 7. Always set extracted_fields to whatever Claude returned -----
-    const extractedBlob =
-      metaRaw.extracted && typeof metaRaw.extracted === 'object' ? metaRaw.extracted : null
+    // ----- 7. Set / merge extracted_fields -----
+    // Original extraction (skipSections=false): fully replace with Claude's
+    // latest output.
+    // Relink mode (mergeExtracted=true): merge new fields into whatever's
+    // already there so we don't lose data the old extraction captured
+    // (invoice line items, developer_name_ar, etc.) that the new pass may
+    // not re-emit if the model focuses on the identifier fields.
+    const newBlob =
+      metaRaw.extracted && typeof metaRaw.extracted === 'object'
+        ? (metaRaw.extracted as Record<string, unknown>)
+        : null
+    let extractedBlob: Record<string, unknown> | null = newBlob
+    if (mergeExtracted && newBlob) {
+      const existingBlob =
+        ((caseRow as Record<string, unknown>).extracted_fields as
+          | Record<string, unknown>
+          | null) ?? {}
+      // Merge: new AI values win when non-null, else keep existing.
+      const merged: Record<string, unknown> = { ...existingBlob }
+      for (const [k, v] of Object.entries(newBlob)) {
+        if (v === null || v === undefined) continue
+        if (typeof v === 'string' && v.trim() === '') continue
+        merged[k] = v
+      }
+      extractedBlob = merged
+    }
 
     // ----- 7.5 Auto-link unit / sale / contract from extracted fields -----
     // The AI reads the PDF for unit_number, contract_number, buyer_name,
@@ -704,9 +748,11 @@ export async function POST(req: Request) {
       extracted_at: new Date().toISOString(),
     }
 
-    // ----- 8. Insert breakdown rows -----
-    const { error: insertErr } = await svc.from('dsb_breakdown_items').insert(rows)
-    if (insertErr) throw new Error('insert breakdown rows failed: ' + insertErr.message)
+    // ----- 8. Insert breakdown rows (skipped in relink mode) -----
+    if (!skipSections && rows.length > 0) {
+      const { error: insertErr } = await svc.from('dsb_breakdown_items').insert(rows)
+      if (insertErr) throw new Error('insert breakdown rows failed: ' + insertErr.message)
+    }
 
     // ----- 9. Patch case metadata -----
     const { error: patchErr } = await svc
@@ -732,16 +778,19 @@ export async function POST(req: Request) {
       occurred_at: new Date().toISOString(),
     })
 
-    // ----- 11. Auto-trigger the compliance review -----
+    // ----- 11. Auto-trigger the compliance review (skipped in relink mode) -----
     // Fire-and-forget — kicks off /api/dsb-ai-review as a separate serverless
     // invocation so it can spend its own ~30s on the Claude call without
     // blocking our response here. The checklist will be pre-populated by the
     // time the user opens the case page (or shortly after, if they open it
     // immediately). The on-demand "مراجعة آلية" button still works for
-    // re-runs.
-    fireDsbAiReviewWebhook({ case_id, tenant_id }).catch((e) =>
-      console.error('[dsb-extract] auto-review trigger failed', e),
-    )
+    // re-runs. Suppressed in relink mode so a backfill doesn't
+    // regenerate the checklist for every case being re-processed.
+    if (!skipSections) {
+      fireDsbAiReviewWebhook({ case_id, tenant_id }).catch((e) =>
+        console.error('[dsb-extract] auto-review trigger failed', e),
+      )
+    }
 
     return NextResponse.json({
       ok: true,
