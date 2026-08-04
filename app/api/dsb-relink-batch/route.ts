@@ -42,6 +42,12 @@ export const maxDuration = 300 // 5 min — Vercel Pro ceiling
 const BATCH_CAP = 30
 const DEFAULT_LIMIT = 10
 
+// Disbursement types that are project-wide overhead — no per-unit link
+// expected in the voucher PDF, so re-extracting them wastes money without
+// producing links. When only_plausible=true these are excluded from the
+// pick-list.
+const OVERHEAD_TYPES = ['admin_marketing', 'construction'] as const
+
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
@@ -77,20 +83,31 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const projectId = url.searchParams.get('project_id')
 
+  // Fetch all unlinked ids with their disbursement type, then bucket in JS.
+  // Way simpler than combining PostgREST jsonb ops inside an or().
   let q = svc
     .from('dsb_cases')
-    .select('id', { count: 'exact', head: true })
+    .select('id, extracted_fields')
     .eq('tenant_id', auth.tenantId)
     .is('unit_id', null)
     .not('extracted_at', 'is', null)
   if (projectId) q = q.eq('project_id', projectId)
-  const { count, error } = await q
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  const { data: rows, error } = await q
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+
+  const overhead = new Set<string>(OVERHEAD_TYPES)
+  let totalCount = 0
+  let plausibleCount = 0
+  for (const r of (rows ?? []) as Array<{ extracted_fields: Record<string, unknown> | null }>) {
+    totalCount += 1
+    const type = (r.extracted_fields?.disbursement_type_code as string | null | undefined) ?? null
+    if (!type || !overhead.has(type)) plausibleCount += 1
   }
+
   return NextResponse.json({
     ok: true,
-    unlinked_count: count ?? 0,
+    unlinked_count: totalCount,
+    plausible_count: plausibleCount,
   })
 }
 
@@ -109,9 +126,14 @@ export async function POST(req: Request) {
   } catch {
     /* empty body is fine */
   }
-  const { limit: limitRaw, project_id: projectIdRaw } = (body || {}) as {
+  const {
+    limit: limitRaw,
+    project_id: projectIdRaw,
+    only_plausible: onlyPlausibleRaw,
+  } = (body || {}) as {
     limit?: unknown
     project_id?: unknown
+    only_plausible?: unknown
   }
   const limit = Math.max(
     1,
@@ -121,29 +143,48 @@ export async function POST(req: Request) {
     ),
   )
   const projectId = typeof projectIdRaw === 'string' && projectIdRaw.trim() ? projectIdRaw.trim() : null
+  // When true, skip cases whose disbursement_type is project-wide overhead
+  // (admin_marketing / construction). Those types don't reference a unit in
+  // the voucher PDF, so re-extracting them yields no links and wastes money.
+  const onlyPlausible = onlyPlausibleRaw === true
 
   const svc = createSupabaseService()
 
   // ----- Pick N unlinked cases (oldest first so a full backfill drains
   //       from the oldest data). -----
+  //
+  // When only_plausible is set we need the disbursement_type to filter in JS
+  // (PostgREST jsonb + or() gets ugly). We over-fetch a bit and then take
+  // the first N that pass the filter.
+  const overFetch = onlyPlausible ? Math.max(limit * 5, 50) : limit
   let listQ = svc
     .from('dsb_cases')
-    .select('id, case_number, project_id')
+    .select('id, case_number, project_id, extracted_fields')
     .eq('tenant_id', auth.tenantId)
     .is('unit_id', null)
     .not('extracted_at', 'is', null)
     .order('extracted_at', { ascending: true })
-    .limit(limit)
+    .limit(overFetch)
   if (projectId) listQ = listQ.eq('project_id', projectId)
   const { data: cases, error: listErr } = await listQ
   if (listErr) {
     return NextResponse.json({ ok: false, error: listErr.message }, { status: 500 })
   }
-  const targets = (cases ?? []) as Array<{
+  const allCandidates = (cases ?? []) as Array<{
     id: string
     case_number: string
     project_id: string
+    extracted_fields: Record<string, unknown> | null
   }>
+  const overhead = new Set<string>(OVERHEAD_TYPES)
+  const targets = (
+    onlyPlausible
+      ? allCandidates.filter((c) => {
+          const t = (c.extracted_fields?.disbursement_type_code as string | null | undefined) ?? null
+          return !t || !overhead.has(t)
+        })
+      : allCandidates
+  ).slice(0, limit)
 
   // Base URL for the internal extract call. Prefer the deployed URL so we
   // hit the right runtime environment; fall back to VERCEL_URL in preview.
@@ -218,15 +259,24 @@ export async function POST(req: Request) {
     }
   }
 
-  // Fresh count of what's still unlinked after this batch.
+  // Fresh count of what's still unlinked after this batch — honors the same
+  // scope (project + plausible-only) the operator ran with, so the UI's
+  // "remaining" reflects the drain queue they see.
   let remainQ = svc
     .from('dsb_cases')
-    .select('id', { count: 'exact', head: true })
+    .select('id, extracted_fields')
     .eq('tenant_id', auth.tenantId)
     .is('unit_id', null)
     .not('extracted_at', 'is', null)
   if (projectId) remainQ = remainQ.eq('project_id', projectId)
-  const { count: remaining } = await remainQ
+  const { data: remainRows } = await remainQ
+  const remaining = ((remainRows ?? []) as Array<{
+    extracted_fields: Record<string, unknown> | null
+  }>).filter((r) => {
+    if (!onlyPlausible) return true
+    const t = (r.extracted_fields?.disbursement_type_code as string | null | undefined) ?? null
+    return !t || !overhead.has(t)
+  }).length
 
   return NextResponse.json({
     ok: true,
@@ -235,7 +285,8 @@ export async function POST(req: Request) {
     linked_sale: linkedSale,
     linked_contract: linkedContract,
     failed,
-    remaining_unlinked: remaining ?? 0,
+    remaining_unlinked: remaining,
+    only_plausible: onlyPlausible,
     details,
   })
 }

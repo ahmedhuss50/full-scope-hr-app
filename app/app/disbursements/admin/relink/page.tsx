@@ -43,12 +43,23 @@ export default async function RelinkAdminPage() {
     .eq('tenant_id', tenantId)
     .not('extracted_at', 'is', null)
 
-  const { count: unlinkedCount } = await svc
+  // Fetch the full unlinked list once so we can compute both counts
+  // without a second query. The bucket loop is trivially fast for the ~200
+  // row scale we're dealing with.
+  const { data: unlinkedRows } = await svc
     .from('dsb_cases')
-    .select('id', { count: 'exact', head: true })
+    .select('id, extracted_fields')
     .eq('tenant_id', tenantId)
     .is('unit_id', null)
     .not('extracted_at', 'is', null)
+  const OVERHEAD = new Set(['admin_marketing', 'construction'])
+  const unlinkedCount = (unlinkedRows ?? []).length
+  const plausibleCount = ((unlinkedRows ?? []) as Array<{
+    extracted_fields: Record<string, unknown> | null
+  }>).filter((r) => {
+    const t = (r.extracted_fields?.disbursement_type_code as string | null | undefined) ?? null
+    return !t || !OVERHEAD.has(t)
+  }).length
 
   // Projects list for the optional narrow-to-one-project filter.
   const { data: projects } = await svc
@@ -59,10 +70,11 @@ export default async function RelinkAdminPage() {
   const projectOptions = ((projects ?? []) as Array<{ id: string; code: string; name_ar: string }>)
     .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}` }))
 
-  const linkedCount = (totalExtracted ?? 0) - (unlinkedCount ?? 0)
+  const linkedCount = (totalExtracted ?? 0) - unlinkedCount
   const pctLinked = totalExtracted && totalExtracted > 0
     ? Math.round((linkedCount / totalExtracted) * 100)
     : 0
+  const overheadCount = unlinkedCount - plausibleCount
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" dir="rtl">
@@ -103,13 +115,20 @@ export default async function RelinkAdminPage() {
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
           <div className="text-[11px] font-semibold text-amber-700">في انتظار الربط</div>
-          <div className="text-2xl font-black text-amber-800 mt-1 font-mono">{unlinkedCount ?? 0}</div>
+          <div className="text-2xl font-black text-amber-800 mt-1 font-mono">{unlinkedCount}</div>
+          <div className="text-[10px] text-amber-700 mt-0.5">
+            منها <span className="font-mono font-bold">{plausibleCount}</span> قابلة للربط
+            {overheadCount > 0 && (
+              <> · <span className="text-slate-500">{overheadCount} مصاريف مشروع (لا وحدة)</span></>
+            )}
+          </div>
         </div>
       </section>
 
       {/* Runner (client component) */}
       <RelinkRunner
-        initialUnlinked={unlinkedCount ?? 0}
+        initialUnlinked={unlinkedCount}
+        initialPlausible={plausibleCount}
         projects={projectOptions}
       />
 

@@ -31,14 +31,20 @@ type BatchResult = {
  */
 export function RelinkRunner({
   initialUnlinked,
+  initialPlausible,
   projects,
 }: {
   initialUnlinked: number
+  initialPlausible: number
   projects: Array<{ id: string; label: string }>
 }) {
   const router = useRouter()
   const [limit, setLimit] = useState(10)
   const [projectId, setProjectId] = useState('')
+  // Default ON — the operator will almost always want to skip project-wide
+  // overhead (admin_marketing / construction) because those don't reference
+  // a unit in the PDF, so re-extracting them wastes money.
+  const [onlyPlausible, setOnlyPlausible] = useState(true)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<BatchResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +61,7 @@ export function RelinkRunner({
         body: JSON.stringify({
           limit,
           project_id: projectId || undefined,
+          only_plausible: onlyPlausible,
         }),
       })
       const json = (await resp.json()) as BatchResult | { ok: false; error: string }
@@ -73,7 +80,12 @@ export function RelinkRunner({
     }
   }
 
-  const remaining = result?.remaining_unlinked ?? initialUnlinked
+  // Track "remaining" in the currently-selected scope. Before any run,
+  // that's the initial count from the server (which respects only_plausible
+  // if that's how the page loaded). After a run, the endpoint returns a
+  // fresh count that already honors the same scope the batch used.
+  const initialInScope = onlyPlausible ? initialPlausible : initialUnlinked
+  const remaining = result?.remaining_unlinked ?? initialInScope
   const noWork = remaining === 0
 
   return (
@@ -111,6 +123,16 @@ export function RelinkRunner({
               ))}
             </select>
           </div>
+          <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={onlyPlausible}
+              onChange={(e) => setOnlyPlausible(e.target.checked)}
+              disabled={busy}
+              className="w-4 h-4 accent-teal-600"
+            />
+            <span>استثناء المصاريف الإنشائية والإدارية</span>
+          </label>
           <button
             type="button"
             onClick={runBatch}
