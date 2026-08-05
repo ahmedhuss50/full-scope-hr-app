@@ -191,7 +191,7 @@ export default async function ProjectUnitsListPage({
                     </Td>
                     <Td>{u.block_number ?? '—'}</Td>
                     <Td>{u.zone_number ?? '—'}</Td>
-                    <Td>{u.unit_type ?? '—'}</Td>
+                    <Td>{unitTypeLabel(u.unit_type)}</Td>
                     <Td>
                       <span className="font-mono">
                         {u.area_m2 != null
@@ -230,4 +230,18 @@ function Th({ children }: { children: React.ReactNode }) {
 }
 function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-3 py-2.5 text-sm text-slate-700 align-top">{children}</td>
+}
+
+/**
+ * Map the internal enum value (villa/apartment/other) to a human-friendly
+ * Arabic label. Anything unknown falls through as-is so custom types stored
+ * pre-normalization still display sensibly.
+ */
+function unitTypeLabel(t: string | null): string {
+  if (!t) return '—'
+  const k = t.toLowerCase().trim()
+  if (k === 'villa') return 'فيلا'
+  if (k === 'apartment') return 'شقة'
+  if (k === 'other') return 'أخرى'
+  return t
 }

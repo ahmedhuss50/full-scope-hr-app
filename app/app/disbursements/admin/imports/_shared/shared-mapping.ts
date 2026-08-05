@@ -337,6 +337,25 @@ function isoFromLocalParts(d: Date): string {
 export function toUnitType(v: unknown): 'villa' | 'apartment' | 'other' | null {
   const s = toStr(v)
   if (!s) return null
+  // English matches — the developer's master files often use Latin script
+  // ("Villa", "Apartment", "Apt", "APT") since Excel exports flatten to
+  // whatever the source system uses. Check English before Arabic so a
+  // mixed cell like "Villa فيلا" resolves to the same bucket.
+  const lower = s.toLowerCase().trim()
+  if (
+    lower === 'villa' ||
+    lower.includes('villa') ||
+    lower === 'v'                     // some CRMs use just "V"
+  ) return 'villa'
+  if (
+    lower === 'apartment' ||
+    lower.includes('apartment') ||
+    lower === 'apt' ||
+    lower.startsWith('apt ') ||
+    lower === 'flat' ||
+    lower.includes('flat')
+  ) return 'apartment'
+  // Arabic matches (normalized) as fallback.
   const n = normAr(s)
   if (n.includes('فيلا') || n.includes('فله')) return 'villa'
   if (n.includes('شقه') || n.includes('شقة') || n.includes('شقق')) return 'apartment'
