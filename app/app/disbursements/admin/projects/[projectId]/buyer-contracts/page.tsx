@@ -233,11 +233,11 @@ export default async function ProjectBuyerContractsPage({
           <div className="flex-1" />
           {dsbRole === 'owner' && (
             <Link
-              href="/app/disbursements/admin/imports/contracts"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 text-xs font-semibold"
+              href={`/app/disbursements/admin/imports/contracts?project=${projectId}`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-xs font-bold"
             >
               <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-              استيراد عقود
+              استيراد عقود ومشترين
             </Link>
           )}
         </form>

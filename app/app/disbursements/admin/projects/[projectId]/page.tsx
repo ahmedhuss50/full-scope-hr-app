@@ -516,9 +516,11 @@ export default async function ProjectDetailPage({
         />
       )}
 
-      {/* Units + عقود المشترين — two separate quick-links.
-          Neither auto-populates here; click into each list to view.
-          Available to everyone who can see the project (owner+staff+viewer). */}
+      {/* Units + عقود المشترين — two separate quick-links with per-card
+          upload shortcuts. Neither list auto-populates on this page; click
+          the title to view, or the upload button to import scoped to this
+          project. Available to owner+staff+viewer for read; upload only
+          shows for owner. */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
           <div>
@@ -529,38 +531,58 @@ export default async function ProjectDetailPage({
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Link
-            href={`/app/disbursements/admin/projects/${project.id}/units`}
-            className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-100 hover:border-slate-300 transition p-4"
-          >
-            <div className="shrink-0 w-10 h-10 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center">
-              <FolderKanban className="w-5 h-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-slate-900 group-hover:text-slate-950 transition">
-                قائمة الوحدات
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+            <Link
+              href={`/app/disbursements/admin/projects/${project.id}/units`}
+              className="group flex items-start gap-3"
+            >
+              <div className="shrink-0 w-10 h-10 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center">
+                <FolderKanban className="w-5 h-5" aria-hidden="true" />
               </div>
-              <div className="text-xs text-slate-600 mt-0.5">
-                الوحدات المادية للمشروع فقط — بدون بيانات المشترين أو العقود.
+              <div className="min-w-0">
+                <div className="font-bold text-slate-900 group-hover:text-teal-700 transition">
+                  قائمة الوحدات
+                </div>
+                <div className="text-xs text-slate-600 mt-0.5">
+                  الوحدات المادية للمشروع فقط — بدون بيانات المشترين أو العقود.
+                </div>
               </div>
-            </div>
-          </Link>
-          <Link
-            href={`/app/disbursements/admin/projects/${project.id}/buyer-contracts`}
-            className="group flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 transition p-4"
-          >
-            <div className="shrink-0 w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-              <FileText className="w-5 h-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-slate-900 group-hover:text-amber-800 transition">
-                عقود المشترين
+            </Link>
+            {dsbRole === 'owner' && (
+              <Link
+                href={`/app/disbursements/admin/imports/units?project=${project.id}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 text-xs font-bold transition"
+              >
+                استيراد وحدات
+              </Link>
+            )}
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+            <Link
+              href={`/app/disbursements/admin/projects/${project.id}/buyer-contracts`}
+              className="group flex items-start gap-3"
+            >
+              <div className="shrink-0 w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                <FileText className="w-5 h-5" aria-hidden="true" />
               </div>
-              <div className="text-xs text-slate-600 mt-0.5">
-                العقود وبيانات المشترين، مرتبطة بالوحدات بالذكاء الاصطناعي.
+              <div className="min-w-0">
+                <div className="font-bold text-slate-900 group-hover:text-amber-800 transition">
+                  عقود المشترين
+                </div>
+                <div className="text-xs text-slate-600 mt-0.5">
+                  العقود وبيانات المشترين، مرتبطة بالوحدات بالذكاء الاصطناعي.
+                </div>
               </div>
-            </div>
-          </Link>
+            </Link>
+            {dsbRole === 'owner' && (
+              <Link
+                href={`/app/disbursements/admin/imports/contracts?project=${project.id}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 text-xs font-bold transition"
+              >
+                استيراد عقود ومشترين
+              </Link>
+            )}
+          </div>
         </div>
       </section>
 

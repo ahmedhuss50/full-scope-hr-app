@@ -17,7 +17,11 @@ import { UnitsOnlyImporter } from './UnitsOnlyImporter'
  */
 export const dynamic = 'force-dynamic'
 
-export default async function ImportUnitsOnlyPage() {
+export default async function ImportUnitsOnlyPage({
+  searchParams,
+}: {
+  searchParams?: { project?: string }
+}) {
   const supabase = createSupabaseServer()
   const {
     data: { user },
@@ -36,38 +40,52 @@ export default async function ImportUnitsOnlyPage() {
   const tenantId = profile.tenant_id as string
   const { data: projsRes } = await svc
     .from('dsb_projects')
-    .select('id, name_ar, developer_id')
+    .select('id, name_ar, developer_id, code')
     .eq('tenant_id', tenantId)
     .order('name_ar', { ascending: true })
   const projects: ProjectLite[] = (
     (projsRes ?? []) as Array<{ id: string; name_ar: string; developer_id: string | null }>
   ).map((p) => ({ id: p.id, name_ar: p.name_ar, developer_id: p.developer_id }))
 
+  const lockedProjectId = (searchParams?.project ?? '').trim() || null
+  const lockedProject = lockedProjectId
+    ? (
+        ((projsRes ?? []) as Array<{ id: string; name_ar: string; code: string }>).find(
+          (p) => p.id === lockedProjectId,
+        ) ?? null
+      )
+    : null
+  const effectiveLockedId = lockedProject ? lockedProject.id : null
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
       <header className="space-y-2">
         <Link
-          href="/app/disbursements/admin/imports"
+          href={
+            effectiveLockedId
+              ? `/app/disbursements/admin/projects/${effectiveLockedId}/units`
+              : '/app/disbursements/admin/imports'
+          }
           className="inline-flex items-center text-xs text-slate-500 hover:text-slate-700"
         >
           <ArrowRight className="w-3.5 h-3.5 ms-1 rotate-180" aria-hidden="true" />
-          العودة إلى قائمة الاستيرادات
+          {effectiveLockedId ? 'العودة إلى قائمة الوحدات' : 'العودة إلى قائمة الاستيرادات'}
         </Link>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
           <Building2 className="w-4 h-4" aria-hidden="true" />
           استيراد قائمة الوحدات (المواصفات)
         </div>
         <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
-          استيراد مواصفات الوحدات
+          {lockedProject ? `وحدات — ${lockedProject.name_ar}` : 'استيراد مواصفات الوحدات'}
         </h1>
         <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
-          يستورد أو يحدّث مواصفات الوحدات في المشروع فقط (البلوك، المنطقة،
-          المساحة، الحي، المدينة). لا يمس بيانات المشترين أو العقود
-          المرتبطة بالوحدات.
+          {lockedProject
+            ? `كل الصفوف ستُنسب تلقائيًا إلى مشروع «${lockedProject.name_ar}».`
+            : 'يستورد أو يحدّث مواصفات الوحدات في المشروع فقط (البلوك، المنطقة، المساحة، الحي، المدينة). لا يمس بيانات المشترين أو العقود المرتبطة بالوحدات.'}
         </p>
       </header>
 
-      <UnitsOnlyImporter projects={projects} />
+      <UnitsOnlyImporter projects={projects} lockedProjectId={effectiveLockedId} />
     </div>
   )
 }

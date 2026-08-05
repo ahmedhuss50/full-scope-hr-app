@@ -46,7 +46,17 @@ function fmtPrice(v: number | null): string {
     : v.toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
 
-export function ContractsImporter({ projects }: { projects: ProjectLite[] }) {
+export function ContractsImporter({
+  projects,
+  lockedProjectId = null,
+}: {
+  projects: ProjectLite[]
+  // When set (via ?project=<id> on the page), all imported rows are pinned to
+  // this project. The per-row project picker is hidden and the default-project
+  // fallback panel is auto-filled + locked. Used by the project-page "استيراد
+  // عقود ومشترين" shortcut.
+  lockedProjectId?: string | null
+}) {
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
     rowValues,
     columns,
@@ -129,9 +139,10 @@ export function ContractsImporter({ projects }: { projects: ProjectLite[] }) {
 
   return (
     <BaseImporter<Payload>
-      title="ملف Excel: قائمة العقود"
-      subtitle="ارفع ملف يحتوي على (رقم الوحدة، رقم العقد، تاريخ البيع، السعر، التمويل، حالة التسليم، اسم المشروع). يستخرج النظام أيضًا الأعمدة المالية إذا كانت متوفرة (رقم الدفعة، نسبة التحصيل، المبالغ المحصلة، المبلغ المتبقي، سعر المتر)، ويحدّث سجل البيع النشط للوحدة."
+      title="ملف Excel: عقود ومشترين"
+      subtitle="ارفع ملف يحتوي على (رقم الوحدة، رقم العقد، اسم المشتري، الجوال، تاريخ البيع، السعر، التمويل، حالة التسليم، اسم المشروع). يستخرج النظام أيضًا الأعمدة المالية إذا كانت متوفرة، ويربط العقود بالوحدات تلقائيًا بالذكاء الاصطناعي."
       projects={projects}
+      lockedProjectId={lockedProjectId}
       relevantFields={CONTRACT_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
       parseRow={parseRow}

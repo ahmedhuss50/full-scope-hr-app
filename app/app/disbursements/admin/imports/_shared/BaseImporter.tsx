@@ -114,6 +114,13 @@ export interface BaseImporterProps<TPayload> {
    *  matches the original "you must pick a project" behavior all four
    *  earlier importers rely on. */
   allowOrphan?: boolean
+
+  /** Project-scoped import: when set, EVERY row is pinned to this project
+   *  regardless of what اسم المشروع the Excel says. Used by the "استيراد
+   *  عقود ومشترين" shortcut launched from a project page — the operator
+   *  doesn't have to pick anything. Hides the default-project picker and
+   *  ignores per-row Excel project matches. */
+  lockedProjectId?: string | null
 }
 
 type Mode =
@@ -139,6 +146,7 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
     onSubmit,
     attachProjectId,
     allowOrphan,
+    lockedProjectId = null,
   } = props
 
   const [mode, setMode] = useState<Mode>('idle')
@@ -153,7 +161,9 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
   // and Excel-matched rows always take priority — this is a fallback so the
   // owner can import a single-project file without having to add a redundant
   // column to Excel.
-  const [defaultProjectId, setDefaultProjectId] = useState<string>('')
+  // If the page passes a lockedProjectId, seed the fallback default so every
+  // row auto-attaches to that project (and see below — the picker UI hides).
+  const [defaultProjectId, setDefaultProjectId] = useState<string>(lockedProjectId ?? '')
 
   const projectByNorm = useMemo(() => {
     const m = new Map<string, ProjectLite>()
@@ -505,7 +515,24 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
               carry a project name (or whose name didn't match). Per-row picks
               always win. Helpful when the file is for one project and doesn't
               carry a اسم المشروع column at all. */}
-          {fallbackCount > 0 && (
+          {/* When lockedProjectId is set (project-scoped import from a project
+              page) we replace the picker with a static banner — the operator
+              can't and shouldn't switch projects here. */}
+          {lockedProjectId ? (
+            (() => {
+              const lockedName =
+                projects.find((p) => p.id === lockedProjectId)?.name_ar ?? '—'
+              return (
+                <div className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-2.5 flex items-center gap-2 flex-wrap">
+                  <div className="text-xs font-bold text-teal-900">مثبَّت على المشروع:</div>
+                  <div className="text-sm font-semibold text-slate-900">{lockedName}</div>
+                  <div className="text-[11px] text-teal-800 mr-auto">
+                    كل <span className="font-mono font-bold">{rows.length}</span> صف سيُنسب لهذا المشروع تلقائيًا.
+                  </div>
+                </div>
+              )
+            })()
+          ) : fallbackCount > 0 && (
             <div className="rounded-lg border border-teal-200 bg-teal-50/50 px-3 py-2.5 flex items-center gap-3 flex-wrap">
               <div className="text-xs font-semibold text-teal-900 shrink-0">
                 المشروع الافتراضي:

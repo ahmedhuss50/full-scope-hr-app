@@ -26,7 +26,15 @@ const PREVIEW_COLUMNS = [
   { key: 'district', label: 'الحي' },
 ] as const
 
-export function UnitsOnlyImporter({ projects }: { projects: ProjectLite[] }) {
+export function UnitsOnlyImporter({
+  projects,
+  lockedProjectId = null,
+}: {
+  projects: ProjectLite[]
+  // When set (via ?project=<id>), pins every row to this project. The
+  // per-row picker + default-project fallback UI both hide.
+  lockedProjectId?: string | null
+}) {
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
     rowValues,
     columns,
@@ -79,6 +87,7 @@ export function UnitsOnlyImporter({ projects }: { projects: ProjectLite[] }) {
       title="ملف Excel: قائمة الوحدات"
       subtitle="ارفع ملف يحتوي على أعمدة مواصفات الوحدات (رقم الوحدة، البلوك، المنطقة، المساحة، الحي، المدينة، المنطقة، نوع الوحدة، اسم المشروع). سيتم قراءة الأعمدة تلقائيًا ومطابقة اسم المشروع مع القائمة."
       projects={projects}
+      lockedProjectId={lockedProjectId}
       relevantFields={UNIT_SPEC_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
       parseRow={parseRow}
