@@ -33,7 +33,17 @@ function fmtAmount(v: number | null): string {
     : v.toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
 
-export function HistoricalCasesImporter({ projects }: { projects: ProjectLite[] }) {
+export function HistoricalCasesImporter({
+  projects,
+  lockedProjectId = null,
+}: {
+  projects: ProjectLite[]
+  // Project-scoped mode (via ?project=<id> from the page). When set, every
+  // row pins to this project; the picker + default-project fallback both
+  // hide. Used by the "استيراد وثائق صرف تاريخية" shortcut on the project
+  // page.
+  lockedProjectId?: string | null
+}) {
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
     rowValues,
     columns,
@@ -135,9 +145,10 @@ export function HistoricalCasesImporter({ projects }: { projects: ProjectLite[] 
 
   return (
     <BaseImporter<Payload>
-      title="ملف Excel: الصرفيات السابقة"
-      subtitle="ارفع ملف يحتوي على سجل الصرفيات القديمة (رقم الطلب/السند، تاريخ السند، مبلغ السند، نوع الصرف، اسم المستفيد، تاريخ التسليم، رقم الوحدة إن وُجد، اسم المشروع). تُدرج كطلبات مؤرشَفة مباشرةً دون مسار المراجعة."
+      title="ملف Excel: وثائق الصرف السابقة"
+      subtitle="ارفع ملف يحتوي على سجل الصرفيات القديمة (رقم الوثيقة، تاريخ الوثيقة، المبلغ، الحساب المسدد منه، البند، اسم المستفيد، صفة المستفيد، تاريخ الدفع، رقم الفاتورة، …). كل صرفية تُدرج كطلب مؤرشَف مربوط بحساب الضمان للخصم من الرصيد تلقائيًا."
       projects={projects}
+      lockedProjectId={lockedProjectId}
       relevantFields={HISTORICAL_CASE_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
       parseRow={parseRow}

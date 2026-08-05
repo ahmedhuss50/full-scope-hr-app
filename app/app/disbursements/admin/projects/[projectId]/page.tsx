@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FolderKanban, FileText, Plus, Users, Scale } from 'lucide-react'
+import { FolderKanban, FileText, Plus, Users, Scale, Upload } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
@@ -602,6 +602,33 @@ export default async function ProjectDetailPage({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 text-xs font-bold transition"
                 >
                   استيراد دفعات
+                </Link>
+              </div>
+            </div>
+            {/* Historical vouchers (وثائق صرف تاريخية) — spans full width so
+                the description has room. Project-scoped import: rows land as
+                is_historical delivered cases and deduct from the escrow
+                account matched by the sheet's "الحساب المسدد منه" column. */}
+            <div className="sm:col-span-2 rounded-xl border border-orange-200 bg-orange-50/40 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="shrink-0 w-10 h-10 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center">
+                  <FileText className="w-5 h-5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900">وثائق الصرف السابقة (تاريخية)</div>
+                  <div className="text-xs text-slate-600 mt-0.5">
+                    استيراد سجل صرفيات قديمة من Excel. تُدرج كصرفيات مؤرشَفة وتُخصم تلقائيًا من حساب الضمان
+                    للحساب المذكور في كل صف.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Link
+                  href={`/app/disbursements/admin/imports/historical-cases?project=${project.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 text-xs font-bold transition"
+                >
+                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                  استيراد وثائق صرف
                 </Link>
               </div>
             </div>

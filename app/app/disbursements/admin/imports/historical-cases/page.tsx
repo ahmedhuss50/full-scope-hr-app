@@ -16,7 +16,11 @@ import { HistoricalCasesImporter } from './HistoricalCasesImporter'
  */
 export const dynamic = 'force-dynamic'
 
-export default async function ImportHistoricalCasesPage() {
+export default async function ImportHistoricalCasesPage({
+  searchParams,
+}: {
+  searchParams?: { project?: string }
+}) {
   const supabase = createSupabaseServer()
   const {
     data: { user },
@@ -35,38 +39,54 @@ export default async function ImportHistoricalCasesPage() {
   const tenantId = profile.tenant_id as string
   const { data: projsRes } = await svc
     .from('dsb_projects')
-    .select('id, name_ar, developer_id')
+    .select('id, name_ar, developer_id, code')
     .eq('tenant_id', tenantId)
     .order('name_ar', { ascending: true })
   const projects: ProjectLite[] = (
     (projsRes ?? []) as Array<{ id: string; name_ar: string; developer_id: string | null }>
   ).map((p) => ({ id: p.id, name_ar: p.name_ar, developer_id: p.developer_id }))
 
+  const lockedProjectId = (searchParams?.project ?? '').trim() || null
+  const lockedProject = lockedProjectId
+    ? (
+        ((projsRes ?? []) as Array<{ id: string; name_ar: string; code: string }>).find(
+          (p) => p.id === lockedProjectId,
+        ) ?? null
+      )
+    : null
+  const effectiveLockedId = lockedProject ? lockedProject.id : null
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
       <header className="space-y-2">
         <Link
-          href="/app/disbursements/admin/imports"
+          href={
+            effectiveLockedId
+              ? `/app/disbursements/admin/projects/${effectiveLockedId}`
+              : '/app/disbursements/admin/imports'
+          }
           className="inline-flex items-center text-xs text-slate-500 hover:text-slate-700"
         >
           <ArrowRight className="w-3.5 h-3.5 ms-1 rotate-180" aria-hidden="true" />
-          العودة إلى قائمة الاستيرادات
+          {effectiveLockedId ? 'العودة إلى المشروع' : 'العودة إلى قائمة الاستيرادات'}
         </Link>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
           <Archive className="w-4 h-4" aria-hidden="true" />
-          استيراد الصرفيات السابقة (تاريخية)
+          استيراد وثائق الصرف السابقة
         </div>
         <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
-          استيراد الصرفيات التاريخية
+          {lockedProject
+            ? `وثائق الصرف — ${lockedProject.name_ar}`
+            : 'استيراد الصرفيات التاريخية'}
         </h1>
         <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
-          سجّل الصرفيات السابقة التي تمت خارج النظام (كسندات ورقية أو من
-          أنظمة قديمة) مباشرةً في الأرشيف. تُدرج كطلبات مؤرشَفة (مسلَّمة)
-          دون المرور بمسار المراجعة، وتُميَّز بشارة «تاريخي» في الأرشيف.
+          {lockedProject
+            ? `كل الصرفيات ستُنسب إلى مشروع «${lockedProject.name_ar}» وتُخصم من حساب الضمان للحساب المسدد منه المذكور في كل صف.`
+            : 'سجّل الصرفيات السابقة التي تمت خارج النظام (كسندات ورقية أو من أنظمة قديمة) مباشرةً في الأرشيف. تُدرج كطلبات مؤرشَفة (مسلَّمة) دون المرور بمسار المراجعة، وتُميَّز بشارة «تاريخي» في الأرشيف. الحساب المذكور في كل صف يُطابَق تلقائيًا بحساب المشروع لخصم المبلغ من حساب الضمان.'}
         </p>
       </header>
 
-      <HistoricalCasesImporter projects={projects} />
+      <HistoricalCasesImporter projects={projects} lockedProjectId={effectiveLockedId} />
     </div>
   )
 }

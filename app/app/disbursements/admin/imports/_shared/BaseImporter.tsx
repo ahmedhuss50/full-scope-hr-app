@@ -314,7 +314,15 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
     }
 
     // Auto-match project by normalized Arabic name.
+    // Locked-project mode wins over per-row Excel matching — when the page
+    // pins the import to a specific project (via ?project=<id>), every row
+    // resolves to that project regardless of what the file says. This also
+    // clears the misleading "لا توجد مطابقة" chip on rows whose file has
+    // no اسم المشروع column.
     const matched = collected.map((r) => {
+      if (lockedProjectId) {
+        return { ...r, matchedProjectId: lockedProjectId, selectedProjectId: lockedProjectId }
+      }
       if (!r.projectRaw) return r
       const proj = projectByNorm.get(normAr(r.projectRaw))
       if (!proj) return r
