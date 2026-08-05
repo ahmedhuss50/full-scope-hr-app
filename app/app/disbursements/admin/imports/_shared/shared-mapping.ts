@@ -58,6 +58,17 @@ export const MAPPING_FIELDS = [
   'payment_description',
   'account_number',
   'account_label',
+  // Fuller historical-voucher schema — added for the developer's «وثائق
+  // الصرف» sheets that carry a richer voucher record than the old importer
+  // supported. These flow into dsb_cases.paid_from_account_id (via label
+  // lookup) + extracted_fields JSONB.
+  'beneficiary_role',        // صفة المستفيد — مقاول / مورد / موظف / …
+  'approval_date',           // تاريخ اعتماد الوثيقة
+  'invoice_number',          // رقم الفاتورة
+  'invoice_date',            // تاريخ الفاتورة
+  'invoice_payment_type',    // سداد الفاتورة كامل / جزئي
+  'recipient_name',          // اسم المستلم
+  'recipient_phone',         // رقم جوال المستلم
 ] as const
 
 export type MappingField = (typeof MAPPING_FIELDS)[number]
@@ -115,6 +126,14 @@ export const FIELD_LABELS_AR: Record<MappingField, string> = {
   payment_description: 'بيان الدفع',
   account_number: 'رقم الحساب',
   account_label: 'اسم الحساب',
+  // Extended historical-voucher fields.
+  beneficiary_role: 'صفة المستفيد',
+  approval_date: 'تاريخ اعتماد الوثيقة',
+  invoice_number: 'رقم الفاتورة',
+  invoice_date: 'تاريخ الفاتورة',
+  invoice_payment_type: 'سداد الفاتورة (كامل/جزئي)',
+  recipient_name: 'اسم المستلم',
+  recipient_phone: 'جوال المستلم',
 }
 
 // Subsets used by the three focused importers. Kept as a `readonly` array so
@@ -180,7 +199,8 @@ export const CONTRACT_FIELDS: readonly MappingField[] = [
 
 // Historical cases: past voucher/disbursement records loaded into dsb_cases
 // as delivered/archived. Includes case identifier + voucher info + amount +
-// disbursement type + beneficiary + delivery timing.
+// disbursement type + beneficiary + delivery timing + escrow-account link
+// (account_label matched to dsb_project_accounts so escrow report deducts).
 export const HISTORICAL_CASE_FIELDS: readonly MappingField[] = [
   'project_name',
   'unit_number',
@@ -192,6 +212,17 @@ export const HISTORICAL_CASE_FIELDS: readonly MappingField[] = [
   'beneficiary_name',
   'sale_date',
   'delivery_date',
+  // Extended voucher schema (real developer «وثائق الصرف» files).
+  'account_label',           // الحساب المسدد منه → looked up in project accounts
+  'beneficiary_role',        // صفة المستفيد
+  'approval_date',           // تاريخ اعتماد الوثيقة
+  'payment_date',            // تاريخ الدفع → dsb_cases.paid_at
+  'delivery_status',         // حالة التسليم — reuses the units-side field
+  'recipient_name',          // اسم المستلم
+  'recipient_phone',         // جوال المستلم
+  'invoice_number',          // رقم الفاتورة → extracted_fields
+  'invoice_date',            // تاريخ الفاتورة → extracted_fields
+  'invoice_payment_type',    // كامل / جزئي → extracted_fields
 ]
 
 // Payments ledger: standalone financial transactions. Every FK is optional

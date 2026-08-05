@@ -94,6 +94,14 @@ const FIELD_KEYS = [
   'payment_description',
   'account_number',
   'account_label',
+  // Extended historical-voucher schema.
+  'beneficiary_role',
+  'approval_date',
+  'invoice_number',
+  'invoice_date',
+  'invoice_payment_type',
+  'recipient_name',
+  'recipient_phone',
 ] as const
 
 type FieldKey = (typeof FIELD_KEYS)[number]
@@ -157,9 +165,18 @@ Match by Arabic header semantics (not exact string). Examples:
   "مبلغ الدفع" / "قيمة الدفع" / "المبلغ" (ledger row) → payment_amount
   "رقم مرجع الدفع" / "رقم التحويل" / "المرجع" → payment_reference
   "طريقة الدفع" / "وسيلة الدفع" → payment_method
-  "بيان" / "وصف الدفع" / "البيان" → payment_description
+  "بيان" / "وصف الدفع" / "البيان" / "بيان الصرف" → payment_description
   "رقم الحساب" → account_number
-  "اسم الحساب" / "الحساب" → account_label
+  "اسم الحساب" / "الحساب" / "الحساب المسدد منه" → account_label
+  "صفة المستفيد" / "نوع المستفيد" → beneficiary_role
+  "تاريخ اعتماد الوثيقة" / "تاريخ الاعتماد" → approval_date
+  "رقم الفاتورة" → invoice_number
+  "تاريخ الفاتورة" → invoice_date
+  "سداد الفاتورة كامل او جزئي" / "سداد الفاتورة" / "كامل او جزئي" → invoice_payment_type
+  "اسم المستلم" / "المستلم" → recipient_name
+  "رقم جوال المستلم" / "جوال المستلم" (only when a SEPARATE column from buyer_phone) → recipient_phone
+  "رقم وثيقة الصرف" → voucher_number_text (or case_number if that's the only identifier)
+  "البند" (in a voucher context) → disbursement_type_ar
 
 Rules:
 - Column indices are 0-based (column A = 0). Header row index is 0-based (first row = 0).
@@ -194,7 +211,11 @@ Return ONE JSON object only — no prose, no fences:
     "payment_date": int|null, "payment_amount": int|null,
     "payment_reference": int|null, "payment_method": int|null,
     "payment_description": int|null,
-    "account_number": int|null, "account_label": int|null
+    "account_number": int|null, "account_label": int|null,
+    "beneficiary_role": int|null, "approval_date": int|null,
+    "invoice_number": int|null, "invoice_date": int|null,
+    "invoice_payment_type": int|null,
+    "recipient_name": int|null, "recipient_phone": int|null
   },
   "notes_ar": string
 }`

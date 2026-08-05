@@ -14,13 +14,15 @@ import { bulkImportHistoricalCases, type HistoricalCaseRow } from './actions'
 type Payload = HistoricalCaseRow
 
 const PREVIEW_COLUMNS = [
-  { key: 'case_number', label: 'رقم الطلب' },
-  { key: 'voucher', label: 'رقم السند' },
-  { key: 'voucher_date', label: 'تاريخ السند' },
-  { key: 'amount', label: 'المبلغ' },
+  { key: 'voucher', label: 'رقم الوثيقة' },
+  { key: 'voucher_date', label: 'تاريخ الوثيقة' },
+  { key: 'account', label: 'الحساب' },
   { key: 'type', label: 'نوع الصرف' },
+  { key: 'amount', label: 'المبلغ' },
   { key: 'beneficiary', label: 'المستفيد' },
-  { key: 'delivery_date', label: 'تاريخ التسليم' },
+  { key: 'paid_at', label: 'تاريخ الدفع' },
+  { key: 'delivery', label: 'التسليم' },
+  { key: 'invoice', label: 'رقم الفاتورة' },
 ] as const
 
 function fmtAmount(v: number | null): string {
@@ -55,6 +57,19 @@ export function HistoricalCasesImporter({ projects }: { projects: ProjectLite[] 
     const sale_date = toIsoDateOrNull(at(columns.sale_date))
     const delivery_date = toIsoDateOrNull(at(columns.delivery_date))
     const unit_number = toStr(at(columns.unit_number)) || null
+    // Extended voucher schema.
+    const account_label = toStr(at(columns.account_label)) || null
+    const beneficiary_role = toStr(at(columns.beneficiary_role)) || null
+    const approval_date = toIsoDateOrNull(at(columns.approval_date))
+    const payment_date = toIsoDateOrNull(at(columns.payment_date))
+    const delivery_status_raw = toStr(at(columns.delivery_status)) || null
+    const recipient_name = toStr(at(columns.recipient_name)) || null
+    const recipient_phone = toStr(at(columns.recipient_phone)) || null
+    const invoice_number = toStr(at(columns.invoice_number)) || null
+    const invoice_date = toIsoDateOrNull(at(columns.invoice_date))
+    const invoice_payment_type = toStr(at(columns.invoice_payment_type)) || null
+    // Description column often maps to payment_description or notes/بيان.
+    const description = toStr(at(columns.payment_description)) || null
 
     // A row with no identifying info at all → drop. We require at least
     // ONE of: case_number, voucher_number, or beneficiary. Otherwise it's
@@ -69,13 +84,24 @@ export function HistoricalCasesImporter({ projects }: { projects: ProjectLite[] 
       projectRaw,
       unit_number: unit_number ?? '',
       previewCells: {
-        case_number: case_number ?? '—',
-        voucher: voucher_number_text ?? '—',
+        voucher: voucher_number_text ?? case_number ?? '—',
         voucher_date: voucher_date ?? '—',
-        amount: fmtAmount(amount),
+        account: account_label ?? '—',
         type: disbursement_type_ar ?? '—',
-        beneficiary: beneficiary_name ?? '—',
-        delivery_date: delivery_date ?? '—',
+        amount: fmtAmount(amount),
+        beneficiary:
+          beneficiary_role && beneficiary_name
+            ? `${beneficiary_name} (${beneficiary_role})`
+            : beneficiary_name ?? '—',
+        paid_at: payment_date ?? '—',
+        delivery:
+          delivery_status_raw
+            ? (delivery_date ? `${delivery_status_raw} (${delivery_date})` : delivery_status_raw)
+            : (delivery_date ?? '—'),
+        invoice:
+          invoice_number
+            ? (invoice_date ? `${invoice_number} (${invoice_date})` : invoice_number)
+            : '—',
       },
       payload: {
         project_id: '', // filled by attachProjectId
@@ -89,6 +115,19 @@ export function HistoricalCasesImporter({ projects }: { projects: ProjectLite[] 
         sale_date,
         delivery_date,
         delivered_at: delivery_date,
+        // Extended fields (server action maps them into the case row +
+        // extracted_fields JSONB, and does the account_label lookup).
+        account_label,
+        beneficiary_role,
+        approval_date,
+        payment_date,
+        delivery_status_raw,
+        recipient_name,
+        recipient_phone,
+        invoice_number,
+        invoice_date,
+        invoice_payment_type,
+        description,
         historical_source_note: `Imported from sheet "${sheetName}" row ${rowNumber}`,
       },
     }

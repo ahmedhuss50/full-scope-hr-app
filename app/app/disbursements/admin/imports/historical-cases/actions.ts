@@ -98,6 +98,20 @@ export interface HistoricalCaseRow {
   recipient_name?: string | null
   recipient_phone?: string | null
   historical_source_note?: string | null
+
+  // Extended voucher schema — see HistoricalCasesImporter.parseRow.
+  account_label?: string | null          // "الحساب المسدد منه" — matched to
+                                         // dsb_project_accounts.label to set
+                                         // dsb_cases.paid_from_account_id, so
+                                         // the escrow report deducts it.
+  beneficiary_role?: string | null       // مقاول / مورد / موظف / …
+  approval_date?: string | null          // تاريخ اعتماد الوثيقة (YYYY-MM-DD)
+  payment_date?: string | null           // تاريخ الدفع → dsb_cases.paid_at
+  delivery_status_raw?: string | null    // حالة التسليم (raw text — مسلمة/…)
+  invoice_number?: string | null
+  invoice_date?: string | null
+  invoice_payment_type?: string | null   // كامل / جزئي
+  description?: string | null            // بيان الصرف (goes into notes)
 }
 
 export interface HistoricalCaseSkip {
@@ -151,6 +165,31 @@ export async function bulkImportHistoricalCases(input: {
       .in('project_id', slice)
     for (const u of (units ?? []) as UnitLite[]) {
       unitByKey.set(`${u.project_id}::${u.unit_number}`, u)
+    }
+  }
+
+  // ---- Project account lookup by label — powers the escrow-account link.
+  // The developer's «الحساب المسدد منه» value ("حساب الانشاءات") is text; we
+  // match it (normalized) to dsb_project_accounts.label for the same
+  // project. When matched, we set dsb_cases.paid_from_account_id so the
+  // حساب الضمان report deducts this voucher from the right account.
+  type AcctLite = { id: string; project_id: string; label: string }
+  const acctByLabelByProject = new Map<string, Map<string, string>>()
+  for (let i = 0; i < uniqueProjectIds.length; i += CHUNK) {
+    const slice = uniqueProjectIds.slice(i, i + CHUNK)
+    const { data: accts } = await svc
+      .from('dsb_project_accounts')
+      .select('id, project_id, label')
+      .eq('tenant_id', caller.tenantId)
+      .in('project_id', slice)
+    for (const a of ((accts ?? []) as AcctLite[])) {
+      if (!a.label) continue
+      const map = acctByLabelByProject.get(a.project_id) ?? new Map<string, string>()
+      // Normalized key: strip whitespace + lowercase for tolerance vs. the
+      // "حساب الانشاءات " vs "حساب الانشاءات" kind of variation.
+      const norm = a.label.replace(/[\sـ]+/g, '').toLowerCase()
+      map.set(norm, a.id)
+      acctByLabelByProject.set(a.project_id, map)
     }
   }
 
@@ -226,6 +265,24 @@ export async function bulkImportHistoricalCases(input: {
       (r.voucher_date ?? '').trim() ||
       new Date().toISOString()
 
+    // Escrow account link — this is what makes the حساب الضمان report deduct.
+    let paidFromAccountId: string | null = null
+    const acctLabelRaw = (r.account_label ?? '').trim()
+    if (acctLabelRaw) {
+      const norm = acctLabelRaw.replace(/[\sـ]+/g, '').toLowerCase()
+      paidFromAccountId = acctByLabelByProject.get(projectId)?.get(norm) ?? null
+      // Silent miss: the row still lands as a historical case; only the
+      // escrow-account deduction is skipped. Owner can attach manually
+      // from the case page later.
+    }
+
+    // Compose the notes field from بيان الصرف + role/context, so operators
+    // can read voucher context on the case page without opening the JSONB.
+    const notesBits: string[] = []
+    if (r.description) notesBits.push(r.description)
+    if (r.beneficiary_role) notesBits.push(`صفة المستفيد: ${r.beneficiary_role}`)
+    if (r.invoice_payment_type) notesBits.push(`السداد: ${r.invoice_payment_type}`)
+
     const insertRow: Record<string, unknown> = {
       tenant_id: caller.tenantId,
       project_id: projectId,
@@ -245,15 +302,25 @@ export async function bulkImportHistoricalCases(input: {
       delivered_by_user_id: caller.userId,
       recipient_name: (r.recipient_name ?? '').trim() || null,
       recipient_phone: (r.recipient_phone ?? '').trim() || null,
+      // Extended voucher fields — real dsb_cases columns.
+      paid_from_account_id: paidFromAccountId,
+      paid_at: (r.payment_date ?? '').trim() || null,
+      notes: notesBits.length > 0 ? notesBits.join(' · ') : null,
     }
 
-    // Store the extra Arabic disbursement-type + beneficiary in the JSONB
-    // extracted_fields so they surface in the same places the AI-extracted
-    // fields do without adding new dsb_cases columns.
+    // Everything else lands in extracted_fields JSONB so it surfaces on the
+    // case page's AI-extracted panel without adding more columns.
     const extracted: Record<string, unknown> = {}
     if (r.disbursement_type_ar) extracted.disbursement_type_ar = r.disbursement_type_ar
     if (r.beneficiary_name) extracted.beneficiary_name_ar = r.beneficiary_name
+    if (r.beneficiary_role) extracted.beneficiary_role = r.beneficiary_role
     if (r.sale_date) extracted.sale_date = r.sale_date
+    if (r.approval_date) extracted.approval_date = r.approval_date
+    if (r.delivery_status_raw) extracted.delivery_status_ar = r.delivery_status_raw
+    if (r.invoice_number) extracted.invoice_number = r.invoice_number
+    if (r.invoice_date) extracted.invoice_date = r.invoice_date
+    if (r.invoice_payment_type) extracted.invoice_payment_type = r.invoice_payment_type
+    if (acctLabelRaw) extracted.paid_from_account_label = acctLabelRaw
     if (Object.keys(extracted).length > 0) {
       insertRow.extracted_fields = extracted
     }
