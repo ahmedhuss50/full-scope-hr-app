@@ -121,8 +121,6 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
     .maybeSingle()
   if (!project) return { ok: false, error: 'المشروع غير موجود.' }
 
-  const caseNumber = await nextCaseNumber(caller.tenantId)
-
   // Employee uploading on behalf — case lands directly in employee inbox.
   // All metadata fields are optional; the AI extraction will populate them
   // and the staff can edit manually via EditCaseInfo if needed.
@@ -132,26 +130,57 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
     typeof amountRaw === 'number' && Number.isFinite(amountRaw) && amountRaw > 0
       ? amountRaw
       : null
-  const { data: row, error } = await svc
-    .from('dsb_cases')
-    .insert({
-      tenant_id: caller.tenantId,
-      project_id: input.project_id,
-      developer_id: input.developer_id,
-      case_number: caseNumber,
-      voucher_number_text: voucherNum,
-      voucher_date: input.voucher_date || null,
-      amount_sar: amount,
-      delivery_date: input.delivery_date || null,
-      status: 'with_employee',
-      submitted_at: new Date().toISOString(),
-      notes: input.notes?.trim() || null,
-    })
-    .select('id')
-    .single()
-  if (error || !row) {
-    console.error('[dsb.createCaseByStaff] insert failed', error)
-    return { ok: false, error: error?.message ?? 'فشل إنشاء سند الصرف.' }
+
+  // Retry loop for case_number collisions. Even with the LIKE 'DSB-%'
+  // filter narrowing the max, two uploads landing in the same millisecond
+  // could both compute the same next number, and stale rows imported with
+  // foreign IDs could still slip through in edge cases. We try up to 10
+  // increments before giving up — the constraint is (tenant_id,
+  // case_number) so the DB is authoritative on uniqueness.
+  let caseNumber = await nextCaseNumber(caller.tenantId)
+  let row: { id: string } | null = null
+  let lastError: { code?: string; message: string } | null = null
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const { data, error } = await svc
+      .from('dsb_cases')
+      .insert({
+        tenant_id: caller.tenantId,
+        project_id: input.project_id,
+        developer_id: input.developer_id,
+        case_number: caseNumber,
+        voucher_number_text: voucherNum,
+        voucher_date: input.voucher_date || null,
+        amount_sar: amount,
+        delivery_date: input.delivery_date || null,
+        status: 'with_employee',
+        submitted_at: new Date().toISOString(),
+        notes: input.notes?.trim() || null,
+      })
+      .select('id')
+      .single()
+    if (!error && data) {
+      row = data as { id: string }
+      break
+    }
+    lastError = error as { code?: string; message: string }
+    // 23505 = unique_violation. Anything else = give up.
+    if (error?.code !== '23505') {
+      console.error('[dsb.createCaseByStaff] insert failed', error)
+      return { ok: false, error: error?.message ?? 'فشل إنشاء سند الصرف.' }
+    }
+    // Bump: try the next sequential DSB-#### until one is free. Cheap
+    // because dsb_cases has an index on (tenant_id, case_number).
+    const m = /^DSB-(\d+)$/.exec(caseNumber)
+    const nextN = m ? parseInt(m[1], 10) + 1 : 1
+    caseNumber = `DSB-${String(nextN).padStart(4, '0')}`
+  }
+  if (!row) {
+    console.error('[dsb.createCaseByStaff] exhausted case_number retries', lastError)
+    return {
+      ok: false,
+      error:
+        'تعذّر تخصيص رقم فريد للطلب بعد عدة محاولات — يُرجى المحاولة بعد قليل.',
+    }
   }
 
   return { ok: true, case_id: row.id as string, case_number: caseNumber }
