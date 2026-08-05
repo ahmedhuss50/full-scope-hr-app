@@ -60,8 +60,25 @@ type SaleRow = {
   price_before_tax_sar: number | null
   delivery_status: string | null
   delivery_date: string | null
-  // Nested unit (when linked) for showing the resolved unit_number.
-  unit: { id: string; unit_number: string | null } | { id: string; unit_number: string | null }[] | null
+  // Nested unit (when linked) for showing the resolved unit_number + specs.
+  unit:
+    | {
+        id: string
+        unit_number: string | null
+        unit_type: string | null
+        area_m2: number | null
+        block_number: string | null
+        zone_number: string | null
+      }
+    | Array<{
+        id: string
+        unit_number: string | null
+        unit_type: string | null
+        area_m2: number | null
+        block_number: string | null
+        zone_number: string | null
+      }>
+    | null
 }
 
 function single<T>(v: T | T[] | null | undefined): T | null {
@@ -117,7 +134,7 @@ export default async function ProjectBuyerContractsPage({
        buyer_name_ar, buyer_phone, buyer_id_type, buyer_id_number, buyer_nationality,
        sale_date, price_with_vat_sar, price_before_tax_sar,
        delivery_status, delivery_date,
-       unit:dsb_project_units!dsb_unit_sales_unit_id_fkey(id, unit_number)`,
+       unit:dsb_project_units!dsb_unit_sales_unit_id_fkey(id, unit_number, unit_type, area_m2, block_number, zone_number)`,
     )
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
@@ -314,9 +331,26 @@ export default async function ProjectBuyerContractsPage({
                     <tr key={s.id} className="hover:bg-slate-50/70">
                       <Td>
                         {unit && unit.unit_number ? (
-                          <span className="font-mono font-semibold text-emerald-800">
-                            {unit.unit_number}
-                          </span>
+                          <div className="leading-tight">
+                            <span className="font-mono font-semibold text-emerald-800">
+                              {unit.unit_number}
+                            </span>
+                            <div className="text-[11px] text-slate-600 mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5">
+                              {unit.unit_type && <span>{unitTypeLabel(unit.unit_type)}</span>}
+                              {unit.area_m2 != null && (
+                                <span className="font-mono text-slate-500">
+                                  {new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(unit.area_m2)} م²
+                                </span>
+                              )}
+                            </div>
+                            {(unit.block_number || unit.zone_number) && (
+                              <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                                {unit.block_number && <>B {unit.block_number}</>}
+                                {unit.block_number && unit.zone_number && ' · '}
+                                {unit.zone_number && <>Z {unit.zone_number}</>}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex flex-col gap-0.5">
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 w-fit">
@@ -421,4 +455,14 @@ function Th({ children }: { children: React.ReactNode }) {
 }
 function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-3 py-2.5 text-sm text-slate-700 align-top">{children}</td>
+}
+
+/** Same helper as on the units page — internal enum → Arabic label. */
+function unitTypeLabel(t: string | null): string {
+  if (!t) return '—'
+  const k = t.toLowerCase().trim()
+  if (k === 'villa') return 'فيلا'
+  if (k === 'apartment') return 'شقة'
+  if (k === 'other') return 'أخرى'
+  return t
 }
