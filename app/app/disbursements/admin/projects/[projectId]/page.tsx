@@ -6,6 +6,7 @@ import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
 import { ProjectQuickUpload } from './ProjectQuickUpload'
+import { ContractPdfUpload } from './ContractPdfUpload'
 import {
   type UnitRow,
   type SaleRow,
@@ -232,6 +233,43 @@ export default async function ProjectDetailPage({
     .eq('project_id', projectId)
     .order('label', { ascending: true })
   const projectAccounts = (accountsData ?? []) as ProjectAccount[]
+
+  // ---- Counts for الوثائق section (contract PDFs + payments) ----
+  // Contracts scope: PDFs whose unit_id points into this project's units,
+  // PLUS pending PDFs uploaded against this project but not yet matched
+  // (unit_id null). We fetch the unit-id list once and use it twice.
+  const { data: unitIdRows } = await svc
+    .from('dsb_project_units')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+  const projectUnitIds = ((unitIdRows ?? []) as { id: string }[]).map((r) => r.id)
+  // Empty-array in .in() would match everything, so we sentinel with a
+  // guaranteed-no-match UUID when the project has zero units.
+  const inList = projectUnitIds.length > 0
+    ? projectUnitIds
+    : ['00000000-0000-0000-0000-000000000000']
+  const [contractPdfsRes, contractPdfsUnlinkedRes, paymentsRes] = await Promise.all([
+    svc
+      .from('dsb_unit_contracts')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('unit_id', inList),
+    svc
+      .from('dsb_unit_contracts')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('unit_id', inList)
+      .neq('extraction_status', 'matched'),
+    svc
+      .from('dsb_payments')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId),
+  ])
+  const contractPdfsTotal = contractPdfsRes.count ?? 0
+  const contractPdfsUnlinked = contractPdfsUnlinkedRes.count ?? 0
+  const paymentsCount = paymentsRes.count ?? 0
 
   // ---- Units + sales + contracts (owner-only section) ----
   // We always load these arrays so the section can render for owners; they
@@ -514,6 +552,61 @@ export default async function ProjectDetailPage({
           projectId={project.id}
           initialAccounts={projectAccounts}
         />
+      )}
+
+      {/* الوثائق — restored after the UnitsSection consolidation removed
+          them. Contract PDFs (وثائق العقود) live in dsb_unit_contracts and
+          need the vision extractor to attach them to a unit. Payments
+          (دفعات التحصيل) live in dsb_payments; the card links into the
+          tenant-wide list filtered by this project. Owner-only. */}
+      {dsbRole === 'owner' && (
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+            <div>
+              <h2 className="serif font-black text-lg text-slate-900">الوثائق</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                رفع عقود PDF ومراجعة دفعات التحصيل.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ContractPdfUpload
+              projectId={project.id}
+              totalCount={contractPdfsTotal}
+              unlinkedCount={contractPdfsUnlinked}
+            />
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="shrink-0 w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <FileText className="w-5 h-5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900">دفعات التحصيل</div>
+                  <div className="text-xs text-slate-600 mt-0.5">
+                    سجل المعاملات المالية للمشروع (استيراد من Excel).
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    الإجمالي: <span className="font-mono font-bold text-slate-900">{paymentsCount}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Link
+                  href={`/app/disbursements/admin/lists/payments?project=${project.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-bold transition"
+                >
+                  عرض دفعات المشروع
+                </Link>
+                <Link
+                  href="/app/disbursements/admin/imports/payments"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 text-xs font-bold transition"
+                >
+                  استيراد دفعات
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
       )}
 
       {/* Units + عقود المشترين — two separate quick-links with per-card
