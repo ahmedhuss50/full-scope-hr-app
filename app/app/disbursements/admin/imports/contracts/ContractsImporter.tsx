@@ -21,12 +21,20 @@ import {
 type Payload = BulkImportContractRow
 
 const PREVIEW_COLUMNS = [
+  // Buyer identity — the operator's primary "does this row look right?"
+  // check is on the buyer name, so lead with it.
+  { key: 'buyer_name', label: 'المشتري' },
+  { key: 'buyer_phone', label: 'الجوال' },
+  { key: 'buyer_id', label: 'رقم الهوية' },
+  // Contract terms.
   { key: 'contract_no', label: 'رقم العقد' },
+  { key: 'contract_type', label: 'نوع العقد' },
   { key: 'sale_date', label: 'تاريخ البيع' },
-  { key: 'price', label: 'السعر شامل الضريبة' },
+  // Pricing — show whichever price the file has (with-VAT preferred, else
+  // before-VAT). The preview cell logic below handles the fallback.
+  { key: 'price', label: 'السعر' },
   { key: 'financing', label: 'التمويل' },
   { key: 'delivery', label: 'التسليم' },
-  { key: 'collection', label: 'التحصيل' },
 ] as const
 
 /** Render a percentage value stored as either 0.35 or 35 → "35%". */

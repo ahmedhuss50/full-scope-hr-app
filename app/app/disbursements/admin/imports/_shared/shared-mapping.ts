@@ -143,9 +143,21 @@ export const BUYER_FIELDS: readonly MappingField[] = [
   'sale_count',
 ]
 
+// The "عقود المشترين" importer combines buyer + contract data in one file.
+// After the consolidation, we ask the AI to identify buyer columns too, so
+// a single Excel like the developer's «قائمة عقود المشترين» populates the
+// whole sale row (buyer identity + contract terms + financials) at once.
 export const CONTRACT_FIELDS: readonly MappingField[] = [
   'unit_number',
   'project_name',
+  // Buyer identity (previously scoped to the standalone BUYER_FIELDS
+  // importer; now part of the combined عقود المشترين import).
+  'buyer_name',
+  'buyer_id_type',
+  'buyer_id_number',
+  'buyer_nationality',
+  'buyer_phone',
+  // Contract + pricing.
   'contract_number',
   'contract_type',
   'financing_type',
