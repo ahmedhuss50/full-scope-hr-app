@@ -163,13 +163,23 @@ export function ContractsImporter({
           message: (
             <>
               حُدِّث <span className="font-mono font-bold">{res.updatedSales}</span> عقد نشط
-              وأُضيف <span className="font-mono font-bold">{res.insertedSales}</span> سجل بيع
-              جديد.
+              وأُضيف <span className="font-mono font-bold">{res.insertedSales}</span> سجل جديد.
+              {res.insertedUnlinked > 0 && (
+                <>
+                  {' '}منها <span className="font-mono font-bold">{res.insertedUnlinked}</span>{' '}
+                  بلا وحدة مطابقة.
+                </>
+              )}
+              {res.linkedByAI > 0 && (
+                <>
+                  {' '}الذكاء الاصطناعي ربط <span className="font-mono font-bold">{res.linkedByAI}</span>{' '}
+                  منها تلقائيًا بالوحدات.
+                </>
+              )}
               {res.skippedRows > 0 && (
                 <>
                   {' '}تم تجاهل{' '}
-                  <span className="font-mono font-bold">{res.skippedRows}</span> صف (لا
-                  يحتوي على رقم وحدة).
+                  <span className="font-mono font-bold">{res.skippedRows}</span> صف فارغ.
                 </>
               )}
             </>
@@ -178,7 +188,7 @@ export function ContractsImporter({
             res.unmatched.length > 0 ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                 <div className="font-semibold mb-1">
-                  {res.unmatched.length} وحدة لم يتم العثور عليها (تم تجاهلها):
+                  {res.unmatched.length} صف بلا وحدة مطابقة (أُدرج بدون ربط، جاهز للربط اليدوي أو AI لاحقًا):
                 </div>
                 <ul className="list-disc ms-5 space-y-0.5 max-h-40 overflow-y-auto">
                   {res.unmatched.slice(0, 20).map((u, i) => (
@@ -191,7 +201,7 @@ export function ContractsImporter({
                   )}
                 </ul>
                 <div className="mt-1">
-                  أنشئ هذه الوحدات أولًا من «قائمة الوحدات (المواصفات)».
+                  استخدم زر «ربط تلقائي بالوحدات» على صفحة «عقود المشترين» لإعادة المحاولة.
                 </div>
               </div>
             ) : undefined,

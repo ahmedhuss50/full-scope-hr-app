@@ -1210,6 +1210,9 @@ export async function bulkImportContractsFromRows(
   }
 
   let inserted = 0
+  // Count how many of the fresh inserts land with unit_id=null — those are
+  // the ones the AI linker below will try to attach to units.
+  const insertedUnlinkedCount = toInsert.filter((r) => r.unit_id === null).length
   if (toInsert.length > 0) {
     const { error } = await svc.from('dsb_unit_sales').insert(toInsert)
     if (error) return { ok: false, error: error.message }
