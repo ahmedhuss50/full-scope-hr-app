@@ -47,10 +47,17 @@ type SaleRow = {
   unit_id: string | null
   unit_number_raw: string | null
   contract_number: string | null
+  contract_type: string | null
+  financing_type: string | null
+  financing_bank: string | null
   buyer_name_ar: string | null
   buyer_phone: string | null
+  buyer_id_type: string | null
+  buyer_id_number: string | null
+  buyer_nationality: string | null
   sale_date: string | null
   price_with_vat_sar: number | null
+  price_before_tax_sar: number | null
   delivery_status: string | null
   delivery_date: string | null
   // Nested unit (when linked) for showing the resolved unit_number.
@@ -105,8 +112,11 @@ export default async function ProjectBuyerContractsPage({
   let salesQ = svc
     .from('dsb_unit_sales')
     .select(
-      `id, unit_id, unit_number_raw, contract_number, buyer_name_ar, buyer_phone,
-       sale_date, price_with_vat_sar, delivery_status, delivery_date,
+      `id, unit_id, unit_number_raw,
+       contract_number, contract_type, financing_type, financing_bank,
+       buyer_name_ar, buyer_phone, buyer_id_type, buyer_id_number, buyer_nationality,
+       sale_date, price_with_vat_sar, price_before_tax_sar,
+       delivery_status, delivery_date,
        unit:dsb_project_units!dsb_unit_sales_unit_id_fkey(id, unit_number)`,
     )
     .eq('tenant_id', tenantId)
@@ -322,11 +332,20 @@ export default async function ProjectBuyerContractsPage({
                       </Td>
                       <Td>
                         {s.buyer_name_ar ? (
-                          <div>
+                          <div className="leading-tight">
                             <div className="text-slate-900">{s.buyer_name_ar}</div>
                             {s.buyer_phone && (
-                              <div className="text-[11px] font-mono text-slate-500" dir="ltr">
+                              <div className="text-[11px] font-mono text-slate-500 mt-0.5" dir="ltr">
                                 {s.buyer_phone}
+                              </div>
+                            )}
+                            {(s.buyer_id_number || s.buyer_nationality) && (
+                              <div className="text-[10px] text-slate-500 mt-0.5">
+                                {s.buyer_id_type && <>{s.buyer_id_type} · </>}
+                                {s.buyer_id_number && (
+                                  <span className="font-mono" dir="ltr">{s.buyer_id_number}</span>
+                                )}
+                                {s.buyer_nationality && <> · {s.buyer_nationality}</>}
                               </div>
                             )}
                           </div>
@@ -336,10 +355,25 @@ export default async function ProjectBuyerContractsPage({
                       </Td>
                       <Td>
                         <span className="font-mono text-xs">{s.contract_number ?? '—'}</span>
+                        {s.contract_type && (
+                          <div className="text-[10px] text-slate-500 mt-0.5">{s.contract_type}</div>
+                        )}
+                        {(s.financing_bank || s.financing_type) && (
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {s.financing_bank ?? ''}
+                            {s.financing_bank && s.financing_type ? ' · ' : ''}
+                            {s.financing_type ?? ''}
+                          </div>
+                        )}
                       </Td>
                       <Td>{fmtDate(s.sale_date)}</Td>
                       <Td>
-                        <span className="font-mono">{fmtSar(s.price_with_vat_sar)}</span>
+                        <span className="font-mono">
+                          {fmtSar(s.price_with_vat_sar ?? s.price_before_tax_sar)}
+                        </span>
+                        {s.price_with_vat_sar == null && s.price_before_tax_sar != null && (
+                          <div className="text-[10px] text-slate-500">قبل الضريبة</div>
+                        )}
                       </Td>
                       <Td>
                         {s.delivery_status === 'delivered' ? (

@@ -21,11 +21,12 @@ import {
 type Payload = BulkImportContractRow
 
 const PREVIEW_COLUMNS = [
-  // Buyer identity — the operator's primary "does this row look right?"
-  // check is on the buyer name, so lead with it.
+  // Buyer identity — name + phone + ID (with type + nationality inline).
+  // The operator's primary "does this row look right?" check is on the
+  // buyer name, so lead with it.
   { key: 'buyer_name', label: 'المشتري' },
+  { key: 'buyer_id', label: 'الهوية' },
   { key: 'buyer_phone', label: 'الجوال' },
-  { key: 'buyer_id', label: 'رقم الهوية' },
   // Contract terms.
   { key: 'contract_no', label: 'رقم العقد' },
   { key: 'contract_type', label: 'نوع العقد' },
@@ -124,15 +125,28 @@ export function ContractsImporter({
       projectRaw,
       unit_number: unit_number || '',
       previewCells: {
-        buyer_name: buyer_name_ar ?? '—',
+        // Buyer identity — top line = name, sub line = nationality (if any).
+        buyer_name:
+          buyer_name_ar
+            ? (buyer_nationality ? `${buyer_name_ar} · ${buyer_nationality}` : buyer_name_ar)
+            : '—',
+        // ID cell packs id_type + id_number so the operator can spot a
+        // "أحوال وطنية 1234…" mismatch in one glance.
+        buyer_id:
+          buyer_id_number
+            ? (buyer_id_type ? `${buyer_id_type}: ${buyer_id_number}` : buyer_id_number)
+            : '—',
         buyer_phone: buyer_phone ?? '—',
-        buyer_id: buyer_id_number ?? '—',
         contract_no: contract_number ?? '—',
         contract_type: contract_type ?? '—',
         sale_date: sale_date ?? '—',
         price: fmtPrice(displayPrice),
+        // Financing cell: bank name is the readable part, type ("تمويل" /
+        // "نقدي") tucked in parens when both present.
         financing:
-          financing_bank ?? financing_type ?? '—',
+          financing_bank && financing_type
+            ? `${financing_bank} (${financing_type})`
+            : financing_bank ?? financing_type ?? '—',
         delivery:
           delivery_status === 'delivered'
             ? `مُسلَّمة${delivery_date ? ` (${delivery_date})` : ''}`
