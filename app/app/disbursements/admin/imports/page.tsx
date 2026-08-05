@@ -7,7 +7,6 @@ import {
   Coins,
   FileSignature,
   FileSpreadsheet,
-  Users,
 } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 
@@ -39,18 +38,14 @@ const CARDS: CardConfig[] = [
     accentCls: 'border-teal-200 hover:border-teal-400 bg-teal-50/40',
   },
   {
-    href: '/app/disbursements/admin/imports/buyers',
-    title: 'قائمة المشترين',
-    description:
-      'تحديث بيانات المشترين للوحدات الموجودة: الاسم، الهوية، الجنسية، الجوال. يبحث عن الوحدة بواسطة رقمها ثم يحدّث سجل البيع النشط.',
-    Icon: Users,
-    accentCls: 'border-blue-200 hover:border-blue-400 bg-blue-50/40',
-  },
-  {
+    // Consolidated: what used to be two separate cards (buyers + contracts)
+    // is now one path. The contracts importer accepts buyer fields since
+    // the refactor, and post-import an AI linker attaches unit_id even
+    // when the Excel doesn't reference an existing unit.
     href: '/app/disbursements/admin/imports/contracts',
-    title: 'قائمة العقود',
+    title: 'عقود المشترين',
     description:
-      'تحديث بيانات العقود للوحدات الموجودة: رقم العقد، تاريخ البيع، السعر، التمويل، حالة التسليم. يحدّث سجل البيع النشط.',
+      'استيراد بيانات العقود والمشترين معًا في ملف واحد: اسم المشتري، الجوال، الهوية، رقم العقد، تاريخ البيع، السعر، التمويل، حالة التسليم. الذكاء الاصطناعي يربط الصفوف تلقائيًا بالوحدات الموجودة بعد الاستيراد.',
     Icon: FileSignature,
     accentCls: 'border-violet-200 hover:border-violet-400 bg-violet-50/40',
   },

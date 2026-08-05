@@ -11,6 +11,9 @@ import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, ScrollText, Upload } from 'lucide-react'
 import { AutoLinkButton } from './AutoLinkButton'
+import { DeleteRowButton } from '../_shared/DeleteRowButton'
+import { DeleteAllButton } from '../_shared/DeleteAllButton'
+import { deleteSale, deleteAllSalesForProject } from '../../../units/actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -240,6 +243,15 @@ export default async function ProjectBuyerContractsPage({
               استيراد عقود ومشترين
             </Link>
           )}
+          {dsbRole === 'owner' && (
+            <DeleteAllButton
+              label="حذف كل العقود"
+              count={totalCount ?? 0}
+              itemNoun="عقد ومشتري"
+              projectId={projectId}
+              action={deleteAllSalesForProject}
+            />
+          )}
         </form>
 
         {/* Linked-status tabs */}
@@ -282,6 +294,7 @@ export default async function ProjectBuyerContractsPage({
                   <Th>تاريخ البيع</Th>
                   <Th>السعر</Th>
                   <Th>التسليم</Th>
+                  {dsbRole === 'owner' && <Th> </Th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -344,6 +357,15 @@ export default async function ProjectBuyerContractsPage({
                           <div className="text-[10px] text-slate-500 mt-0.5">{fmtDate(s.delivery_date)}</div>
                         )}
                       </Td>
+                      {dsbRole === 'owner' && (
+                        <Td>
+                          <DeleteRowButton
+                            id={s.id}
+                            itemLabel={s.buyer_name_ar ?? s.contract_number ?? 'عقد'}
+                            action={deleteSale}
+                          />
+                        </Td>
+                      )}
                     </tr>
                   )
                 })}

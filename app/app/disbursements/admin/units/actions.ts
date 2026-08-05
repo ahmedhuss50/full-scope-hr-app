@@ -1417,6 +1417,18 @@ export async function deleteUnit(
     return { ok: false, error: 'الوحدة غير موجودة.' }
   }
 
+  // The check constraint from migration 057 says a contract in status
+  // 'matched' MUST have unit_id set. When we delete this unit, the FK's
+  // ON DELETE SET NULL would try to null the contract's unit_id and the
+  // check would fire, aborting the delete. Downgrade any matched contracts
+  // referencing this unit first.
+  await svc
+    .from('dsb_unit_contracts')
+    .update({ extraction_status: 'no_match' })
+    .eq('tenant_id', caller.tenantId)
+    .eq('unit_id', input.id)
+    .eq('extraction_status', 'matched')
+
   const { error } = await svc
     .from('dsb_project_units')
     .delete()
@@ -1426,7 +1438,152 @@ export async function deleteUnit(
 
   const projectId = (unit as { project_id: string }).project_id
   revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/units`)
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// deleteSale — owner only. Removes a single row from dsb_unit_sales.
+// Cascade: dsb_cases.sale_id (SET NULL), dsb_unit_contracts.sale_id (SET NULL).
+// The unit itself is untouched.
+// ---------------------------------------------------------------------------
+export async function deleteSale(
+  input: { id: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+  if (!input.id) return { ok: false, error: 'المُعرِّف مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: sale } = await svc
+    .from('dsb_unit_sales')
+    .select('id, tenant_id, project_id')
+    .eq('id', input.id)
+    .maybeSingle()
+  if (!sale || (sale as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'العقد غير موجود.' }
+  }
+
+  const { error } = await svc
+    .from('dsb_unit_sales')
+    .delete()
+    .eq('id', input.id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  const projectId = (sale as { project_id: string }).project_id
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/buyer-contracts`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// deleteAllSalesForProject — owner only. Bulk wipe of عقود المشترين data
+// for a project. Requires the caller to pass confirm='DELETE' so a stray
+// button click can't nuke everything. The units themselves stay.
+// ---------------------------------------------------------------------------
+export async function deleteAllSalesForProject(
+  input: { project_id: string; confirm: string },
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+  if (input.confirm !== 'DELETE') {
+    return { ok: false, error: 'تأكيد الحذف مطلوب (اكتب DELETE).' }
+  }
+  if (!input.project_id) return { ok: false, error: 'المشروع مطلوب.' }
+
+  const svc = createSupabaseService()
+  // Verify project ownership.
+  const { data: project } = await svc
+    .from('dsb_projects')
+    .select('id, tenant_id')
+    .eq('id', input.project_id)
+    .maybeSingle()
+  if (!project || (project as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  // Count first so we can report exactly what was removed.
+  const { count } = await svc
+    .from('dsb_unit_sales')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', caller.tenantId)
+    .eq('project_id', input.project_id)
+
+  const { error } = await svc
+    .from('dsb_unit_sales')
+    .delete()
+    .eq('tenant_id', caller.tenantId)
+    .eq('project_id', input.project_id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}`)
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}/buyer-contracts`)
+  return { ok: true, deleted: count ?? 0 }
+}
+
+// ---------------------------------------------------------------------------
+// deleteAllUnitsForProject — owner only. Full wipe of physical units for a
+// project. Cascades to dsb_unit_sales via the FK; dsb_unit_contracts and
+// dsb_cases unit_id are ON DELETE SET NULL. First downgrades any matched
+// contracts so the check constraint doesn't block the cascade.
+// Same 'DELETE' confirm gate.
+// ---------------------------------------------------------------------------
+export async function deleteAllUnitsForProject(
+  input: { project_id: string; confirm: string },
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+  if (input.confirm !== 'DELETE') {
+    return { ok: false, error: 'تأكيد الحذف مطلوب (اكتب DELETE).' }
+  }
+  if (!input.project_id) return { ok: false, error: 'المشروع مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: project } = await svc
+    .from('dsb_projects')
+    .select('id, tenant_id')
+    .eq('id', input.project_id)
+    .maybeSingle()
+  if (!project || (project as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  // Collect unit ids for this project.
+  const { data: unitRows } = await svc
+    .from('dsb_project_units')
+    .select('id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('project_id', input.project_id)
+  const unitIds = ((unitRows ?? []) as { id: string }[]).map((r) => r.id)
+  if (unitIds.length === 0) return { ok: true, deleted: 0 }
+
+  // Downgrade matched contracts referencing these units so the SET NULL
+  // cascade from unit delete doesn't fire the check constraint.
+  await svc
+    .from('dsb_unit_contracts')
+    .update({ extraction_status: 'no_match' })
+    .eq('tenant_id', caller.tenantId)
+    .in('unit_id', unitIds)
+    .eq('extraction_status', 'matched')
+
+  const { error } = await svc
+    .from('dsb_project_units')
+    .delete()
+    .eq('tenant_id', caller.tenantId)
+    .eq('project_id', input.project_id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}`)
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}/units`)
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}/buyer-contracts`)
+  return { ok: true, deleted: unitIds.length }
 }
 
 // ---------------------------------------------------------------------------

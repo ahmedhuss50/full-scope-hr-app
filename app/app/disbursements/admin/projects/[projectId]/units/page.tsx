@@ -11,6 +11,9 @@ import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, Building2, Upload } from 'lucide-react'
+import { DeleteRowButton } from '../_shared/DeleteRowButton'
+import { DeleteAllButton } from '../_shared/DeleteAllButton'
+import { deleteUnit, deleteAllUnitsForProject } from '../../../units/actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -146,6 +149,15 @@ export default async function ProjectUnitsListPage({
               استيراد وحدات
             </Link>
           )}
+          {dsbRole === 'owner' && (
+            <DeleteAllButton
+              label="حذف كل الوحدات"
+              count={units.length}
+              itemNoun="وحدة (وكل عقودها ومشترينها)"
+              projectId={projectId}
+              action={deleteAllUnitsForProject}
+            />
+          )}
         </form>
       </section>
 
@@ -168,6 +180,7 @@ export default async function ProjectUnitsListPage({
                   <Th>المساحة (م²)</Th>
                   <Th>الحي</Th>
                   <Th>المدينة</Th>
+                  {dsbRole === 'owner' && <Th> </Th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -188,6 +201,15 @@ export default async function ProjectUnitsListPage({
                     </Td>
                     <Td>{u.district ?? '—'}</Td>
                     <Td>{u.city ?? '—'}</Td>
+                    {dsbRole === 'owner' && (
+                      <Td>
+                        <DeleteRowButton
+                          id={u.id}
+                          itemLabel={`الوحدة ${u.unit_number}`}
+                          action={deleteUnit}
+                        />
+                      </Td>
+                    )}
                   </tr>
                 ))}
               </tbody>
