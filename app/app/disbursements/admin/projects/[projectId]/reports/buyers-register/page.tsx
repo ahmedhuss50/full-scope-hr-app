@@ -213,6 +213,11 @@ export default async function BuyersRegisterReportPage({
   }
 
   // ---------- Grand totals ----------
+  // Contracts often only carry price_before_tax_sar (developer files skip
+  // the with-VAT column). Fall back so totals reflect what's in the file.
+  const priceOf = (s: SaleRow | undefined): number | null =>
+    s?.price_with_vat_sar ?? s?.price_before_tax_sar ?? null
+
   const grandTotals = {
     unitsCount: units.length,
     soldCount: 0,
@@ -223,11 +228,12 @@ export default async function BuyersRegisterReportPage({
   for (const u of units) {
     const sale = saleByUnit.get(u.id)
     if (sale) grandTotals.soldCount += 1
-    if (sale?.price_with_vat_sar) grandTotals.contractsTotal += sale.price_with_vat_sar
+    const price = priceOf(sale)
+    if (price) grandTotals.contractsTotal += price
     const paid = (paymentsByUnit.get(u.id) ?? []).reduce((s, p) => s + Number(p.amount_sar || 0), 0)
     grandTotals.paymentsTotal += paid
-    if (sale?.price_with_vat_sar) {
-      grandTotals.remaining += Math.max(0, sale.price_with_vat_sar - paid)
+    if (price) {
+      grandTotals.remaining += Math.max(0, price - paid)
     }
   }
   const unassignedTotal = unassignedPayments.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
@@ -293,10 +299,12 @@ export default async function BuyersRegisterReportPage({
                   const sale = saleByUnit.get(u.id)
                   const pays = paymentsByUnit.get(u.id) ?? []
                   const collected = pays.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
-                  const remaining =
-                    sale?.price_with_vat_sar
-                      ? Math.max(0, sale.price_with_vat_sar - collected)
-                      : null
+                  // Fall back to before-tax when the file omits with-VAT
+                  // (common — most developer files only have one price col).
+                  const rowPrice = sale?.price_with_vat_sar ?? sale?.price_before_tax_sar ?? null
+                  const remaining = rowPrice != null
+                    ? Math.max(0, rowPrice - collected)
+                    : null
                   return (
                     <React.Fragment key={u.id}>
                       <tr className="hover:bg-slate-50/70">
@@ -305,7 +313,7 @@ export default async function BuyersRegisterReportPage({
                             {u.unit_number}
                           </div>
                           {u.unit_type && (
-                            <div className="text-[11px] text-slate-500">{u.unit_type}</div>
+                            <div className="text-[11px] text-slate-500">{unitTypeLabel(u.unit_type)}</div>
                           )}
                         </Td>
                         <Td>
@@ -334,8 +342,11 @@ export default async function BuyersRegisterReportPage({
                         </Td>
                         <Td>
                           <span className="font-mono text-slate-900">
-                            {fmtSar(sale?.price_with_vat_sar ?? null)}
+                            {fmtSar(rowPrice)}
                           </span>
+                          {rowPrice != null && sale?.price_with_vat_sar == null && (
+                            <div className="text-[10px] text-slate-500">قبل الضريبة</div>
+                          )}
                         </Td>
                         <Td>
                           <span className="font-mono font-semibold text-emerald-700">
@@ -458,6 +469,16 @@ export default async function BuyersRegisterReportPage({
 // ---------------------------------------------------------------------------
 // Bits
 // ---------------------------------------------------------------------------
+/** Same helper used across the units + عقود pages. */
+function unitTypeLabel(t: string | null): string {
+  if (!t) return '—'
+  const k = t.toLowerCase().trim()
+  if (k === 'villa') return 'فيلا'
+  if (k === 'apartment') return 'شقة'
+  if (k === 'other') return 'أخرى'
+  return t
+}
+
 function Th({ children }: { children: React.ReactNode }) {
   return (
     <th className="px-3 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
