@@ -771,11 +771,204 @@ export async function bulkImportBuyersFromRows(
 }
 
 // ---------------------------------------------------------------------------
+// linkSalesToUnitsForProject — internal helper (not a server action).
+// ---------------------------------------------------------------------------
+// After contracts are imported, some sales have unit_id=null because the
+// exact-match at import time didn't find a corresponding unit_number.
+//
+// This helper:
+//   1. Fetches every unlinked sale in the project (unit_number_raw NOT null)
+//   2. Loads every unit in the project
+//   3. Pass 1: exact-match + normalized-match (strip tatweel, spaces, common
+//      Arabic prefixes like "فيلا"/"شقة")
+//   4. Pass 2: (optional) Claude call for the leftovers — one API call for
+//      the whole batch, not per row
+//   5. Updates matched sales, respecting the check constraints from mig 057
+//
+// Called from bulkImportContractsFromRows (auto-link on import) and from
+// /api/dsb-link-sales-to-units (button-triggered re-link).
+// ---------------------------------------------------------------------------
+export async function linkSalesToUnitsForProject(input: {
+  tenantId: string
+  projectId: string
+  useAi?: boolean // defaults to true — worth ~$0.001/project for the fuzzy pass
+}): Promise<{ linkedCount: number; remaining: number; aiUsed: boolean }> {
+  const svc = createSupabaseService()
+  const useAi = input.useAi !== false
+
+  // Fetch unlinked sales in this project.
+  const { data: salesData } = await svc
+    .from('dsb_unit_sales')
+    .select('id, unit_number_raw')
+    .eq('tenant_id', input.tenantId)
+    .eq('project_id', input.projectId)
+    .is('unit_id', null)
+  const unlinked = ((salesData ?? []) as Array<{
+    id: string
+    unit_number_raw: string | null
+  }>).filter((s) => (s.unit_number_raw ?? '').trim().length > 0)
+
+  if (unlinked.length === 0) {
+    return { linkedCount: 0, remaining: 0, aiUsed: false }
+  }
+
+  // Load all units in the project.
+  const { data: unitsData } = await svc
+    .from('dsb_project_units')
+    .select('id, unit_number')
+    .eq('tenant_id', input.tenantId)
+    .eq('project_id', input.projectId)
+  const units = ((unitsData ?? []) as Array<{
+    id: string
+    unit_number: string | null
+  }>).filter((u) => (u.unit_number ?? '').trim().length > 0)
+
+  if (units.length === 0) {
+    return { linkedCount: 0, remaining: unlinked.length, aiUsed: false }
+  }
+
+  // Build lookup maps for pass 1.
+  const normalize = (s: string): string =>
+    s
+      .replace(/[ـ]/g, '')           // strip tatweel
+      .replace(/\s+/g, '')           // strip whitespace
+      .replace(/[.,\-_/]/g, '')      // strip common punctuation
+      .toLowerCase()
+      .trim()
+  const stripArabicPrefix = (s: string): string =>
+    s
+      .replace(/^(فيلا|شقه|شقة|قطعه|قطعة|وحده|وحدة)/i, '')
+      .trim()
+
+  const exactByRaw = new Map<string, string>()      // unit_number → unit.id
+  const exactByNorm = new Map<string, string>()     // normalized → unit.id
+  const exactByStripped = new Map<string, string>() // stripped-prefix normalized → unit.id
+  for (const u of units) {
+    exactByRaw.set(u.unit_number!.trim(), u.id)
+    exactByNorm.set(normalize(u.unit_number!), u.id)
+    exactByStripped.set(normalize(stripArabicPrefix(u.unit_number!)), u.id)
+  }
+
+  // Pass 1: exact / normalized / stripped-prefix match.
+  const linkNow: Array<{ saleId: string; unitId: string }> = []
+  const stillUnmatched: typeof unlinked = []
+  for (const s of unlinked) {
+    const raw = s.unit_number_raw!.trim()
+    const hit =
+      exactByRaw.get(raw) ??
+      exactByNorm.get(normalize(raw)) ??
+      exactByStripped.get(normalize(stripArabicPrefix(raw)))
+    if (hit) {
+      linkNow.push({ saleId: s.id, unitId: hit })
+    } else {
+      stillUnmatched.push(s)
+    }
+  }
+
+  // Pass 2: Claude for the remaining fuzzy cases (small batch — one call).
+  let aiUsed = false
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (useAi && apiKey && stillUnmatched.length > 0 && units.length <= 500) {
+    // Cap on units — for very large projects (>500 units) the prompt would
+    // get too long. In that case we just skip AI; exact match is what runs.
+    aiUsed = true
+    try {
+      const model = process.env.DSB_MAP_COLUMNS_MODEL || 'claude-haiku-4-5-20251001'
+      const body = {
+        model,
+        max_tokens: 4000,
+        temperature: 0,
+        system: [
+          {
+            type: 'text',
+            text: `You match "raw" unit identifiers coming from an Arabic real-estate contracts Excel to the canonical unit numbers stored in our database. The raws are often variants: "فيلا 12" ↔ "V-12", "١٠٥" ↔ "105", "01-01-0049-0000000001" ↔ "1" or similar codes. Return ONE JSON object with a "matches" array. Each item: { "raw_id": string, "unit_id": string|null } where raw_id is the input sale.id and unit_id is the best-matching unit.id or null if no confident match. Only match when you are 90%+ confident.`,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  `Project units:\n` +
+                  JSON.stringify(units) +
+                  `\n\nUnlinked sales (each with raw unit number):\n` +
+                  JSON.stringify(
+                    stillUnmatched.map((s) => ({ id: s.id, raw: s.unit_number_raw })),
+                  ) +
+                  `\n\nReturn JSON only.`,
+              },
+            ],
+          },
+        ],
+      }
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(45_000),
+      })
+      if (resp.ok) {
+        const json = (await resp.json()) as {
+          content?: Array<{ type: string; text?: string }>
+        }
+        const text = (json.content ?? []).find((b) => b.type === 'text')?.text ?? ''
+        // Extract JSON object.
+        const first = text.indexOf('{')
+        const last = text.lastIndexOf('}')
+        if (first >= 0 && last > first) {
+          const parsed = JSON.parse(text.slice(first, last + 1)) as {
+            matches?: Array<{ raw_id?: string; unit_id?: string | null }>
+          }
+          const matches = Array.isArray(parsed.matches) ? parsed.matches : []
+          const validUnitIds = new Set(units.map((u) => u.id))
+          for (const m of matches) {
+            if (
+              typeof m.raw_id === 'string' &&
+              typeof m.unit_id === 'string' &&
+              validUnitIds.has(m.unit_id)
+            ) {
+              linkNow.push({ saleId: m.raw_id, unitId: m.unit_id })
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[linkSalesToUnitsForProject] AI pass failed', err)
+      // Non-fatal — Pass 1 links still get written.
+    }
+  }
+
+  // Apply the links.
+  let linkedCount = 0
+  for (const { saleId, unitId } of linkNow) {
+    const { error } = await svc
+      .from('dsb_unit_sales')
+      .update({ unit_id: unitId })
+      .eq('id', saleId)
+      .eq('tenant_id', input.tenantId)
+    if (!error) linkedCount += 1
+  }
+
+  return {
+    linkedCount,
+    remaining: unlinked.length - linkedCount,
+    aiUsed,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // bulkImportContractsFromRows — owner only. Focused importer #3 of 3.
 // ---------------------------------------------------------------------------
-// Same pattern as buyers: match by (project_id, unit_number), then update
-// the active sale's contract/pricing/delivery fields, or insert a new
-// active sale row if none exists.
+// Now insert-then-link: rows insert with unit_id=null when no exact-match
+// unit exists; the linker (above) runs after all inserts and attaches
+// unit_id to any sales it can identify. Rows are never rejected outright.
 // ---------------------------------------------------------------------------
 
 export interface BulkImportContractRow {
@@ -800,6 +993,17 @@ export interface BulkImportContractRow {
   remaining_amount_sar?: number | null
   collection_percentage?: number | null
   price_per_meter_sar?: number | null
+
+  // Buyer fields (optional — filled when the Excel combines
+  // buyer + contract per row, aka "عقود المشترين"). Post-migration 058
+  // sales can exist without a linked unit, so these fields live on the
+  // sale row directly.
+  buyer_name_ar?: string | null
+  buyer_id_type?: string | null
+  buyer_id_number?: string | null
+  buyer_nationality?: string | null
+  buyer_residency_type?: string | null
+  buyer_phone?: string | null
 }
 
 export async function bulkImportContractsFromRows(
@@ -809,6 +1013,8 @@ export async function bulkImportContractsFromRows(
       ok: true
       updatedSales: number
       insertedSales: number
+      insertedUnlinked: number    // NEW: how many rows inserted with unit_id=null
+      linkedByAI: number          // NEW: how many the post-import linker attached
       unmatched: UnmatchedRowRef[]
       skippedRows: number
     }
@@ -828,14 +1034,22 @@ export async function bulkImportContractsFromRows(
   for (const r of input.rows) {
     const projectId = (r.project_id ?? '').trim()
     const unitNumber = (r.unit_number ?? '').trim()
-    if (!projectId || !unitNumber) {
+    // Require project_id (we need SOME anchor). unit_number is now optional —
+    // a sale can exist without a matched unit; the AI linker will resolve it
+    // later. But we still need SOMETHING to identify the row, so also allow
+    // rows that at least have a buyer name.
+    if (!projectId) {
+      skipped++
+      continue
+    }
+    if (!unitNumber && !(r.buyer_name_ar ?? '').trim() && !(r.contract_number ?? '').trim()) {
       skipped++
       continue
     }
     usable.push({ ...r, project_id: projectId, unit_number: unitNumber })
   }
   if (usable.length === 0) {
-    return { ok: false, error: 'كل الصفوف تفتقد رقم الوحدة أو المشروع.' }
+    return { ok: false, error: 'كل الصفوف فارغة أو تفتقد المشروع.' }
   }
 
   const svc = createSupabaseService()
@@ -861,7 +1075,8 @@ export async function bulkImportContractsFromRows(
     }
   }
 
-  // Load units in the referenced projects.
+  // Load units in the referenced projects (for exact-match attempt at
+  // import time — the AI linker below handles the fuzzy leftovers).
   type UnitLite = { id: string; project_id: string; unit_number: string }
   const unitByKey = new Map<string, UnitLite>()
   const CHUNK = 300
@@ -877,32 +1092,31 @@ export async function bulkImportContractsFromRows(
     }
   }
 
+  // Partition rows into (matched unit / unmatched). Unmatched still gets
+  // inserted — with unit_id NULL and unit_number_raw preserved — so the AI
+  // linker can attach it later.
   const matched: Array<{ row: BulkImportContractRow; unit: UnitLite }> = []
-  const unmatched: UnmatchedRowRef[] = []
+  const unmatched: Array<{ row: BulkImportContractRow }> = []
+  const unmatchedRefs: UnmatchedRowRef[] = []
   for (const r of usable) {
-    const u = unitByKey.get(`${r.project_id}::${r.unit_number}`)
-    if (!u) {
-      unmatched.push({ project_id: r.project_id, unit_number: r.unit_number })
-      continue
-    }
-    matched.push({ row: r, unit: u })
-  }
-
-  if (matched.length === 0) {
-    return {
-      ok: true,
-      updatedSales: 0,
-      insertedSales: 0,
-      unmatched,
-      skippedRows: skipped,
+    const key = `${r.project_id}::${r.unit_number}`
+    const u = r.unit_number ? unitByKey.get(key) : undefined
+    if (u) {
+      matched.push({ row: r, unit: u })
+    } else {
+      unmatched.push({ row: r })
+      unmatchedRefs.push({ project_id: r.project_id, unit_number: r.unit_number || '(بدون رقم)' })
     }
   }
 
-  const unitIds = Array.from(new Set(matched.map((m) => m.unit.id)))
+  // For matched rows, prefer updating the existing active sale (avoid
+  // duplicates). Only load actives for the units we're touching.
+  const matchedUnitIds = Array.from(new Set(matched.map((m) => m.unit.id)))
   type SaleLite = { id: string; unit_id: string }
   const activeSaleByUnitId = new Map<string, SaleLite>()
-  for (let i = 0; i < unitIds.length; i += CHUNK) {
-    const slice = unitIds.slice(i, i + CHUNK)
+  for (let i = 0; i < matchedUnitIds.length; i += CHUNK) {
+    const slice = matchedUnitIds.slice(i, i + CHUNK)
+    if (slice.length === 0) continue
     const { data: sales } = await svc
       .from('dsb_unit_sales')
       .select('id, unit_id')
@@ -914,71 +1128,74 @@ export async function bulkImportContractsFromRows(
     }
   }
 
-  const contractFieldKeys = [
-    'contract_number',
-    'contract_type',
-    'financing_type',
-    'financing_bank',
-    'sale_date',
-    'price_before_tax_sar',
-    'vat_sar',
-    'price_with_vat_sar',
-    'delivery_status',
-    'delivery_date',
-    // Financial tracking (055) — patched into the same active sale row.
-    'retention_percentage',
-    'installment_number',
-    'total_collected_before_tax_sar',
-    'total_collected_with_tax_sar',
-    'remaining_amount_sar',
-    'collection_percentage',
-    'price_per_meter_sar',
-  ] as const
+  // Fields that get copied from an import row onto a sale row (both for
+  // update and insert paths).
+  const salePatchFromRow = (row: BulkImportContractRow): Record<string, unknown> => ({
+    contract_number: row.contract_number ?? null,
+    contract_type: row.contract_type ?? null,
+    financing_type: row.financing_type ?? null,
+    financing_bank: row.financing_bank ?? null,
+    sale_date: row.sale_date ?? null,
+    price_before_tax_sar: row.price_before_tax_sar ?? null,
+    vat_sar: row.vat_sar ?? null,
+    price_with_vat_sar: row.price_with_vat_sar ?? null,
+    delivery_status: row.delivery_status ?? null,
+    delivery_date: row.delivery_date ?? null,
+    retention_percentage: row.retention_percentage ?? null,
+    installment_number: row.installment_number ?? null,
+    total_collected_before_tax_sar: row.total_collected_before_tax_sar ?? null,
+    total_collected_with_tax_sar: row.total_collected_with_tax_sar ?? null,
+    remaining_amount_sar: row.remaining_amount_sar ?? null,
+    collection_percentage: row.collection_percentage ?? null,
+    price_per_meter_sar: row.price_per_meter_sar ?? null,
+    // Buyer fields (optional — set only if the row carries them).
+    buyer_name_ar: row.buyer_name_ar ?? null,
+    buyer_id_type: row.buyer_id_type ?? null,
+    buyer_id_number: row.buyer_id_number ?? null,
+    buyer_nationality: row.buyer_nationality ?? null,
+    buyer_residency_type: row.buyer_residency_type ?? null,
+    buyer_phone: row.buyer_phone ?? null,
+  })
 
   const toUpdate: Array<{ saleId: string; patch: Record<string, unknown> }> = []
   const toInsert: Record<string, unknown>[] = []
 
-  const rowByUnitId = new Map<string, BulkImportContractRow>()
-  for (const { row, unit } of matched) {
-    rowByUnitId.set(unit.id, row)
-  }
+  // Matched rows — dedupe by unit_id so the last row wins on updates.
+  const matchedRowByUnitId = new Map<string, { row: BulkImportContractRow; unit: UnitLite }>()
+  for (const m of matched) matchedRowByUnitId.set(m.unit.id, m)
 
-  for (const [unitId, row] of rowByUnitId.entries()) {
-    const patch: Record<string, unknown> = {}
-    for (const k of contractFieldKeys) {
-      const v = (row as unknown as Record<string, unknown>)[k]
-      if (v !== undefined) patch[k] = v === '' ? null : v
-    }
+  for (const [unitId, { row, unit }] of matchedRowByUnitId.entries()) {
+    const patch = salePatchFromRow(row)
+    // Always keep unit_number_raw fresh in case it changes.
+    patch.unit_number_raw = row.unit_number || null
     const existingSale = activeSaleByUnitId.get(unitId)
     if (existingSale) {
-      if (Object.keys(patch).length > 0) {
-        toUpdate.push({ saleId: existingSale.id, patch })
-      }
+      toUpdate.push({ saleId: existingSale.id, patch })
     } else {
       toInsert.push({
         tenant_id: caller.tenantId,
+        project_id: unit.project_id,
         unit_id: unitId,
+        unit_number_raw: row.unit_number || null,
         sale_count: 1,
         sale_status: 'active',
-        contract_number: row.contract_number ?? null,
-        contract_type: row.contract_type ?? null,
-        financing_type: row.financing_type ?? null,
-        financing_bank: row.financing_bank ?? null,
-        sale_date: row.sale_date ?? null,
-        price_before_tax_sar: row.price_before_tax_sar ?? null,
-        vat_sar: row.vat_sar ?? null,
-        price_with_vat_sar: row.price_with_vat_sar ?? null,
-        delivery_status: row.delivery_status ?? null,
-        delivery_date: row.delivery_date ?? null,
-        retention_percentage: row.retention_percentage ?? null,
-        installment_number: row.installment_number ?? null,
-        total_collected_before_tax_sar: row.total_collected_before_tax_sar ?? null,
-        total_collected_with_tax_sar: row.total_collected_with_tax_sar ?? null,
-        remaining_amount_sar: row.remaining_amount_sar ?? null,
-        collection_percentage: row.collection_percentage ?? null,
-        price_per_meter_sar: row.price_per_meter_sar ?? null,
+        ...patch,
       })
     }
+  }
+
+  // Unmatched rows — always INSERT with unit_id NULL. The AI linker below
+  // will try to attach them to units in a second pass.
+  for (const { row } of unmatched) {
+    toInsert.push({
+      tenant_id: caller.tenantId,
+      project_id: row.project_id,
+      unit_id: null,
+      unit_number_raw: row.unit_number || null,
+      sale_count: 1,
+      sale_status: 'active',
+      ...salePatchFromRow(row),
+    })
   }
 
   let updated = 0
@@ -999,6 +1216,22 @@ export async function bulkImportContractsFromRows(
     inserted = toInsert.length
   }
 
+  // Post-import AI linker: for each project touched, try to attach any
+  // sales that still have unit_id=null. Runs synchronously so the response
+  // reports the final linked count.
+  let linkedByAI = 0
+  for (const pid of uniqueProjectIds) {
+    try {
+      const result = await linkSalesToUnitsForProject({
+        tenantId: caller.tenantId,
+        projectId: pid,
+      })
+      linkedByAI += result.linkedCount
+    } catch (err) {
+      console.error('[bulkImportContracts] auto-link failed', pid, err)
+    }
+  }
+
   revalidatePath('/app/disbursements/admin')
   for (const pid of uniqueProjectIds) {
     revalidatePath(`/app/disbursements/admin/projects/${pid}`)
@@ -1007,7 +1240,9 @@ export async function bulkImportContractsFromRows(
     ok: true,
     updatedSales: updated,
     insertedSales: inserted,
-    unmatched,
+    insertedUnlinked: insertedUnlinkedCount,
+    linkedByAI,
+    unmatched: unmatchedRefs,
     skippedRows: skipped,
   }
 }

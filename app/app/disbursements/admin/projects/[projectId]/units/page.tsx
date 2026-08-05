@@ -1,0 +1,211 @@
+/**
+ * قائمة الوحدات — clean units-only list for a project.
+ *
+ * NO buyer / contract / payment data. This page exists to give the operator
+ * a pure view of the physical inventory. Contracts + buyers live on the
+ * sibling /buyer-contracts page and are linked to units via the AI linker.
+ *
+ * Owner + supervisor + employee can view. Delete is owner-only.
+ */
+import Link from 'next/link'
+import { redirect, notFound } from 'next/navigation'
+import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+import { ArrowRight, Building2, Upload } from 'lucide-react'
+
+export const dynamic = 'force-dynamic'
+
+type UnitRow = {
+  id: string
+  unit_number: string
+  unit_type: string | null
+  area_m2: number | null
+  block_number: string | null
+  zone_number: string | null
+  district: string | null
+  city: string | null
+  region: string | null
+}
+
+export default async function ProjectUnitsListPage({
+  params,
+  searchParams,
+}: {
+  params: { projectId: string }
+  searchParams?: { q?: string }
+}) {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email!)
+    .maybeSingle()
+  if (!profile) redirect('/login')
+
+  const dsbRole = (profile.dsb_role as string | null) ?? null
+  if (!dsbRole || !['employee', 'supervisor', 'owner', 'viewer'].includes(dsbRole)) {
+    redirect('/app/disbursements')
+  }
+
+  const tenantId = profile.tenant_id as string
+  const projectId = params.projectId
+
+  const { data: projectData } = await svc
+    .from('dsb_projects')
+    .select('id, tenant_id, code, name_ar')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
+    notFound()
+  }
+  const project = projectData as { id: string; code: string; name_ar: string }
+
+  const q = (searchParams?.q ?? '').trim()
+  let unitsQ = svc
+    .from('dsb_project_units')
+    .select('id, unit_number, unit_type, area_m2, block_number, zone_number, district, city, region')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+    .order('unit_number', { ascending: true })
+  if (q) {
+    unitsQ = unitsQ.or(
+      [
+        `unit_number.ilike.%${q}%`,
+        `block_number.ilike.%${q}%`,
+        `zone_number.ilike.%${q}%`,
+        `district.ilike.%${q}%`,
+      ].join(','),
+    )
+  }
+  const { data: unitsData } = await unitsQ
+  const units = (unitsData ?? []) as UnitRow[]
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6" dir="rtl">
+      <Link
+        href={`/app/disbursements/admin/projects/${projectId}`}
+        className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+      >
+        <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+        العودة إلى المشروع
+      </Link>
+
+      <header className="space-y-2">
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+          <Building2 className="w-4 h-4" aria-hidden="true" />
+          قائمة الوحدات
+        </div>
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
+            {project.name_ar}
+          </h1>
+          <span className="font-mono text-sm text-slate-500">{project.code}</span>
+          <span className="text-sm text-slate-400 font-mono">({units.length})</span>
+        </div>
+        <p className="text-sm text-slate-600">
+          الوحدات المادية للمشروع. لا يتضمن هذا العرض بيانات المشترين أو العقود — تلك متوفرة في «عقود المشترين».
+        </p>
+      </header>
+
+      {/* Search + import */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+        <form className="flex flex-wrap items-end gap-3" method="GET">
+          <div className="flex-1 min-w-[200px]">
+            <label className="text-[11px] font-semibold text-slate-500 mb-1 block">بحث</label>
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="رقم الوحدة، البلوك، المنطقة، الحي…"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 text-sm font-semibold"
+          >
+            تطبيق
+          </button>
+          {q && (
+            <Link
+              href={`/app/disbursements/admin/projects/${projectId}/units`}
+              className="text-xs text-slate-500 hover:text-slate-700 px-2 py-2"
+            >
+              مسح
+            </Link>
+          )}
+          <div className="flex-1" />
+          {dsbRole === 'owner' && (
+            <Link
+              href="/app/disbursements/admin/imports/units"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 text-xs font-semibold"
+            >
+              <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+              استيراد وحدات
+            </Link>
+          )}
+        </form>
+      </section>
+
+      {units.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500 shadow-sm">
+          {q
+            ? 'لا توجد نتائج مطابقة للبحث.'
+            : 'لم تُدخَل وحدات لهذا المشروع بعد. استخدم زر «استيراد وحدات» أعلاه.'}
+        </div>
+      ) : (
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr className="text-right">
+                  <Th>رقم الوحدة</Th>
+                  <Th>البلوك</Th>
+                  <Th>المنطقة</Th>
+                  <Th>النوع</Th>
+                  <Th>المساحة (م²)</Th>
+                  <Th>الحي</Th>
+                  <Th>المدينة</Th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {units.map((u) => (
+                  <tr key={u.id} className="hover:bg-slate-50/70">
+                    <Td>
+                      <span className="font-mono font-semibold text-slate-900">{u.unit_number}</span>
+                    </Td>
+                    <Td>{u.block_number ?? '—'}</Td>
+                    <Td>{u.zone_number ?? '—'}</Td>
+                    <Td>{u.unit_type ?? '—'}</Td>
+                    <Td>
+                      <span className="font-mono">
+                        {u.area_m2 != null
+                          ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(u.area_m2)
+                          : '—'}
+                      </span>
+                    </Td>
+                    <Td>{u.district ?? '—'}</Td>
+                    <Td>{u.city ?? '—'}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="px-3 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+      {children}
+    </th>
+  )
+}
+function Td({ children }: { children: React.ReactNode }) {
+  return <td className="px-3 py-2.5 text-sm text-slate-700 align-top">{children}</td>
+}
