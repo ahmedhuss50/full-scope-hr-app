@@ -50,10 +50,17 @@ async function resolveStaff(): Promise<
  */
 async function nextCaseNumber(tenantId: string): Promise<string> {
   const svc = createSupabaseService()
+  // Scope the max lookup to case_numbers we actually own the format for
+  // (DSB-####). Historical imports can bring in foreign identifiers like
+  // "ST001" or "4924" that would otherwise text-sort above our generated
+  // series and collapse the counter — extracting "001" from "ST001" would
+  // regenerate DSB-0002 and collide. Only DSB-* numbers count toward the
+  // running max.
   const { data } = await svc
     .from('dsb_cases')
     .select('case_number')
     .eq('tenant_id', tenantId)
+    .like('case_number', 'DSB-%')
     .order('case_number', { ascending: false })
     .limit(1)
   const last = (data?.[0]?.case_number as string | undefined) ?? null

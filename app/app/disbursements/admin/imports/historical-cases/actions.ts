@@ -51,10 +51,15 @@ async function nextCaseNumberBatch(
 ): Promise<string[]> {
   if (count <= 0) return []
   const svc = createSupabaseService()
+  // Only look at DSB-#### numbers when computing the max. Foreign
+  // identifiers imported from historical Excels (e.g. "ST001", "4924") sort
+  // above the DSB series and would collapse the counter, causing new
+  // auto-generated numbers to collide with existing DSB rows.
   const { data } = await svc
     .from('dsb_cases')
     .select('case_number')
     .eq('tenant_id', tenantId)
+    .like('case_number', 'DSB-%')
     .order('case_number', { ascending: false })
     .limit(1)
   const last = (data?.[0]?.case_number as string | undefined) ?? null
