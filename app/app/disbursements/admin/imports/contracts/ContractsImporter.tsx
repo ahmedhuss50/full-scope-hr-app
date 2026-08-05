@@ -76,7 +76,13 @@ export function ContractsImporter({
       idx === null || idx < 0 ? '' : rowValues[idx]
 
     const unit_number = toStr(at(columns.unit_number))
-    if (!unit_number) return null
+    // Buyer identity — read first so a row with a valid buyer but missing
+    // unit_number still gets kept for post-import AI linking.
+    const buyer_name_ar = toStr(at(columns.buyer_name)) || null
+    const buyer_phone = toStr(at(columns.buyer_phone)) || null
+    const buyer_id_type = toStr(at(columns.buyer_id_type)) || null
+    const buyer_id_number = toStr(at(columns.buyer_id_number)) || null
+    const buyer_nationality = toStr(at(columns.buyer_nationality)) || null
 
     const contract_number = toStr(at(columns.contract_number)) || null
     const contract_type = toStr(at(columns.contract_type)) || null
@@ -102,15 +108,29 @@ export function ContractsImporter({
     const collection_percentage = toPercentOrNull(at(columns.collection_percentage))
     const price_per_meter_sar = toNumOrNull(at(columns.price_per_meter_sar))
 
+    // Skip only if the row has NO identifying data at all — no unit, no
+    // buyer, no contract number. Post-refactor a row with buyer + contract
+    // number but no unit_number is still valuable (the AI linker will
+    // attach it to a unit later).
+    if (!unit_number && !buyer_name_ar && !contract_number) return null
+
+    // Price display: fall back to before-VAT when the file only carries that
+    // (common — many سجل المشترين exports don't include a with-VAT column).
+    const displayPrice = price_with_vat_sar ?? price_before_tax_sar
+
     return {
       sheetName,
       rowNumber,
       projectRaw,
-      unit_number,
+      unit_number: unit_number || '',
       previewCells: {
+        buyer_name: buyer_name_ar ?? '—',
+        buyer_phone: buyer_phone ?? '—',
+        buyer_id: buyer_id_number ?? '—',
         contract_no: contract_number ?? '—',
+        contract_type: contract_type ?? '—',
         sale_date: sale_date ?? '—',
-        price: fmtPrice(price_with_vat_sar),
+        price: fmtPrice(displayPrice),
         financing:
           financing_bank ?? financing_type ?? '—',
         delivery:
@@ -119,11 +139,17 @@ export function ContractsImporter({
             : delivery_status === 'pending'
             ? 'قيد التسليم'
             : delivery_status ?? '—',
-        collection: fmtPct(collection_percentage),
       },
       payload: {
         project_id: '',
         unit_number,
+        // Buyer fields go through to the server action (which now accepts
+        // them per the earlier refactor).
+        buyer_name_ar,
+        buyer_phone,
+        buyer_id_type,
+        buyer_id_number,
+        buyer_nationality,
         contract_number,
         contract_type,
         financing_type,
