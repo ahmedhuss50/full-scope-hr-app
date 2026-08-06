@@ -11,6 +11,7 @@ import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
+import { CaseStatusToggles } from './CaseStatusToggles'
 import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
@@ -83,6 +84,7 @@ type CaseRow = {
   recipient_notes: string | null
   delivery_notes: string | null
   paid_from_account_id: string | null
+  paid_at: string | null
   unit_id: string | null
   sale_id: string | null
   contract_id: string | null
@@ -137,7 +139,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, unit_id, sale_id, contract_id,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
              paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label),
@@ -432,6 +434,16 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               </div>
             )}
           </section>
+
+          {/* Manual paid + delivered toggles — works on ANY case regardless
+              of workflow status. Historical imports often ship with these
+              flags set automatically; this is where operators correct them. */}
+          <CaseStatusToggles
+            caseId={kase.id}
+            initialPaidAt={kase.paid_at}
+            initialDeliveredAt={kase.delivered_at}
+            canEdit={canWrite}
+          />
 
           {/* Auto-linked unit / sale (buyer) / contract PDF — populated by
               /api/dsb-extract §7.5 when the AI reads unit_number etc. from

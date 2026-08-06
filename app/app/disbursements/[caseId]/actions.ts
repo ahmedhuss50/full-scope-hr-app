@@ -2272,3 +2272,96 @@ export async function getSignedDocumentUrl(input: { case_id: string }): Promise<
     filename: (kase.signed_document_filename as string) ?? 'signed.pdf',
   }
 }
+
+// ----------------------------------------------------------------------------
+// updateCaseStatusFlags — manual توtogglet for paid + delivered.
+//
+// Unlike updateDeliveryInfo (archive-only, delivered-status-only), this one
+// lets any write role flip paid_at + delivered_at on ANY case regardless
+// of its workflow status. Use case: historical vouchers imported with
+// حالة التسليم = مسلمة that actually aren't delivered yet, or new cases
+// that need the operational flags set without touching workflow.
+//
+// Setting a date IMPLIES that state (paid_at set = paid, delivered_at set
+// = delivered). Setting either to null clears the flag.
+// ----------------------------------------------------------------------------
+export interface UpdateCaseStatusFlagsInput {
+  case_id: string
+  paid_at?: string | null       // 'YYYY-MM-DD' | null to clear | undefined to skip
+  delivered_at?: string | null  // ISO timestamp | null to clear | undefined to skip
+}
+export type UpdateCaseStatusFlagsResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+export async function updateCaseStatusFlags(
+  input: UpdateCaseStatusFlagsInput,
+): Promise<UpdateCaseStatusFlagsResult> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية تعديل الحالة.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const patch: Record<string, string | null> = {}
+
+  if (input.paid_at !== undefined) {
+    const v = (input.paid_at ?? '').trim()
+    if (!v) {
+      patch.paid_at = null
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      return { ok: false, error: 'تاريخ الدفع غير صالح.' }
+    } else {
+      patch.paid_at = v
+    }
+  }
+
+  if (input.delivered_at !== undefined) {
+    const v = (input.delivered_at ?? '').trim()
+    if (!v) {
+      patch.delivered_at = null
+    } else {
+      const d = new Date(v)
+      if (Number.isNaN(d.getTime())) {
+        return { ok: false, error: 'تاريخ التسليم غير صالح.' }
+      }
+      patch.delivered_at = d.toISOString()
+    }
+  }
+
+  if (Object.keys(patch).length === 0) return { ok: true }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, status')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update(patch)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  // Audit log — keep it short and human-readable.
+  const bits: string[] = []
+  if (input.paid_at !== undefined) bits.push(patch.paid_at ? `مدفوعة (${patch.paid_at})` : 'إلغاء الدفع')
+  if (input.delivered_at !== undefined) bits.push(patch.delivered_at ? 'مسلَّمة' : 'إلغاء التسليم')
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'status_flags_updated',
+    actor_user_id: caller.userId,
+    notes: bits.join(' · '),
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements/archive')
+  return { ok: true }
+}
