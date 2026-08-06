@@ -48,28 +48,53 @@ async function resolveStaff(): Promise<
  * because deletes would drop the count and let us re-collide on a number
  * we already used.
  */
-async function nextCaseNumber(tenantId: string): Promise<string> {
+/**
+ * Compute the next case_number for a project.
+ *
+ * Per migration 059, case_numbers are per-project sequential integers
+ * starting at 1. Legacy DSB-#### values from the tenant-wide era stay in
+ * the DB but don't affect the counter — the AI here counts any case whose
+ * case_number is a pure integer, plus any DSB-#### value's numeric suffix,
+ * so a project with old rows DSB-0187, DSB-0188 followed by new "1", "2"
+ * would land at "189" next (avoids surprise collisions with the old
+ * numbering while keeping the counter monotonic).
+ */
+async function nextCaseNumber(
+  tenantId: string,
+  projectId: string,
+): Promise<string> {
   const svc = createSupabaseService()
-  // Scope the max lookup to case_numbers we actually own the format for
-  // (DSB-####). Historical imports can bring in foreign identifiers like
-  // "ST001" or "4924" that would otherwise text-sort above our generated
-  // series and collapse the counter — extracting "001" from "ST001" would
-  // regenerate DSB-0002 and collide. Only DSB-* numbers count toward the
-  // running max.
+  // Pull every case_number in this project — normally a few hundred at most
+  // per project, so this is cheap. We can't cast/regex-filter in PostgREST
+  // easily, so we do the "pick max integer suffix" scan client-side.
   const { data } = await svc
     .from('dsb_cases')
     .select('case_number')
     .eq('tenant_id', tenantId)
-    .like('case_number', 'DSB-%')
-    .order('case_number', { ascending: false })
-    .limit(1)
-  const last = (data?.[0]?.case_number as string | undefined) ?? null
-  let n = 1
-  if (last) {
-    const m = /(\d+)\s*$/.exec(last)
-    if (m) n = parseInt(m[1], 10) + 1
+    .eq('project_id', projectId)
+  const rows = (data ?? []) as Array<{ case_number: string | null }>
+
+  let max = 0
+  for (const r of rows) {
+    const cn = (r.case_number ?? '').trim()
+    if (!cn) continue
+    // Pure integer ("1", "42", "0187").
+    if (/^\d+$/.test(cn)) {
+      const n = parseInt(cn, 10)
+      if (n > max) max = n
+      continue
+    }
+    // Legacy DSB-#### → strip the "DSB-" prefix and use the numeric
+    // suffix, so new counters skip past the old numbering.
+    const m = /^DSB-(\d+)$/i.exec(cn)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (n > max) max = n
+    }
+    // Anything else (imported "ST001", "MAN0066", etc.) is ignored — those
+    // came from historical Excels and belong to a foreign namespace.
   }
-  return `DSB-${String(n).padStart(4, '0')}`
+  return String(max + 1)
 }
 
 // ----------------------------------------------------------------------------
@@ -131,13 +156,11 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
       ? amountRaw
       : null
 
-  // Retry loop for case_number collisions. Even with the LIKE 'DSB-%'
-  // filter narrowing the max, two uploads landing in the same millisecond
-  // could both compute the same next number, and stale rows imported with
-  // foreign IDs could still slip through in edge cases. We try up to 10
-  // increments before giving up — the constraint is (tenant_id,
-  // case_number) so the DB is authoritative on uniqueness.
-  let caseNumber = await nextCaseNumber(caller.tenantId)
+  // Retry loop for case_number collisions. The constraint is now
+  // (project_id, case_number) per migration 059 — DB is authoritative
+  // on uniqueness. Concurrent uploads to the same project can both
+  // compute the same next integer, so we bump and retry on 23505.
+  let caseNumber = await nextCaseNumber(caller.tenantId, input.project_id)
   let row: { id: string } | null = null
   let lastError: { code?: string; message: string } | null = null
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -168,11 +191,10 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
       console.error('[dsb.createCaseByStaff] insert failed', error)
       return { ok: false, error: error?.message ?? 'فشل إنشاء سند الصرف.' }
     }
-    // Bump: try the next sequential DSB-#### until one is free. Cheap
-    // because dsb_cases has an index on (tenant_id, case_number).
-    const m = /^DSB-(\d+)$/.exec(caseNumber)
-    const nextN = m ? parseInt(m[1], 10) + 1 : 1
-    caseNumber = `DSB-${String(nextN).padStart(4, '0')}`
+    // Bump: increment the integer counter and retry. Since case_numbers
+    // are now plain integers per project, we just parse + add 1.
+    const n = parseInt(caseNumber, 10)
+    caseNumber = String((Number.isFinite(n) ? n : 0) + 1)
   }
   if (!row) {
     console.error('[dsb.createCaseByStaff] exhausted case_number retries', lastError)

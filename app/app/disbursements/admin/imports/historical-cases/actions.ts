@@ -45,33 +45,46 @@ async function resolveOwner(): Promise<OwnerCtx | { error: string }> {
 // /app/disbursements/new/actions.ts::nextCaseNumber. Kept private here so
 // the historical importer isn't coupled to the workflow module.
 // ---------------------------------------------------------------------------
+/**
+ * Per-project batch case-number generator (mig 059).
+ *
+ * Historical imports land in a specific project, so this is scoped to
+ * (tenantId + projectId). Uses the same "max numeric suffix + 1" rule as
+ * the workflow-side nextCaseNumber, then hands out `count` sequential
+ * integers as strings.
+ */
 async function nextCaseNumberBatch(
   tenantId: string,
+  projectId: string,
   count: number,
 ): Promise<string[]> {
   if (count <= 0) return []
   const svc = createSupabaseService()
-  // Only look at DSB-#### numbers when computing the max. Foreign
-  // identifiers imported from historical Excels (e.g. "ST001", "4924") sort
-  // above the DSB series and would collapse the counter, causing new
-  // auto-generated numbers to collide with existing DSB rows.
   const { data } = await svc
     .from('dsb_cases')
     .select('case_number')
     .eq('tenant_id', tenantId)
-    .like('case_number', 'DSB-%')
-    .order('case_number', { ascending: false })
-    .limit(1)
-  const last = (data?.[0]?.case_number as string | undefined) ?? null
-  let n = 1
-  if (last) {
-    const m = /(\d+)\s*$/.exec(last)
-    if (m) n = parseInt(m[1], 10) + 1
+    .eq('project_id', projectId)
+  const rows = (data ?? []) as Array<{ case_number: string | null }>
+
+  let max = 0
+  for (const r of rows) {
+    const cn = (r.case_number ?? '').trim()
+    if (!cn) continue
+    if (/^\d+$/.test(cn)) {
+      const n = parseInt(cn, 10)
+      if (n > max) max = n
+      continue
+    }
+    const m = /^DSB-(\d+)$/i.exec(cn)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (n > max) max = n
+    }
   }
+  const start = max + 1
   const out: string[] = []
-  for (let i = 0; i < count; i++) {
-    out.push(`DSB-${String(n + i).padStart(4, '0')}`)
-  }
+  for (let i = 0; i < count; i++) out.push(String(start + i))
   return out
 }
 
@@ -198,21 +211,57 @@ export async function bulkImportHistoricalCases(input: {
     }
   }
 
-  // ---- Existing case_number set for this tenant (to spot dup/user-supplied) ----
-  const providedNumbers = input.rows
-    .map((r) => (r.case_number ?? '').trim())
-    .filter((x) => !!x)
-  const existingNumbers = new Set<string>()
-  if (providedNumbers.length > 0) {
-    for (let i = 0; i < providedNumbers.length; i += CHUNK) {
-      const slice = providedNumbers.slice(i, i + CHUNK)
-      const { data: found } = await svc
-        .from('dsb_cases')
-        .select('case_number')
-        .eq('tenant_id', caller.tenantId)
-        .in('case_number', slice)
-      for (const c of (found ?? []) as Array<{ case_number: string }>) {
-        existingNumbers.add(c.case_number)
+  // ---- Existing (project_id, case_number) pairs — mig 059 made case_number
+  //      per-project unique, so dup detection must scope by project too.
+  //      Same key format the loop below uses: `projectId::case_number`.
+  const existingPairs = new Set<string>()
+  {
+    const pairsToCheck = input.rows
+      .map((r) => ({
+        pid: (r.project_id ?? '').trim(),
+        cn: (r.case_number ?? '').trim(),
+      }))
+      .filter((x) => x.pid && x.cn)
+    const providedNumbers = Array.from(new Set(pairsToCheck.map((x) => x.cn)))
+    if (providedNumbers.length > 0) {
+      for (let i = 0; i < providedNumbers.length; i += CHUNK) {
+        const slice = providedNumbers.slice(i, i + CHUNK)
+        const { data: found } = await svc
+          .from('dsb_cases')
+          .select('project_id, case_number')
+          .eq('tenant_id', caller.tenantId)
+          .in('case_number', slice)
+        for (const c of (found ?? []) as Array<{ project_id: string; case_number: string }>) {
+          existingPairs.add(`${c.project_id}::${c.case_number}`)
+        }
+      }
+    }
+  }
+
+  // ---- Existing (project_id, voucher_number_text) pairs — mig 059 makes
+  //      voucher numbers unique per project. Pre-check so we can skip
+  //      duplicates with a clear reason instead of failing the whole batch
+  //      on a 23505 mid-insert.
+  const existingVoucherPairs = new Set<string>()
+  {
+    const vouchersToCheck = input.rows
+      .map((r) => ({
+        pid: (r.project_id ?? '').trim(),
+        v: (r.voucher_number_text ?? '').trim(),
+      }))
+      .filter((x) => x.pid && x.v)
+    const voucherNumbers = Array.from(new Set(vouchersToCheck.map((x) => x.v)))
+    if (voucherNumbers.length > 0) {
+      for (let i = 0; i < voucherNumbers.length; i += CHUNK) {
+        const slice = voucherNumbers.slice(i, i + CHUNK)
+        const { data: found } = await svc
+          .from('dsb_cases')
+          .select('project_id, voucher_number_text')
+          .eq('tenant_id', caller.tenantId)
+          .in('voucher_number_text', slice)
+        for (const c of (found ?? []) as Array<{ project_id: string; voucher_number_text: string }>) {
+          existingVoucherPairs.add(`${c.project_id}::${c.voucher_number_text}`)
+        }
       }
     }
   }
@@ -242,8 +291,25 @@ export async function bulkImportHistoricalCases(input: {
     }
 
     const providedCase = (r.case_number ?? '').trim() || null
-    if (providedCase && existingNumbers.has(providedCase)) {
-      skipped.push({ row: rowNum, reason: `رقم الطلب مكرر: ${providedCase}` })
+    if (providedCase && existingPairs.has(`${projectId}::${providedCase}`)) {
+      skipped.push({
+        row: rowNum,
+        reason: `رقم الطلب مكرر في نفس المشروع: ${providedCase}`,
+      })
+      return
+    }
+    // Voucher-number uniqueness (mig 059). Only blocks when the voucher
+    // number is already used in this same project — different projects
+    // can share voucher numbers.
+    const providedVoucher = (r.voucher_number_text ?? '').trim() || null
+    if (
+      providedVoucher &&
+      existingVoucherPairs.has(`${projectId}::${providedVoucher}`)
+    ) {
+      skipped.push({
+        row: rowNum,
+        reason: `رقم الوثيقة/السند مكرر في المشروع: ${providedVoucher}`,
+      })
       return
     }
 
@@ -334,15 +400,24 @@ export async function bulkImportHistoricalCases(input: {
     if (!providedCase) rowsNeedingGeneratedNumbers.push(toInsert.length - 1)
   })
 
-  // ---- Fill in generated case numbers ----
+  // ---- Fill in generated case numbers (per-project, mig 059) ----
+  // Rows might target multiple projects, and each project has its own
+  // counter. Group by project_id, request a batch per project, then map
+  // back to the row indexes in insertion order.
   if (rowsNeedingGeneratedNumbers.length > 0) {
-    const generated = await nextCaseNumberBatch(
-      caller.tenantId,
-      rowsNeedingGeneratedNumbers.length,
-    )
-    rowsNeedingGeneratedNumbers.forEach((rowIdx, i) => {
-      toInsert[rowIdx].case_number = generated[i]
-    })
+    const byProject = new Map<string, number[]>() // project_id → row indexes
+    for (const rowIdx of rowsNeedingGeneratedNumbers) {
+      const pid = toInsert[rowIdx].project_id as string
+      const list = byProject.get(pid) ?? []
+      list.push(rowIdx)
+      byProject.set(pid, list)
+    }
+    for (const [pid, rowIdxs] of byProject.entries()) {
+      const generated = await nextCaseNumberBatch(caller.tenantId, pid, rowIdxs.length)
+      rowIdxs.forEach((rowIdx, i) => {
+        toInsert[rowIdx].case_number = generated[i]
+      })
+    }
   }
 
   if (toInsert.length === 0) {
