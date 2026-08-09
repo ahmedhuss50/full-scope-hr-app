@@ -355,9 +355,10 @@ function Td({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Map the internal enum value (villa/apartment/other) to a human-friendly
- * Arabic label. Anything unknown falls through as-is so custom types stored
- * pre-normalization still display sensibly.
+ * Show a human-friendly label for the unit type. Known enum values map to
+ * their Arabic equivalents; any other value (Arabic or otherwise) is
+ * shown as-is so custom types like "شقة تجارية" / "دوبلكس" / "استوديو"
+ * survive intact from the Excel import.
  */
 function unitTypeLabel(t: string | null): string {
   if (!t) return '—'

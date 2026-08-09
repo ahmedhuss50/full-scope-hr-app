@@ -377,19 +377,28 @@ function isoFromLocalParts(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-export function toUnitType(v: unknown): 'villa' | 'apartment' | 'other' | null {
+/**
+ * Return whatever the Excel cell says for unit type, normalized for the
+ * two most common cases so the display + reports stay consistent, but
+ * PRESERVING any other value verbatim (e.g. "شقة تجارية", "دوبلكس",
+ * "استوديو"). We used to force everything to enum which
+ * meant anything unusual landed as "other" and lost its meaning.
+ *
+ * Rules:
+ *   - Known variants of villa/apartment (English + Arabic) collapse to the
+ *     canonical 'villa' or 'apartment' string so filters + labels work
+ *     across languages.
+ *   - Everything else returns the raw trimmed cell content — preserved
+ *     as-is so the operator sees exactly what the file said.
+ */
+export function toUnitType(v: unknown): string | null {
   const s = toStr(v)
   if (!s) return null
-  // English matches — the developer's master files often use Latin script
-  // ("Villa", "Apartment", "Apt", "APT") since Excel exports flatten to
-  // whatever the source system uses. Check English before Arabic so a
-  // mixed cell like "Villa فيلا" resolves to the same bucket.
-  const lower = s.toLowerCase().trim()
-  if (
-    lower === 'villa' ||
-    lower.includes('villa') ||
-    lower === 'v'                     // some CRMs use just "V"
-  ) return 'villa'
+  const trimmed = s.trim()
+  const lower = trimmed.toLowerCase()
+  // Villa collapses (English + short forms).
+  if (lower === 'villa' || lower.includes('villa') || lower === 'v') return 'villa'
+  // Apartment collapses.
   if (
     lower === 'apartment' ||
     lower.includes('apartment') ||
@@ -398,11 +407,17 @@ export function toUnitType(v: unknown): 'villa' | 'apartment' | 'other' | null {
     lower === 'flat' ||
     lower.includes('flat')
   ) return 'apartment'
-  // Arabic matches (normalized) as fallback.
-  const n = normAr(s)
+  // Arabic villa/apartment normalization.
+  const n = normAr(trimmed)
   if (n.includes('فيلا') || n.includes('فله')) return 'villa'
-  if (n.includes('شقه') || n.includes('شقة') || n.includes('شقق')) return 'apartment'
-  return 'other'
+  if (n.includes('شقه') || n.includes('شقة') || n.includes('شقق')) {
+    // Preserve modifiers like "شقة تجارية" / "شقة استوديو" — only collapse
+    // to 'apartment' when the value is basically "شقة" alone.
+    if (trimmed.replace(/[\sـ]+/g, '').length <= 4) return 'apartment'
+    return trimmed
+  }
+  // Anything else: keep the raw value so nothing is lost.
+  return trimmed
 }
 
 export function toIdType(v: unknown): 'national' | 'residency' | 'passport' | null {
