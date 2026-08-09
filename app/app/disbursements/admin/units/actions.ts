@@ -400,7 +400,9 @@ export interface BulkImportUnitOnlyRow {
   unit_number: string
   zone_number?: string | null
   block_number?: string | null
-  unit_type?: 'villa' | 'apartment' | 'other' | null
+  // Widened to string: parser preserves whatever the Excel says (e.g.
+  // "شقة تجارية", "دوبلكس", "استوديو") instead of forcing to a 3-value enum.
+  unit_type?: string | null
   area_m2?: number | null
   district?: string | null
   city?: string | null
