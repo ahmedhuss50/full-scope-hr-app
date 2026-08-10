@@ -444,12 +444,8 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               <Detail label="تاريخ التسليم" value={fmtDate(kase.delivery_date)} />
               <Detail label="وقت الإرسال" value={fmtDateTime(kase.submitted_at)} />
               {kase.signed_at && <Detail label="وقت التوقيع" value={fmtDateTime(kase.signed_at)} />}
-              {kase.extraction_cost_usd != null && (
-                <Detail
-                  label="تكلفة الاستخراج"
-                  value={`$${Number(kase.extraction_cost_usd).toFixed(4)}${kase.extraction_model ? ` · ${kase.extraction_model.includes('haiku') ? 'Haiku' : kase.extraction_model.includes('sonnet') ? 'Sonnet' : kase.extraction_model}` : ''}`}
-                />
-              )}
+              {/* تكلفة الاستخراج removed from case UI — cost is still tracked
+                  in dsb_cases.extraction_cost_usd for owner-level reports. */}
             </div>
             {kase.notes && (
               <div className="pt-3 border-t border-slate-100">
