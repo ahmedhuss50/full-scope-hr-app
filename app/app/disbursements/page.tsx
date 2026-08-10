@@ -290,8 +290,24 @@ export default async function DisbursementsDashboardPage({
       if (fFrom) q = q.gte('submitted_at', `${fFrom}T00:00:00+03`)
       if (fTo) q = q.lte('submitted_at', `${fTo}T23:59:59+03`)
       if (fQ) {
-        // Match against case_number OR voucher_number_text (free-text search).
-        q = q.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+        // Universal search — spans identifiers + recipient + JSONB fields.
+        const qStr = fQ
+        q = q.or(
+          [
+            `case_number.ilike.%${qStr}%`,
+            `voucher_number_text.ilike.%${qStr}%`,
+            `recipient_name.ilike.%${qStr}%`,
+            `recipient_phone.ilike.%${qStr}%`,
+            `recipient_id_number.ilike.%${qStr}%`,
+            `notes.ilike.%${qStr}%`,
+            `extracted_fields->>beneficiary_name_ar.ilike.%${qStr}%`,
+            `extracted_fields->>buyer_name_ar.ilike.%${qStr}%`,
+            `extracted_fields->>buyer_id_number.ilike.%${qStr}%`,
+            `extracted_fields->>invoice_number.ilike.%${qStr}%`,
+            `extracted_fields->>contract_number.ilike.%${qStr}%`,
+            `extracted_fields->>unit_number.ilike.%${qStr}%`,
+          ].join(','),
+        )
       }
       if (projectIdsForEmployee !== null) {
         if (projectIdsForEmployee.length === 0) {

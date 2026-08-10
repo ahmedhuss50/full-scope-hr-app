@@ -76,6 +76,8 @@ type SaleRow = {
   total_collected_with_tax_sar: number | null
   remaining_amount_sar: number | null
   collection_percentage: number | null
+  delivery_status: string | null
+  delivery_date: string | null
   created_at: string
 }
 type PaymentRow = {
@@ -102,8 +104,10 @@ type ProjectLite = {
 // ---------------------------------------------------------------------------
 export default async function BuyersRegisterReportPage({
   params,
+  searchParams,
 }: {
   params: { projectId: string }
+  searchParams?: { delivery?: 'all' | 'delivered' | 'pending' }
 }) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
@@ -151,7 +155,7 @@ export default async function BuyersRegisterReportPage({
   if (unitIds.length > 0) {
     const { data: salesData } = await svc
       .from('dsb_unit_sales')
-      .select('id, unit_id, sale_status, contract_number, buyer_name_ar, buyer_phone, buyer_id_number, sale_date, price_with_vat_sar, price_before_tax_sar, vat_sar, total_collected_with_tax_sar, remaining_amount_sar, collection_percentage, created_at')
+      .select('id, unit_id, sale_status, contract_number, buyer_name_ar, buyer_phone, buyer_id_number, sale_date, price_with_vat_sar, price_before_tax_sar, vat_sar, total_collected_with_tax_sar, remaining_amount_sar, collection_percentage, delivery_status, delivery_date, created_at')
       .eq('tenant_id', tenantId)
       .in('unit_id', unitIds)
       .order('created_at', { ascending: false })
@@ -274,6 +278,52 @@ export default async function BuyersRegisterReportPage({
         <Scorecard label="المتبقّي" value={fmtSar(grandTotals.remaining)} icon={<TrendingDown className="w-4 h-4" />} tint="amber" />
       </section>
 
+      {/* Delivery-status filter chips. Filters purely client-side on the
+          server-rendered rows by hiding non-matching <tr>s in this JSX
+          (server component, no state — we do the filter here). */}
+      {(() => {
+        const active = (searchParams?.delivery ?? 'all') as 'all' | 'delivered' | 'pending'
+        const base = `/app/disbursements/admin/projects/${projectId}/reports/buyers-register`
+        const link = (v: 'all' | 'delivered' | 'pending') =>
+          v === 'all' ? base : `${base}?delivery=${v}`
+        // Counts per bucket for the chip labels.
+        let deliveredCount = 0
+        let pendingCount = 0
+        for (const u of units) {
+          const s = saleByUnit.get(u.id)
+          if (!s) continue
+          if (s.delivery_status === 'delivered') deliveredCount += 1
+          else pendingCount += 1
+        }
+        return (
+          <section className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500">تصفية بالتسليم:</span>
+            {(['all', 'delivered', 'pending'] as const).map((v) => {
+              const label =
+                v === 'all'
+                  ? `الكل (${units.length})`
+                  : v === 'delivered'
+                  ? `مُسلَّمة (${deliveredCount})`
+                  : `غير مُسلَّمة (${units.length - deliveredCount})`
+              const isActive = active === v
+              return (
+                <Link
+                  key={v}
+                  href={link(v)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
+                    isActive
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  {label}
+                </Link>
+              )
+            })}
+          </section>
+        )
+      })()}
+
       {/* Per-unit table */}
       {units.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500 shadow-sm">
@@ -288,6 +338,7 @@ export default async function BuyersRegisterReportPage({
                   <Th>الوحدة</Th>
                   <Th>المشتري</Th>
                   <Th>العقد</Th>
+                  <Th>التسليم</Th>
                   <Th>السعر</Th>
                   <Th>المحصَّل</Th>
                   <Th>المتبقّي</Th>
@@ -297,6 +348,14 @@ export default async function BuyersRegisterReportPage({
               <tbody className="divide-y divide-slate-100">
                 {units.map((u) => {
                   const sale = saleByUnit.get(u.id)
+                  // Server-side filter: skip rows that don't match the
+                  // currently selected delivery chip. We do this inline
+                  // instead of pre-filtering `units` so counts + totals
+                  // above remain accurate across all units.
+                  const active = (searchParams?.delivery ?? 'all') as 'all' | 'delivered' | 'pending'
+                  if (active === 'delivered' && sale?.delivery_status !== 'delivered') return null
+                  if (active === 'pending' && sale?.delivery_status === 'delivered') return null
+
                   const pays = paymentsByUnit.get(u.id) ?? []
                   const collected = pays.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
                   // Fall back to before-tax when the file omits with-VAT
@@ -337,6 +396,24 @@ export default async function BuyersRegisterReportPage({
                           {sale?.sale_date && (
                             <div className="text-[10px] text-slate-500 mt-0.5">
                               {fmtDate(sale.sale_date)}
+                            </div>
+                          )}
+                        </Td>
+                        <Td>
+                          {!sale ? (
+                            <span className="text-slate-400 text-xs">—</span>
+                          ) : sale.delivery_status === 'delivered' ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                              مُسلَّمة
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200">
+                              غير مُسلَّمة
+                            </span>
+                          )}
+                          {sale?.delivery_date && (
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {fmtDate(sale.delivery_date)}
                             </div>
                           )}
                         </Td>

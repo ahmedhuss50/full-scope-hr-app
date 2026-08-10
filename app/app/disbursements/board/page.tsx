@@ -179,7 +179,25 @@ export default async function DisbursementsBoardPage({
   if (fProject) casesQuery = casesQuery.eq('project_id', fProject)
   if (fFrom)    casesQuery = casesQuery.gte('submitted_at', `${fFrom}T00:00:00+03`)
   if (fTo)      casesQuery = casesQuery.lte('submitted_at', `${fTo}T23:59:59+03`)
-  if (fQ)       casesQuery = casesQuery.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+  if (fQ) {
+    const q = fQ
+    casesQuery = casesQuery.or(
+      [
+        `case_number.ilike.%${q}%`,
+        `voucher_number_text.ilike.%${q}%`,
+        `recipient_name.ilike.%${q}%`,
+        `recipient_phone.ilike.%${q}%`,
+        `recipient_id_number.ilike.%${q}%`,
+        `notes.ilike.%${q}%`,
+        `extracted_fields->>beneficiary_name_ar.ilike.%${q}%`,
+        `extracted_fields->>buyer_name_ar.ilike.%${q}%`,
+        `extracted_fields->>buyer_id_number.ilike.%${q}%`,
+        `extracted_fields->>invoice_number.ilike.%${q}%`,
+        `extracted_fields->>contract_number.ilike.%${q}%`,
+        `extracted_fields->>unit_number.ilike.%${q}%`,
+      ].join(','),
+    )
+  }
   if (projectIdsForEmployee !== null) {
     // No projects matched the employee filter → force a no-match.
     const projectFilterIds =

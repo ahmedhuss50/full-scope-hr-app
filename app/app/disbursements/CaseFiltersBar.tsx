@@ -146,7 +146,7 @@ export function CaseFiltersBar({
             <Search className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-2" aria-hidden="true" />
             <input
               type="text"
-              placeholder="بحث برقم الطلب أو رقم السند…"
+              placeholder="بحث: رقم الطلب/السند/العقد/الوحدة، الاسم، الجوال، الهوية…"
               value={qLocal}
               onChange={(e) => setQLocal(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') setParam('q', qLocal) }}

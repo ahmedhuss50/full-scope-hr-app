@@ -104,6 +104,7 @@ const SYSTEM_PROMPT = `Classify and extract fields from a Saudi real-estate disb
       "contract_number": string|null,
       "buyer_name_ar": string|null,
       "buyer_id_number": string|null,
+      "paid_from_account_label": string|null,
       "disbursement_type_label_ar": string|null,
       "disbursement_type_code": "admin_marketing"|"construction"|"bank_financing"|"moh_incentive"|"unit_seriousness_fees"|"vat_project_registry"|"vat_sales_payment"|"other"|null,
       "line_items": [{ "description_ar": string|null, "description_en": string|null, "quantity": number|null, "unit_price_sar": number|null, "line_total_sar": number|null }]|null,
@@ -127,6 +128,9 @@ Unit / contract / buyer identifiers — the app uses these to auto-link a case t
 - "buyer_name_ar" — the person the unit is sold to. Look for "اسم المشتري" / "المشتري" / "اسم العميل" (only when the voucher relates to a specific unit sale — otherwise null).
 - "buyer_id_number" — "رقم الهوية" / "رقم الإقامة" if next to the buyer.
 - Return null for any of these if the document doesn't clearly reference a single unit / sale (e.g. project-wide overhead vouchers).
+
+Paid-from account — the escrow report needs to know which project account this voucher was paid from:
+- "paid_from_account_label" — the account name/label the voucher pulls funds from. Look for "الحساب المسدد منه" / "من حساب" / "المخصوم من" / a bank/account label at the header (e.g. "حساب الانشاءات", "حساب المشروع", "حساب التسويق"). Return the raw text as it appears; the app matches it to the project's registered accounts.
 
 "نوع الصرف" (disbursement type) — find the TICKED option and map:
 "مصاريف إدارية وتسويقية"→admin_marketing | "مصاريف إنشائية"→construction | "من قيمة تمويل بنكي"→bank_financing | "من قيمة حافز وزارة الإسكان"→moh_incentive | "رسوم الجدية في شراء الوحدة العقارية المختارة"→unit_seriousness_fees | "ضريبة القيمة المضافة عن السجل الضريبي للمشروع"→vat_project_registry | "سداد ضريبة القيمة المضافة المستلمة عن المبيعات للمشروع"→vat_sales_payment | other text→other. If nothing ticked → both fields null. Multiple ticks → pick best fit, note ambiguity in case_metadata.notes.`
@@ -264,7 +268,7 @@ export async function POST(req: Request) {
         .select(
           `
           id, tenant_id, project_id, developer_id, case_number,
-          voucher_number_text, voucher_date, amount_sar, delivery_date, notes, extracted_fields,
+          voucher_number_text, voucher_date, amount_sar, delivery_date, notes, extracted_fields, paid_from_account_id,
           unit_id, sale_id, contract_id,
           uploads:dsb_uploads(id, filename, storage_path, storage_bucket, file_size_bytes, mime_type, page_count),
           project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
@@ -728,6 +732,8 @@ export async function POST(req: Request) {
       existingContractId: hasLinkColumns
         ? ((caseRow as Record<string, unknown>).contract_id as string | null) ?? null
         : null,
+      existingPaidFromAccountId:
+        ((caseRow as Record<string, unknown>).paid_from_account_id as string | null) ?? null,
       extracted: extractedBlob as Record<string, unknown> | null,
       writeSaleAndContract: hasLinkColumns,
     })
@@ -851,7 +857,15 @@ export async function POST(req: Request) {
 //                 contract linked to the unit.
 // ---------------------------------------------------------------------------
 type LinkPatch = {
-  patch: { unit_id?: string; sale_id?: string; contract_id?: string }
+  patch: {
+    unit_id?: string
+    sale_id?: string
+    contract_id?: string
+    // paid_from_account_id is written even when the unit didn't match —
+    // the escrow OUT computation only needs the account link, so we
+    // populate it independently of the unit/sale chain.
+    paid_from_account_id?: string
+  }
   notes: string[]
 }
 
@@ -863,6 +877,8 @@ async function autoLinkCaseFromExtracted(args: {
   existingUnitId: string | null
   existingSaleId: string | null
   existingContractId: string | null
+  // Existing paid_from — don't overwrite if operator already picked one.
+  existingPaidFromAccountId: string | null
   extracted: Record<string, unknown> | null
   // When migration 057 hasn't been applied yet the sale_id + contract_id
   // columns don't exist on dsb_cases. In that mode we still compute the
@@ -878,11 +894,43 @@ async function autoLinkCaseFromExtracted(args: {
     existingUnitId,
     existingSaleId,
     existingContractId,
+    existingPaidFromAccountId,
     extracted,
     writeSaleAndContract = true,
   } = args
 
   if (!extracted || !caseProjectId) return { patch, notes }
+
+  // ------------------------- paid_from_account_id -------------------------
+  // Runs regardless of whether the unit matched — the escrow report needs
+  // this link for OUT accounting even when the voucher isn't tied to a
+  // specific unit (project-wide construction/admin/marketing spend).
+  if (!existingPaidFromAccountId) {
+    const acctLabelRaw =
+      (typeof extracted.paid_from_account_label === 'string' && extracted.paid_from_account_label.trim())
+        ? extracted.paid_from_account_label.trim()
+        : null
+    if (acctLabelRaw) {
+      const { data: acctRows } = await svc
+        .from('dsb_project_accounts')
+        .select('id, label')
+        .eq('tenant_id', tenantId)
+        .eq('project_id', caseProjectId)
+      const accounts = (acctRows ?? []) as Array<{ id: string; label: string | null }>
+      const normalize = (s: string): string =>
+        s.replace(/[\sـ]+/g, '').toLowerCase()
+      const needle = normalize(acctLabelRaw)
+      const hit = accounts.find(
+        (a) => a.label && normalize(a.label) === needle,
+      )
+      if (hit) {
+        patch.paid_from_account_id = hit.id
+        notes.push(`account "${acctLabelRaw}" → matched`)
+      } else {
+        notes.push(`account "${acctLabelRaw}": no matching project account`)
+      }
+    }
+  }
 
   // Extract candidate identifiers from the AI JSON blob. Each is defensively
   // coerced — the AI is instructed to output nulls but sometimes returns

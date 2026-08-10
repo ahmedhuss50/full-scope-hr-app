@@ -138,7 +138,27 @@ export default async function DeliveryDocumentsRegisterPage({
   // The register is signed-only; "from" / "to" here filter by signed_at.
   if (fFrom) casesQuery = casesQuery.gte('signed_at', `${fFrom}T00:00:00+03`)
   if (fTo) casesQuery = casesQuery.lte('signed_at', `${fTo}T23:59:59+03`)
-  if (fQ) casesQuery = casesQuery.or(`case_number.ilike.%${fQ}%,voucher_number_text.ilike.%${fQ}%`)
+  if (fQ) {
+    // Universal search — same span as archive; the docs register benefits
+    // from finding by beneficiary / buyer info too.
+    const q = fQ
+    casesQuery = casesQuery.or(
+      [
+        `case_number.ilike.%${q}%`,
+        `voucher_number_text.ilike.%${q}%`,
+        `recipient_name.ilike.%${q}%`,
+        `recipient_phone.ilike.%${q}%`,
+        `recipient_id_number.ilike.%${q}%`,
+        `notes.ilike.%${q}%`,
+        `extracted_fields->>beneficiary_name_ar.ilike.%${q}%`,
+        `extracted_fields->>buyer_name_ar.ilike.%${q}%`,
+        `extracted_fields->>buyer_id_number.ilike.%${q}%`,
+        `extracted_fields->>invoice_number.ilike.%${q}%`,
+        `extracted_fields->>contract_number.ilike.%${q}%`,
+        `extracted_fields->>unit_number.ilike.%${q}%`,
+      ].join(','),
+    )
+  }
   // Employee filter: if they have zero projects, force a no-match by using
   // an impossible UUID list. Supabase's .in() with an empty array returns
   // everything, which would be the wrong semantic here.
