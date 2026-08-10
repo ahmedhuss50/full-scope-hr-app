@@ -51,6 +51,8 @@ export function ProjectQuickUpload({
     | { caseId: string; caseNumber: string; filename: string }
     | null
   >(null)
+  // Drag-and-drop visual state — drives the dropzone border color.
+  const [dragOver, setDragOver] = useState(false)
 
   async function handleFile(file: File) {
     setError(null)
@@ -199,10 +201,31 @@ export function ProjectQuickUpload({
       ) : (
         <label
           htmlFor={`project-upload-${projectId}`}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            if (!busy) setDragOver(true)
+          }}
+          onDragOver={(e) => {
+            // Required to allow drop — without this the browser rejects it.
+            e.preventDefault()
+          }}
+          onDragLeave={(e) => {
+            // Only clear when leaving the dropzone itself, not a child.
+            if (e.currentTarget === e.target) setDragOver(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            if (busy) return
+            const file = e.dataTransfer.files?.[0]
+            if (file) void handleFile(file)
+          }}
           className={`flex items-center justify-center gap-2 px-4 py-8 rounded-lg border-2 border-dashed transition
             ${
               busy
                 ? 'border-teal-300 bg-teal-50/40 cursor-wait'
+                : dragOver
+                ? 'border-teal-500 bg-teal-100/60 cursor-copy scale-[1.01]'
                 : 'border-slate-300 bg-slate-50 hover:border-teal-400 hover:bg-teal-50/40 cursor-pointer'
             }`}
         >
@@ -220,7 +243,9 @@ export function ProjectQuickUpload({
                 : phase === 'finalizing'
                 ? 'تشغيل الذكاء الاصطناعي…'
                 : 'جاري المعالجة…'
-              : 'اضغط لاختيار ملف PDF'}
+              : dragOver
+              ? 'أفلت الملف هنا…'
+              : 'اسحب ملف PDF أو اضغط للاختيار'}
           </span>
           <input
             id={`project-upload-${projectId}`}

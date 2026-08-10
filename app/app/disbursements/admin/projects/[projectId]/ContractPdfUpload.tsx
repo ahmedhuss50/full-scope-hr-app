@@ -35,6 +35,7 @@ export function ContractPdfUpload({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const [, startTransition] = useTransition()
 
   async function onFile(file: File) {
@@ -86,7 +87,28 @@ export function ContractPdfUpload({
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+    <div
+      onDragEnter={(e) => {
+        e.preventDefault()
+        if (!busy) setDragOver(true)
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragOver(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        if (busy) return
+        const file = e.dataTransfer.files?.[0]
+        if (file) void onFile(file)
+      }}
+      className={`rounded-xl border p-4 space-y-3 transition ${
+        dragOver
+          ? 'border-teal-500 bg-teal-100/60 border-2 border-dashed'
+          : 'border-slate-200 bg-slate-50/60'
+      }`}
+    >
       <div className="flex items-start gap-3">
         <div className="shrink-0 w-10 h-10 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center">
           <FileText className="w-5 h-5" aria-hidden="true" />

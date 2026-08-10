@@ -150,6 +150,8 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
   } = props
 
   const [mode, setMode] = useState<Mode>('idle')
+  // Drag-and-drop visual state for the Excel dropzone.
+  const [dragOver, setDragOver] = useState(false)
   const [packs, setPacks] = useState<SheetPack[]>([])
   const [rows, setRows] = useState<BaseParsedRow<TPayload>[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
@@ -458,11 +460,44 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
       )}
 
       {mode === 'idle' && (
-        <label className="block">
-          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition cursor-pointer">
-            <Upload className="w-4 h-4" aria-hidden="true" />
-            اختر ملف Excel
-          </span>
+        <label
+          onDragEnter={(e) => {
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={(e) => {
+            // Only clear when leaving the dropzone (not entering a child).
+            if (e.currentTarget === e.target) setDragOver(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const f = e.dataTransfer.files?.[0]
+            if (f) void handleFile(f)
+          }}
+          className={`block rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition ${
+            dragOver
+              ? 'border-teal-500 bg-teal-100/60 scale-[1.005]'
+              : 'border-slate-300 bg-slate-50 hover:border-teal-400 hover:bg-teal-50/40'
+          }`}
+        >
+          <div className="flex flex-col items-center gap-2">
+            <Upload
+              className={`w-8 h-8 ${dragOver ? 'text-teal-600' : 'text-slate-400'}`}
+              aria-hidden="true"
+            />
+            <span className="text-sm font-bold text-slate-900">
+              {dragOver ? 'أفلت الملف هنا…' : 'اسحب ملف Excel أو اضغط للاختيار'}
+            </span>
+            <span className="text-[11px] text-slate-500">
+              الصيغ المدعومة: xlsx, xls
+            </span>
+            <span className="mt-2 inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition">
+              <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+              اختر ملف
+            </span>
+          </div>
           <input
             type="file"
             accept=".xlsx,.xls"
