@@ -115,6 +115,66 @@ async function loadCase(tenantId: string, caseId: string): Promise<CaseSnapshot 
   return (data as CaseSnapshot | null) ?? null
 }
 
+/**
+ * Return the list of Arabic labels for required fields that are still
+ * missing on a case. Called before promoting from with_employee to
+ * with_supervisor so an incomplete voucher can't proceed and get bounced.
+ *
+ * Required for stage-2 promotion:
+ *   - paid_from_account_id (الحساب المسدد منه)
+ *   - extracted_fields.beneficiary_name_ar (اسم المستفيد)
+ *   - extracted_fields.disbursement_type_label_ar OR .disbursement_type_ar (طبيعة المصروف)
+ *   - extracted_fields.invoice_number OR .invoices[0].number (الفاتورة)
+ */
+async function missingApprovalFields(
+  svc: ReturnType<typeof createSupabaseService>,
+  tenantId: string,
+  caseId: string,
+): Promise<string[]> {
+  const { data } = await svc
+    .from('dsb_cases')
+    .select('paid_from_account_id, extracted_fields')
+    .eq('tenant_id', tenantId)
+    .eq('id', caseId)
+    .maybeSingle()
+  if (!data) return []
+  const row = data as {
+    paid_from_account_id: string | null
+    extracted_fields: Record<string, unknown> | null
+  }
+  const ef = row.extracted_fields ?? {}
+  const isFilled = (v: unknown): boolean =>
+    v !== null && v !== undefined && !(typeof v === 'string' && v.trim() === '')
+
+  const missing: string[] = []
+  if (!row.paid_from_account_id) missing.push('الحساب المسدد منه')
+  if (!isFilled((ef as Record<string, unknown>).beneficiary_name_ar)) {
+    missing.push('اسم المستفيد')
+  }
+  // Disbursement type: two possible keys depending on how it was captured
+  // (label_ar from the AI extract, or the plain ar name from a historical
+  // import). Either one satisfies the requirement.
+  if (
+    !isFilled((ef as Record<string, unknown>).disbursement_type_label_ar) &&
+    !isFilled((ef as Record<string, unknown>).disbursement_type_ar)
+  ) {
+    missing.push('طبيعة المصروف (نوع الصرف)')
+  }
+  // Invoice: singular field or first entry in the `invoices` array (voucher
+  // with multiple invoices — either one being filled counts).
+  const invoiceSingular = (ef as Record<string, unknown>).invoice_number
+  const invoicesList = (ef as Record<string, unknown>).invoices as
+    | Array<{ number?: string | null } | null>
+    | undefined
+    | null
+  const anyInvoice =
+    isFilled(invoiceSingular) ||
+    (Array.isArray(invoicesList) && invoicesList.some((i) => isFilled(i?.number)))
+  if (!anyInvoice) missing.push('رقم الفاتورة')
+
+  return missing
+}
+
 function single<T>(maybe: T | T[] | null | undefined): T | null {
   if (!maybe) return null
   return Array.isArray(maybe) ? (maybe[0] ?? null) : maybe
@@ -286,6 +346,20 @@ export async function approveCase(input: { case_id: string }): Promise<{ ok: tru
       )
       if (!assigned) {
         return { ok: false, error: 'هذا الطلب غير مُسند إليك.' }
+      }
+    }
+    // ---- Required-fields gate: before a voucher can leave the reviewer
+    //      and move to the supervisor stage, it MUST have these four data
+    //      points captured. Prevents supervisors receiving incomplete
+    //      packages that they'd just bounce back anyway.
+    const missing = await missingApprovalFields(svc, caller.tenantId, input.case_id)
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error:
+          'لا يمكن ترحيل الوثيقة إلى المرحلة الثانية قبل تعبئة الحقول التالية: ' +
+          missing.join('، ') +
+          '.',
       }
     }
     nextStatus = 'with_supervisor'
@@ -671,6 +745,25 @@ export async function moveCaseToStage(
   const project = single(kase.project)
   const developer = single(kase.developer)
   const fromStatus = kase.status
+
+  // Required-fields gate: any promotion INTO the supervisor stage must
+  // carry the four required data points. Applies whether the reviewer
+  // clicked "اعتماد" or used the direct-move dropdown.
+  if (
+    input.target_status === 'with_supervisor' &&
+    kase.status === 'with_employee'
+  ) {
+    const missing = await missingApprovalFields(svc, caller.tenantId, input.case_id)
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error:
+          'لا يمكن ترحيل الوثيقة إلى المرحلة الثانية قبل تعبئة الحقول التالية: ' +
+          missing.join('، ') +
+          '.',
+      }
+    }
+  }
 
   // Build update payload — include signed_at/signed_by_user_id when signing.
   const updatePayload: Record<string, unknown> = { status: input.target_status }
