@@ -56,7 +56,13 @@ type CaseStatus =
   | 'delivered'
   | 'cancelled'
 
-type PaidFromLite = { id: string; label: string }
+type PaidFromLite = {
+  id: string
+  label: string
+  bank_name: string | null
+  account_number: string | null
+  iban: string | null
+}
 
 type CaseRow = {
   id: string
@@ -141,7 +147,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
-             paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label),
+             paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label, bank_name, account_number, iban),
              linked_unit:dsb_project_units!dsb_cases_unit_id_fkey(id, unit_number, unit_type),
              linked_sale:dsb_unit_sales!dsb_cases_sale_id_fkey(id, buyer_name_ar, buyer_phone, contract_number),
              linked_contract:dsb_unit_contracts!dsb_cases_contract_id_fkey(id, filename, storage_path, storage_bucket)`)
@@ -527,13 +533,25 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
           })()}
 
           {(() => {
-            // Project-level bank wins (حساب المشروع). When the project hasn't been
-            // tagged yet we fall back to the developer's bank so something useful
-            // still shows.
-            const payerBankName = project?.bank_name || developer?.bank_name || null
-            const payerAccount = project?.bank_account || developer?.bank_account || null
-            const payerIban = project?.bank_iban || developer?.bank_iban || null
-            const payerSourceLabel = project?.bank_name || project?.bank_account || project?.bank_iban
+            // Priority order for the "from" side:
+            //   1. حساب الدفع picked on this case (dsb_project_accounts row) —
+            //      the modern per-project accounts model
+            //   2. Legacy single-record project.bank_* columns
+            //   3. Developer-wide fallback (developer.bank_*)
+            //
+            // The paid_from account wins because that's what the operator
+            // explicitly selected for THIS case; the legacy columns are
+            // relics of the single-account era.
+            const paidFrom = paidFromAccount
+            const payerBankName =
+              paidFrom?.bank_name || project?.bank_name || developer?.bank_name || null
+            const payerAccount =
+              paidFrom?.account_number || project?.bank_account || developer?.bank_account || null
+            const payerIban =
+              paidFrom?.iban || project?.bank_iban || developer?.bank_iban || null
+            const payerSourceLabel = paidFrom
+              ? `حساب المشروع · ${paidFrom.label}`
+              : project?.bank_name || project?.bank_account || project?.bank_iban
               ? 'حساب المشروع'
               : (developer?.bank_name || developer?.bank_account || developer?.bank_iban
                   ? 'بنك المطور (افتراضي)'
