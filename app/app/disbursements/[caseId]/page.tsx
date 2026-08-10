@@ -11,7 +11,6 @@ import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
-import { CaseStatusToggles } from './CaseStatusToggles'
 import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
@@ -454,15 +453,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             )}
           </section>
 
-          {/* Manual paid + delivered toggles — works on ANY case regardless
-              of workflow status. Historical imports often ship with these
-              flags set automatically; this is where operators correct them. */}
-          <CaseStatusToggles
-            caseId={kase.id}
-            initialPaidAt={kase.paid_at}
-            initialDeliveredAt={kase.delivered_at}
-            canEdit={canWrite}
-          />
+          {/* CaseStatusToggles removed — paid/delivered are captured in the
+              existing archive edit + delivery flows; the extra manual panel
+              was noisy on the case page. */}
 
           {/* Auto-linked unit / sale (buyer) / contract PDF — populated by
               /api/dsb-extract §7.5 when the AI reads unit_number etc. from
