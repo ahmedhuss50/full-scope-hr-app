@@ -355,6 +355,19 @@ export async function POST(req: Request) {
     }
     const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer())
 
+    // Guard: catch 0-byte / non-PDF payloads before we blow money shipping
+    // them to Claude. Real PDFs start with "%PDF-".
+    if (pdfBuffer.length < 100) {
+      throw new Error(
+        `الملف المرفوع فارغ أو تالف (${pdfBuffer.length} بايت). يُرجى إعادة رفع الوثيقة.`,
+      )
+    }
+    if (!pdfBuffer.slice(0, 5).toString('latin1').startsWith('%PDF-')) {
+      throw new Error(
+        'الملف المرفوع ليس PDF صالحًا — تحقق من الرفع ثم أعد المحاولة.',
+      )
+    }
+
     // ----- 3. Decide chunked vs single-shot based on page count -----
     // Anthropic caps PDF documents at 100 pages per request. We page-count
     // with pdf-lib up front so we can split oversized PDFs locally instead

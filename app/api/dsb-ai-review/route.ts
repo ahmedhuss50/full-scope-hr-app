@@ -241,6 +241,24 @@ export async function POST(req: Request) {
     if (!pdfResp.ok) throw new Error(`PDF download failed: HTTP ${pdfResp.status}`)
     const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer())
 
+    // Guard: make sure what we downloaded is actually a PDF before shipping
+    // ~MB of it to Claude. Storage occasionally returns an HTML error body
+    // with 200 (bucket permission oddities), and legacy uploads can be
+    // 0-byte placeholders — both would fail as "invalid PDF" downstream
+    // with a cryptic Claude error. Real PDFs start with the ASCII bytes
+    // "%PDF-" (0x25 0x50 0x44 0x46 0x2D).
+    if (pdfBuffer.length < 100) {
+      throw new Error(
+        `الملف المرفوع فارغ أو تالف (${pdfBuffer.length} بايت). يُرجى إعادة رفع الوثيقة.`,
+      )
+    }
+    const head = pdfBuffer.slice(0, 5).toString('latin1')
+    if (!head.startsWith('%PDF-')) {
+      throw new Error(
+        'الملف المرفوع ليس PDF صالحًا — تحقق من الرفع ثم أعد المحاولة.',
+      )
+    }
+
     // ----- 3. Decide chunked vs single-shot based on page count -----
     // Anthropic caps PDF documents at 100 pages per request. Page-count the
     // PDF up front; if it's >100 we split with pdf-lib and review each chunk.
