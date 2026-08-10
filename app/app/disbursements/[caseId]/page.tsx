@@ -533,80 +533,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
             )
           })()}
 
-          {(() => {
-            // Project-level bank wins (حساب المشروع). When the project hasn't been
-            // tagged yet we fall back to the developer's bank so something useful
-            // still shows.
-            const payerBankName = project?.bank_name || developer?.bank_name || null
-            const payerAccount = project?.bank_account || developer?.bank_account || null
-            const payerIban = project?.bank_iban || developer?.bank_iban || null
-            const payerSourceLabel = project?.bank_name || project?.bank_account || project?.bank_iban
-              ? 'حساب المشروع'
-              : (developer?.bank_name || developer?.bank_account || developer?.bank_iban
-                  ? 'بنك المطور (افتراضي)'
-                  : null)
-            const anyPayer = !!(payerBankName || payerAccount || payerIban)
-            const anyBeneficiary = !!(
-              extractedFields?.beneficiary_bank_name ||
-              extractedFields?.beneficiary_account_number ||
-              extractedFields?.beneficiary_iban ||
-              extractedFields?.beneficiary_name_ar
-            )
-            if (!anyPayer && !anyBeneficiary) return null
-            return (
-              <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-                <h2 className="serif font-bold text-lg text-slate-900 mb-3">مسار التحويل المالي</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-1.5">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">من (حساب المشروع)</div>
-                      {payerSourceLabel && (
-                        <span className="text-[10px] text-blue-600/80 font-mono">{payerSourceLabel}</span>
-                      )}
-                    </div>
-                    <div className="text-sm font-semibold text-slate-900">{project?.name_ar ?? developer?.company_name_ar ?? '—'}</div>
-                    {payerBankName && (
-                      <div className="text-xs text-slate-700">
-                        <span className="text-slate-500">البنك:</span> {payerBankName}
-                      </div>
-                    )}
-                    {payerAccount && (
-                      <div className="text-xs text-slate-700 font-mono" dir="ltr">
-                        <span className="font-sans text-slate-500">الحساب: </span>{payerAccount}
-                      </div>
-                    )}
-                    {payerIban && (
-                      <div className="text-xs text-slate-700 font-mono" dir="ltr">
-                        <span className="font-sans text-slate-500">IBAN: </span>{payerIban}
-                      </div>
-                    )}
-                    {!anyPayer && (
-                      <div className="text-xs text-slate-500 italic">لم يتم تسجيل حساب للمشروع أو للمطور بعد.</div>
-                    )}
-                  </div>
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-1.5">
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">إلى (حساب المستفيد)</div>
-                    <div className="text-sm font-semibold text-slate-900">{(extractedFields?.beneficiary_name_ar as string | null) ?? '—'}</div>
-                    {extractedFields?.beneficiary_bank_name && (
-                      <div className="text-xs text-slate-700">
-                        <span className="text-slate-500">البنك:</span> {extractedFields.beneficiary_bank_name}
-                      </div>
-                    )}
-                    {extractedFields?.beneficiary_account_number && (
-                      <div className="text-xs text-slate-700 font-mono" dir="ltr">
-                        <span className="font-sans text-slate-500">الحساب: </span>{extractedFields.beneficiary_account_number}
-                      </div>
-                    )}
-                    {extractedFields?.beneficiary_iban && (
-                      <div className="text-xs text-slate-700 font-mono" dir="ltr">
-                        <span className="font-sans text-slate-500">IBAN: </span>{extractedFields.beneficiary_iban}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </section>
-            )
-          })()}
+          {/* "مسار التحويل المالي" section removed — it duplicated info now
+              shown by other panels (paid-from account picker + extracted
+              beneficiary in the AI extraction panel). */}
 
           {kase.signed_document_path && (
             <SignedDocumentCard
