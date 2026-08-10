@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { Archive } from 'lucide-react'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 import { EditableArchiveRow } from './EditableArchiveRow'
+import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
 
 /**
  * Archive — all cases with status = 'delivered'.
@@ -96,6 +97,17 @@ export default async function ArchivePage({
   }
 
   const tenantId = profile.tenant_id as string
+  const currentUserId = profile.id as string
+
+  // ---------- Project-scoped access ----------
+  // Owner sees every project; everyone else (supervisor/employee/viewer/
+  // deliverer) is limited to projects they're explicitly assigned to.
+  const allowedProjectIds = await assignedProjectIds({
+    svc,
+    tenantId,
+    userId: currentUserId,
+    dsbRole,
+  })
 
   // ---------- Filters from URL ----------
   const f = searchParams ?? {}
@@ -140,6 +152,8 @@ export default async function ArchivePage({
   const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
     .map((c) => ({ id: c.id, label: c.company_name_ar }))
   const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
+    // Scoped users only see their assigned projects in the filter dropdown.
+    .filter((p) => allowedProjectIds === null || allowedProjectIds.includes(p.id))
     .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
   const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
     .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
@@ -192,6 +206,10 @@ export default async function ArchivePage({
         : projectIdsForEmployee
     casesQuery = casesQuery.in('project_id', projectFilterIds)
   }
+  // Owner sees everything; scoped users are constrained to their assigned
+  // projects. Applied AFTER other filters so a scoped user with an explicit
+  // ?project= filter can still narrow further within their allowed set.
+  casesQuery = applyProjectScope(casesQuery, allowedProjectIds)
   const { data: casesData } = await casesQuery.order('delivered_at', { ascending: false })
   const cases = (casesData ?? []) as DeliveredRow[]
 

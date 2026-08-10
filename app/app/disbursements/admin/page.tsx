@@ -92,6 +92,18 @@ export default async function DisbursementsAdminPage({
   const isOwner = dsbRole === 'owner'
 
   const tenantId = profile.tenant_id as string
+  const currentUserId = profile.id as string
+
+  // ---- Project-scoped access ----
+  // Owner sees every project; supervisors + employees only see projects
+  // they're assigned to.
+  const { assignedProjectIds } = await import('@/lib/dsb/access')
+  const allowedProjectIds = await assignedProjectIds({
+    svc,
+    tenantId,
+    userId: currentUserId,
+    dsbRole,
+  })
 
   // Fetch staff — all internal roles (including viewer / deliverer added later).
   // Without 'viewer' and 'deliverer' here, users assigned those roles disappear
@@ -119,7 +131,11 @@ export default async function DisbursementsAdminPage({
     .select('id, code, name_ar, assigned_employee_id, status, developer_id')
     .eq('tenant_id', tenantId)
     .order('code', { ascending: true })
-  const projects = (projectsData ?? []) as Array<ProjectRow & { developer_id: string | null }>
+  const allProjects = (projectsData ?? []) as Array<ProjectRow & { developer_id: string | null }>
+  // Scoped users only see their assigned projects. Owner sees all.
+  const projects = allowedProjectIds === null
+    ? allProjects
+    : allProjects.filter((p) => allowedProjectIds.includes(p.id))
 
   // Developer names for the project picker grouping.
   const { data: developersForPicker } = await svc

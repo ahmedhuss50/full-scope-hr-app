@@ -131,6 +131,23 @@ export default async function ProjectDetailPage({
   }
   const project = projectData as ProjectRow
 
+  // ---- Project-scoped access ----
+  // Scoped users can only open a project detail page if they're assigned
+  // to it. Owner bypasses. notFound() (not redirect) so an unassigned
+  // project's URL is fully opaque.
+  {
+    const { assignedProjectIds, canAccessProject } = await import('@/lib/dsb/access')
+    const allowed = await assignedProjectIds({
+      svc,
+      tenantId,
+      userId: profile.id as string,
+      dsbRole,
+    })
+    if (!canAccessProject(allowed, projectId)) {
+      notFound()
+    }
+  }
+
   // Resolve developer + assigned employee names.
   let developer: DeveloperLite | null = null
   if (project.developer_id) {

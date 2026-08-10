@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { FileText, Plus, Settings, LayoutDashboard, Activity, UploadCloud, ArrowRightCircle, RotateCcw, CheckCircle2, XCircle, Move } from 'lucide-react'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from './CaseFiltersBar'
+import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -170,6 +171,13 @@ export default async function DisbursementsDashboardPage({
   const userId = profile.id as string
   const fullName = (profile.full_name as string | null) ?? null
 
+  const allowedProjectIds = await assignedProjectIds({
+    svc,
+    tenantId,
+    userId,
+    dsbRole,
+  })
+
   const monthStart = startOfMonthIso()
   // For avg cycle: signed in the last 30 days.
   const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
@@ -316,6 +324,8 @@ export default async function DisbursementsDashboardPage({
         }
         q = q.in('project_id', projectIdsForEmployee)
       }
+      // RBAC: scoped users only see their assigned projects.
+      q = applyProjectScope(q, allowedProjectIds)
       return q
         .order('submitted_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })

@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { FileText, Download } from 'lucide-react'
 import { fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from '../CaseFiltersBar'
+import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,6 +77,14 @@ export default async function DeliveryDocumentsRegisterPage({
   }
 
   const tenantId = profile.tenant_id as string
+  const currentUserId = profile.id as string
+
+  const allowedProjectIds = await assignedProjectIds({
+    svc,
+    tenantId,
+    userId: currentUserId,
+    dsbRole,
+  })
 
   // ---------- Filters from URL ----------
   const f = searchParams ?? {}
@@ -119,6 +128,7 @@ export default async function DeliveryDocumentsRegisterPage({
   const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
     .map((c) => ({ id: c.id, label: c.company_name_ar }))
   const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
+    .filter((p) => allowedProjectIds === null || allowedProjectIds.includes(p.id))
     .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
   const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
     .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
@@ -169,6 +179,7 @@ export default async function DeliveryDocumentsRegisterPage({
         : projectIdsForEmployee
     casesQuery = casesQuery.in('project_id', projectFilterIds)
   }
+  casesQuery = applyProjectScope(casesQuery, allowedProjectIds)
   const { data: casesData } = await casesQuery.order('signed_at', { ascending: false })
   const cases = (casesData ?? []) as SignedCaseRow[]
 

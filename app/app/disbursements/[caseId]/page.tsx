@@ -152,6 +152,25 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   const kase = kaseRaw as CaseRow | null
   if (!kase) notFound()
 
+  // ---- Project-scoped access ----
+  // Scoped users (supervisor/employee/viewer/deliverer) can only view a
+  // case if the case's project is in their assigned set. Owner bypasses.
+  // Returning notFound() rather than a 403 keeps unassigned projects/cases
+  // fully opaque — the URL simply looks like it doesn't exist.
+  {
+    const { assignedProjectIds, canAccessProject } = await import('@/lib/dsb/access')
+    const allowed = await assignedProjectIds({
+      svc,
+      tenantId,
+      userId: profile.id as string,
+      dsbRole,
+    })
+    const caseProjectId = single(kase.project)?.id ?? null
+    if (caseProjectId && !canAccessProject(allowed, caseProjectId)) {
+      notFound()
+    }
+  }
+
   // The extracted_fields column is JSONB; cast to our shape (it may be null
   // when the AI breakdown workflow hasn't run yet, or when the extracted
   // sub-block was absent from Claude's response).
