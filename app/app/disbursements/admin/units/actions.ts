@@ -1449,6 +1449,79 @@ export async function deleteUnit(
 // Cascade: dsb_cases.sale_id (SET NULL), dsb_unit_contracts.sale_id (SET NULL).
 // The unit itself is untouched.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// updateSaleDelivery — inline toggle on the buyer-contracts list.
+//
+// The developer's Excel usually ships every row as "مُسلَّمة" regardless of
+// whether the unit was actually handed over. Reviewers need a fast way to
+// flip individual rows to reflect reality without re-importing.
+//
+// Rules:
+//   - delivered=true  → sets delivery_status='delivered'; if the row has no
+//     delivery_date yet, stamps today
+//   - delivered=false → clears both delivery_status and delivery_date so
+//     the row cleanly reports "not delivered" everywhere it renders
+// ---------------------------------------------------------------------------
+export async function updateSaleDelivery(
+  input: { sale_id: string; delivered: boolean },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.sale_id) return { ok: false, error: 'المُعرِّف مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: sale } = await svc
+    .from('dsb_unit_sales')
+    .select('id, tenant_id, project_id, delivery_date')
+    .eq('id', input.sale_id)
+    .maybeSingle()
+  if (!sale || (sale as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'العقد غير موجود.' }
+  }
+
+  const patch: Record<string, string | null> = input.delivered
+    ? {
+        delivery_status: 'delivered',
+        // Only stamp if not already set — respect any historical date the
+        // Excel provided rather than overwriting it with today.
+        delivery_date:
+          ((sale as { delivery_date: string | null }).delivery_date) ??
+          new Date().toISOString().slice(0, 10),
+      }
+    : {
+        delivery_status: null,
+        delivery_date: null,
+      }
+
+  const { error } = await svc
+    .from('dsb_unit_sales')
+    .update(patch)
+    .eq('id', input.sale_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  // Audit trail — every delivery flip is attributable to a user + time so
+  // "who marked unit V-101 delivered?" is answerable later. Uses the same
+  // dsb_audit_log table the case workflow uses; case_id stays null since
+  // this is a sale-level action.
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: null,
+    event: input.delivered ? 'sale_marked_delivered' : 'sale_marked_undelivered',
+    actor_user_id: caller.userId,
+    notes: `sale_id=${input.sale_id}`,
+    occurred_at: new Date().toISOString(),
+  })
+
+  const projectId = (sale as { project_id: string }).project_id
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/buyer-contracts`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/reports/buyers-register`)
+  return { ok: true }
+}
+
 export async function deleteSale(
   input: { id: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {

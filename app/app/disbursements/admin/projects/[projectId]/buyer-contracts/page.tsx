@@ -14,6 +14,7 @@ import { AutoLinkButton } from './AutoLinkButton'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteSale, deleteAllSalesForProject } from '../../../units/actions'
+import { DeliveryToggle } from './DeliveryToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -410,18 +411,12 @@ export default async function ProjectBuyerContractsPage({
                         )}
                       </Td>
                       <Td>
-                        {s.delivery_status === 'delivered' ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200">
-                            مُسلَّمة
-                          </span>
-                        ) : s.delivery_status === 'pending' ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200">
-                            قيد التسليم
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                        {s.delivery_date && (
+                        <DeliveryToggle
+                          saleId={s.id}
+                          initialDelivered={s.delivery_status === 'delivered'}
+                          canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                        />
+                        {s.delivery_date && s.delivery_status === 'delivered' && (
                           <div className="text-[10px] text-slate-500 mt-0.5">{fmtDate(s.delivery_date)}</div>
                         )}
                       </Td>
