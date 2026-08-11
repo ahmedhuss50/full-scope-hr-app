@@ -11,6 +11,7 @@ import { ProcessDiagram } from './ProcessDiagram'
 import { SignedDocumentCard } from './SignedDocumentCard'
 import { DeleteCaseButton } from '../admin/EntityDeleteButtons'
 import { EditCaseInfo } from './EditCaseInfo'
+import { PaidFromPicker } from './PaidFromPicker'
 import { EditExtractedFields } from './EditExtractedFields'
 import { AiReviewButton } from './AiReviewButton'
 import { ReplaceDocumentButton } from './ReplaceDocumentButton'
@@ -185,6 +186,24 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
   const developer = single(kase.developer)
   const paidFromAccount = single(kase.paid_from)
   const pill = statusPill(kase.status)
+
+  // Fetch the project's accounts so the paid-from picker can list them.
+  // Only when the case is linked to a project — otherwise the picker
+  // has nothing to offer.
+  const { data: projectAccountsData } = project?.id
+    ? await svc
+        .from('dsb_project_accounts')
+        .select('id, label, bank_name, account_number')
+        .eq('tenant_id', tenantId)
+        .eq('project_id', project.id)
+        .order('label', { ascending: true })
+    : { data: null as null }
+  const projectAccounts = (projectAccountsData ?? []) as Array<{
+    id: string
+    label: string
+    bank_name: string | null
+    account_number: string | null
+  }>
 
   // Include version-tracking fields: superseded_at filters CURRENT (active) vs
   // historical uploads. We display the most recent NON-superseded one as the
@@ -588,8 +607,19 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                       </div>
                     )}
                     {!anyPayer && (
-                      <div className="text-xs text-slate-500 italic">لم يتم تسجيل حساب للمشروع أو للمطور بعد.</div>
+                      <div className="text-xs text-slate-500 italic">لم يتم اختيار حساب دفع بعد.</div>
                     )}
+                    {/* Inline picker so any write role can attach a project
+                        account without leaving the case page. Required for
+                        the stage-2 promotion gate. */}
+                    <div className="pt-2 mt-2 border-t border-blue-100">
+                      <PaidFromPicker
+                        caseId={kase.id}
+                        initialAccountId={kase.paid_from_account_id ?? null}
+                        accounts={projectAccounts}
+                        canEdit={canWrite}
+                      />
+                    </div>
                   </div>
                   <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 space-y-1.5">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">إلى (حساب المستفيد)</div>

@@ -2367,6 +2367,75 @@ export async function getSignedDocumentUrl(input: { case_id: string }): Promise<
 }
 
 // ----------------------------------------------------------------------------
+// updatePaidFromAccount — pick the escrow account this voucher draws from.
+//
+// Works on ANY case status so a reviewer can attach the account before the
+// case is promoted (required by the stage-2 gate). Passing account_id=null
+// clears the selection.
+//
+// Verifies the account belongs to the same project as the case; otherwise
+// a supervisor could accidentally attach an account from a different
+// project.
+// ----------------------------------------------------------------------------
+export async function updatePaidFromAccount(
+  input: { case_id: string; account_id: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: kase } = await svc
+    .from('dsb_cases')
+    .select('id, tenant_id, project_id')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.case_id)
+    .maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  // If setting (not clearing), verify the account belongs to the SAME
+  // project as the case. Prevents cross-project mishaps.
+  if (input.account_id) {
+    const { data: acct } = await svc
+      .from('dsb_project_accounts')
+      .select('id, project_id, tenant_id')
+      .eq('id', input.account_id)
+      .maybeSingle()
+    if (
+      !acct ||
+      (acct as { tenant_id: string }).tenant_id !== caller.tenantId ||
+      (acct as { project_id: string }).project_id !== (kase as { project_id: string }).project_id
+    ) {
+      return { ok: false, error: 'الحساب المختار لا ينتمي لمشروع هذا الطلب.' }
+    }
+  }
+
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update({ paid_from_account_id: input.account_id })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'paid_from_account_updated',
+    actor_user_id: caller.userId,
+    notes: input.account_id
+      ? `تم اختيار حساب الدفع (${input.account_id.slice(0, 8)}…)`
+      : 'إلغاء اختيار حساب الدفع',
+    occurred_at: new Date().toISOString(),
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true }
+}
+
+// ----------------------------------------------------------------------------
 // updateCaseStatusFlags — manual توtogglet for paid + delivered.
 //
 // Unlike updateDeliveryInfo (archive-only, delivered-status-only), this one
