@@ -414,11 +414,9 @@ export default async function ProjectBuyerContractsPage({
                         <DeliveryToggle
                           saleId={s.id}
                           initialDelivered={s.delivery_status === 'delivered'}
+                          initialDate={s.delivery_date}
                           canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
                         />
-                        {s.delivery_date && s.delivery_status === 'delivered' && (
-                          <div className="text-[10px] text-slate-500 mt-0.5">{fmtDate(s.delivery_date)}</div>
-                        )}
                       </Td>
                       {dsbRole === 'owner' && (
                         <Td>

@@ -1463,7 +1463,14 @@ export async function deleteUnit(
 //     the row cleanly reports "not delivered" everywhere it renders
 // ---------------------------------------------------------------------------
 export async function updateSaleDelivery(
-  input: { sale_id: string; delivered: boolean },
+  input: {
+    sale_id: string
+    delivered: boolean
+    // Optional YYYY-MM-DD. If omitted while delivered=true we keep any
+    // existing delivery_date, else default to today. Ignored when
+    // delivered=false (date always cleared).
+    delivery_date?: string | null
+  },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
@@ -1482,13 +1489,21 @@ export async function updateSaleDelivery(
     return { ok: false, error: 'العقد غير موجود.' }
   }
 
+  // Resolve the date to write. Priority:
+  //   1. explicit date passed in (when the operator edits the date field)
+  //   2. existing delivery_date on the row (preserve historical value)
+  //   3. today's date (first time marking delivered)
+  const explicitDate = (input.delivery_date ?? '').trim()
+  if (explicitDate && !/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
+    return { ok: false, error: 'تاريخ التسليم غير صالح.' }
+  }
+
   const patch: Record<string, string | null> = input.delivered
     ? {
         delivery_status: 'delivered',
-        // Only stamp if not already set — respect any historical date the
-        // Excel provided rather than overwriting it with today.
         delivery_date:
-          ((sale as { delivery_date: string | null }).delivery_date) ??
+          explicitDate ||
+          ((sale as { delivery_date: string | null }).delivery_date) ||
           new Date().toISOString().slice(0, 10),
       }
     : {
