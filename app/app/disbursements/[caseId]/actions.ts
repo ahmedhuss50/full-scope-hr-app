@@ -18,6 +18,7 @@ type CaseStatus =
   | 'with_supervisor'
   | 'with_owner'
   | 'sent_back_to_developer'
+  | 'rejected'
   | 'signed'
   | 'delivered'
   | 'cancelled'
@@ -688,6 +689,10 @@ export async function getSignedPdfUrl(input: { case_id: string; upload_id: strin
 // moveCaseToStage — explicit stage routing
 // ----------------------------------------------------------------------------
 
+// NOTE: 'rejected' is intentionally NOT a move target. It has its own
+// dedicated action (`rejectCase`) so we can enforce a required rejection
+// reason. Exposing it here would give operators a second path that
+// bypasses that requirement.
 type MoveTargetStatus =
   | 'with_employee'
   | 'with_supervisor'
@@ -2364,6 +2369,78 @@ export async function getSignedDocumentUrl(input: { case_id: string }): Promise<
     url: data.signedUrl,
     filename: (kase.signed_document_filename as string) ?? 'signed.pdf',
   }
+}
+
+// ----------------------------------------------------------------------------
+// rejectCase — formally reject a voucher (terminal state, archived).
+//
+// Distinction from other terminal actions:
+//   - sent_back_to_developer → temporary; developer fixes & resubmits
+//   - cancelled              → case abandoned entirely
+//   - rejected (this)        → reviewer's formal judgment; archived with
+//                              a mandatory reason for the record
+//
+// Any write role can reject. Recorded columns:
+//   - status              → 'rejected'
+//   - rejected_at         → now
+//   - rejected_by_user_id → caller
+//   - rejection_reason    → operator-supplied text (required)
+// ----------------------------------------------------------------------------
+export async function rejectCase(
+  input: { case_id: string; reason: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole ?? '')) {
+    return { ok: false, error: 'لا تملك صلاحية رفض الوثيقة.' }
+  }
+  if (!input.case_id) return { ok: false, error: 'بيانات ناقصة.' }
+  const reason = (input.reason ?? '').trim()
+  if (!reason) return { ok: false, error: 'يُرجى ذكر سبب الرفض.' }
+
+  const svc = createSupabaseService()
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+
+  const fromStatus = kase.status
+  // Guard: a signed/delivered case can't be retroactively rejected — those
+  // are already terminal and need to be un-signed / re-opened via a
+  // separate path if that ever becomes a real workflow.
+  if (['signed', 'delivered', 'rejected', 'cancelled'].includes(fromStatus)) {
+    return {
+      ok: false,
+      error: `لا يمكن رفض وثيقة في حالة «${fromStatus}».`,
+    }
+  }
+
+  const now = new Date().toISOString()
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update({
+      status: 'rejected',
+      rejected_at: now,
+      rejected_by_user_id: caller.userId,
+      rejection_reason: reason.slice(0, 1000),
+    })
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'case_rejected',
+    actor_user_id: caller.userId,
+    from_status: fromStatus,
+    to_status: 'rejected',
+    notes: reason.slice(0, 500),
+    occurred_at: now,
+  })
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath('/app/disbursements/archive')
+  revalidatePath('/app/disbursements')
+  return { ok: true }
 }
 
 // ----------------------------------------------------------------------------

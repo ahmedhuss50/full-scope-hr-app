@@ -32,6 +32,7 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'with_owner',             label: 'بانتظار مدير المراجعة' },
   { value: 'signed',                 label: 'جاهزة للتسليم' },
   { value: 'delivered',              label: 'مسلَّمة (مؤرشفة)' },
+  { value: 'rejected',                label: 'مرفوضة (مؤرشفة)' },
   { value: 'sent_back_to_developer', label: 'أُعيدت إلى المطوّر' },
   { value: 'draft',                  label: 'مسودة' },
   { value: 'cancelled',              label: 'ملغاة' },
