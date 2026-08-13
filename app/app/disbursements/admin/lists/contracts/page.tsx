@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { ArrowRight, FileSignature } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
+import { DeliveryToggle } from '../../projects/[projectId]/buyer-contracts/DeliveryToggle'
 
 /**
  * Tenant-wide CONTRACTS list.
@@ -75,12 +76,10 @@ function fmtPct(v: number | null): string {
   return `${pct.toFixed(pct >= 100 ? 0 : 1)}%`
 }
 
-function deliveryLabel(status: string | null, date: string | null): string {
-  if (status === 'delivered') return date ? `مُسلَّمة (${date})` : 'مُسلَّمة'
-  if (status === 'pending') return 'بانتظار'
-  if (status === 'other') return 'أخرى'
-  return status ?? '—'
-}
+// deliveryLabel was replaced with the live <DeliveryToggle> component so
+// the owner can flip مُسلَّمة / غير مُسلَّمة inline instead of reading a
+// static chip. Kept the label function out — DeliveryToggle handles both
+// the label and the date editor in one cell.
 
 export default async function ContractsListPage({
   searchParams,
@@ -317,8 +316,7 @@ export default async function ContractsListPage({
                   <Th>الشامل</Th>
                   <Th>التمويل</Th>
                   <Th>البنك</Th>
-                  <Th>تاريخ التسليم</Th>
-                  <Th>حالة التسليم</Th>
+                  <Th>التسليم</Th>
                   <Th># الأقساط</Th>
                   <Th>النسبة المستقطعة</Th>
                   <Th>نسبة التحصيل</Th>
@@ -368,10 +366,14 @@ export default async function ContractsListPage({
                       <Td className="max-w-[10rem] truncate">
                         {s.financing_bank ?? '—'}
                       </Td>
-                      <Td className="font-mono text-xs" dir="ltr">
-                        {s.delivery_date ?? '—'}
+                      <Td>
+                        <DeliveryToggle
+                          saleId={s.id}
+                          initialDelivered={s.delivery_status === 'delivered'}
+                          initialDate={s.delivery_date}
+                          canEdit
+                        />
                       </Td>
-                      <Td>{deliveryLabel(s.delivery_status, null)}</Td>
                       <Td className="font-mono text-xs" dir="ltr">
                         {s.installment_number ?? '—'}
                       </Td>
