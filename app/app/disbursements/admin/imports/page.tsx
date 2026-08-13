@@ -89,7 +89,8 @@ export default async function ImportsHubPage() {
     .eq('email', user.email!)
     .maybeSingle()
   if (!profile) redirect('/login')
-  if (profile.dsb_role !== 'owner') {
+  // Task #185: staff can import for their assigned projects — server actions scope-check rows.
+  if (!['owner', 'supervisor', 'employee'].includes(profile.dsb_role ?? '')) {
     redirect('/app/disbursements/admin')
   }
 

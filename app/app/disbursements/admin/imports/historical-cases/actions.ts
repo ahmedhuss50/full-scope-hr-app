@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+import { assignedProjectIds } from '@/lib/dsb/access'
 
 // ----------------------------------------------------------------------------
 // Historical cases + payments — bulk importer server actions.
@@ -11,13 +12,16 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 // and are pure inserts — no interaction with the case-workflow status
 // transitions handled elsewhere.
 //
-// Owner-only. Tenant-scoped on every query — the service client bypasses
-// RLS so we re-verify tenant_id manually.
+// Task #185: owner + supervisor + employee can import; scoped roles are
+// restricted to their assigned projects via assignedProjectIds. Tenant-scoped
+// on every query — the service client bypasses RLS so we re-verify
+// tenant_id manually.
 // ----------------------------------------------------------------------------
 
 interface OwnerCtx {
   tenantId: string
   userId: string
+  dsbRole: 'owner' | 'supervisor' | 'employee'
 }
 
 async function resolveOwner(): Promise<OwnerCtx | { error: string }> {
@@ -34,10 +38,16 @@ async function resolveOwner(): Promise<OwnerCtx | { error: string }> {
     .eq('email', user.email)
     .maybeSingle()
   if (!profile) return { error: 'حسابك غير مرتبط بمستأجر.' }
-  if ((profile.dsb_role as string | null) !== 'owner') {
-    return { error: 'هذه العملية متاحة للمدير فقط.' }
+  // Task #185: staff can import for their assigned projects — scope check below.
+  const role = (profile.dsb_role as string | null) ?? ''
+  if (!['owner', 'supervisor', 'employee'].includes(role)) {
+    return { error: 'ليست لديك صلاحية الإضافة.' }
   }
-  return { tenantId: profile.tenant_id as string, userId: profile.id as string }
+  return {
+    tenantId: profile.tenant_id as string,
+    userId: profile.id as string,
+    dsbRole: role as 'owner' | 'supervisor' | 'employee',
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +168,26 @@ export async function bulkImportHistoricalCases(input: {
   )
   if (uniqueProjectIds.length === 0) {
     return { ok: false, error: 'كل الصفوف تفتقد المشروع.' }
+  }
+
+  // Task #185: staff can import only for their assigned projects.
+  if (caller.dsbRole !== 'owner') {
+    const allowed = await assignedProjectIds({
+      svc,
+      tenantId: caller.tenantId,
+      userId: caller.userId,
+      dsbRole: caller.dsbRole,
+    })
+    if (allowed !== null) {
+      const outOfScope = uniqueProjectIds.filter((id) => !allowed.includes(id))
+      if (outOfScope.length > 0) {
+        return {
+          ok: false,
+          error:
+            'الاستيراد يحتوي مشاريع خارج نطاق صلاحيتك — أزل الصفوف التي تخص مشاريع أخرى ثم أعد المحاولة.',
+        }
+      }
+    }
   }
   const { data: projRows, error: projErr } = await svc
     .from('dsb_projects')
@@ -499,6 +529,26 @@ export async function bulkImportPayments(input: {
     if (projErr) return { ok: false, error: projErr.message }
     for (const p of (projRows ?? []) as Array<{ id: string }>) {
       validProjectIds.add(p.id)
+    }
+  }
+
+  // Task #185: staff can import only for their assigned projects.
+  if (caller.dsbRole !== 'owner' && projectIds.length > 0) {
+    const allowed = await assignedProjectIds({
+      svc,
+      tenantId: caller.tenantId,
+      userId: caller.userId,
+      dsbRole: caller.dsbRole,
+    })
+    if (allowed !== null) {
+      const outOfScope = projectIds.filter((id) => !allowed.includes(id))
+      if (outOfScope.length > 0) {
+        return {
+          ok: false,
+          error:
+            'الاستيراد يحتوي مشاريع خارج نطاق صلاحيتك — أزل الصفوف التي تخص مشاريع أخرى ثم أعد المحاولة.',
+        }
+      }
     }
   }
 

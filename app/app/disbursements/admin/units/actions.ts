@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { fireDsbContractExtract } from '@/lib/n8n/fire-dsb-contract-extract'
+import { assignedProjectIds } from '@/lib/dsb/access'
 
 // ----------------------------------------------------------------------------
 // Units + buyers + contracts — server actions.
@@ -50,6 +51,46 @@ async function resolveCaller(): Promise<CallerCtx | { error: string }> {
 function assertOwner(caller: CallerCtx): { ok: true } | { ok: false; error: string } {
   if (caller.dsbRole !== 'owner') {
     return { ok: false, error: 'هذه العملية متاحة للمدير فقط.' }
+  }
+  return { ok: true }
+}
+
+/**
+ * Verify the caller can act on every project in `projectIds`.
+ *
+ *   - owner       → always allowed
+ *   - supervisor  → must have every id in their assigned-projects list
+ *   - employee    → same rule as supervisor
+ *   - other role  → rejected up-front (viewer / deliverer can't add)
+ *
+ * Used by the bulk-import add flows (task #185) so an employee/supervisor
+ * can import units/buyers/contracts scoped to their designated project(s),
+ * while still refusing any row that references a project outside their scope.
+ */
+async function assertCanWriteToProjects(
+  caller: CallerCtx,
+  projectIds: string[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (caller.dsbRole === 'owner') return { ok: true }
+  if (!['employee', 'supervisor'].includes(caller.dsbRole)) {
+    return { ok: false, error: 'ليست لديك صلاحية الإضافة.' }
+  }
+  const uniq = Array.from(new Set(projectIds.filter(Boolean)))
+  if (uniq.length === 0) return { ok: true }
+  const svc = createSupabaseService()
+  const allowed = await assignedProjectIds({
+    svc,
+    tenantId: caller.tenantId,
+    userId: caller.userId,
+    dsbRole: caller.dsbRole,
+  })
+  if (allowed === null) return { ok: true }   // shouldn't happen (owner branch)
+  const outOfScope = uniq.filter((id) => !allowed.includes(id))
+  if (outOfScope.length > 0) {
+    return {
+      ok: false,
+      error: 'الاستيراد يحتوي مشاريع خارج نطاق صلاحيتك — أزل الصفوف التي تخص مشاريع أخرى ثم أعد المحاولة.',
+    }
   }
   return { ok: true }
 }
@@ -121,12 +162,13 @@ export async function bulkImportUnitsFromRows(
 > {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
 
   if (!Array.isArray(input.rows) || input.rows.length === 0) {
     return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
   }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, input.rows.map((r) => r.project_id))
+  if (!guard.ok) return guard
 
   // Validate row shape.
   const badRows: number[] = []
@@ -330,11 +372,15 @@ export async function checkExistingUnits(
 > {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
-
   const pairs = Array.isArray(input.pairs) ? input.pairs : []
   if (pairs.length === 0) return { ok: true, existing: [] }
+  // Task #185: allow assigned staff. Scope-check by every project referenced
+  // in the pairs — if any is outside the caller's scope we reject up-front.
+  const guard = await assertCanWriteToProjects(
+    caller,
+    pairs.map((p) => (p.project_id ?? '').trim()).filter(Boolean),
+  )
+  if (!guard.ok) return guard
 
   // Group by project so we can use one IN() per project instead of a
   // per-pair query. Also validates tenant-scoping on the projects side.
@@ -417,12 +463,13 @@ export async function bulkImportUnitsOnly(
 > {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
 
   if (!Array.isArray(input.rows) || input.rows.length === 0) {
     return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
   }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, input.rows.map((r) => r.project_id))
+  if (!guard.ok) return guard
 
   // Normalize + partition into usable vs. skipped.
   const usable: BulkImportUnitOnlyRow[] = []
@@ -585,12 +632,13 @@ export async function bulkImportBuyersFromRows(
 > {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
 
   if (!Array.isArray(input.rows) || input.rows.length === 0) {
     return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
   }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, input.rows.map((r) => r.project_id))
+  if (!guard.ok) return guard
 
   // Normalize + drop rows missing the match key.
   const usable: BulkImportBuyerRow[] = []
@@ -1024,12 +1072,13 @@ export async function bulkImportContractsFromRows(
 > {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
 
   if (!Array.isArray(input.rows) || input.rows.length === 0) {
     return { ok: false, error: 'لا توجد صفوف للاستيراد.' }
   }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, input.rows.map((r) => r.project_id))
+  if (!guard.ok) return guard
 
   const usable: BulkImportContractRow[] = []
   let skipped = 0
@@ -1685,8 +1734,6 @@ export async function attachContractToSale(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
   if (!input.contract_id || !input.sale_id) {
     return { ok: false, error: 'بيانات ناقصة.' }
   }
@@ -1714,6 +1761,17 @@ export async function attachContractToSale(
   if (!sale || sale.tenant_id !== caller.tenantId) {
     return { ok: false, error: 'سجل البيع غير موجود.' }
   }
+  // Task #185: allow assigned staff. Resolve the sale's project via its unit
+  // so we can scope-check the caller before mutating.
+  const { data: unitRow } = await svc
+    .from('dsb_project_units')
+    .select('project_id')
+    .eq('id', sale.unit_id)
+    .maybeSingle()
+  const projectId = (unitRow as { project_id: string } | null)?.project_id
+  if (!projectId) return { ok: false, error: 'المشروع غير معروف.' }
+  const guard = await assertCanWriteToProjects(caller, [projectId])
+  if (!guard.ok) return guard
 
   const { error } = await svc
     .from('dsb_unit_contracts')
@@ -1767,10 +1825,11 @@ export async function requestContractUploadUrl(
 ): Promise<RequestContractUploadUrlResult> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
 
   if (!input.project_id) return { ok: false, error: 'المشروع مطلوب.' }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, [input.project_id])
+  if (!guard.ok) return guard
   if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
   if (input.size > MAX_CONTRACT_SIZE) {
     return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
@@ -1819,8 +1878,10 @@ export async function registerContract(
 ): Promise<RegisterContractResult> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
+  if (!input.project_id) return { ok: false, error: 'المشروع مطلوب.' }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, [input.project_id])
+  if (!guard.ok) return guard
 
   const svc = createSupabaseService()
   const { data: project } = await svc
@@ -1863,8 +1924,10 @@ export async function triggerContractExtraction(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
+  if (!input.project_id) return { ok: false, error: 'المشروع مطلوب.' }
+  // Task #185: allow assigned staff.
+  const guard = await assertCanWriteToProjects(caller, [input.project_id])
+  if (!guard.ok) return guard
 
   const svc = createSupabaseService()
   // Verify the contract belongs to this tenant before firing.
@@ -1898,8 +1961,9 @@ export async function signContractPreviewUrl(
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
-  const own = assertOwner(caller)
-  if (!own.ok) return own
+  // Read-only preview. Any tenant staff can preview; tenant-isolation is
+  // enforced by the tenant_id equality check below. Owner-only lock lifted
+  // as part of task #185 so scoped staff can inspect the PDF they uploaded.
 
   const svc = createSupabaseService()
   const { data: contract } = await svc

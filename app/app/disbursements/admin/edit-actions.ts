@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+import { assignedProjectIds, canAccessProject } from '@/lib/dsb/access'
 
 // ----------------------------------------------------------------------------
 // Edit actions — open to ALL staff (employee / supervisor / owner).
@@ -289,13 +290,19 @@ export async function updateProject(
 }
 
 // ---------------------------------------------------------------------------
-// Project payment accounts (owner-only writes)
+// Project payment accounts
 // ---------------------------------------------------------------------------
 //
 // Each project owns a list of payment accounts that disbursements come out
 // of. When a case is delivered, the owner/staff record which of these
-// accounts the money came from. The admin (owner) maintains the list — one
-// at a time via the inline form, or in bulk via an Excel upload.
+// accounts the money came from.
+//
+// Auth model (Aug 2026 — task #185):
+//   - ADD (single + bulk) → any staff role, but ONLY for projects the caller
+//     is assigned to. Owners see every project so they're unrestricted.
+//   - UPDATE + DELETE     → owner-only (kept in `resolveOwner`). Rationale:
+//     editing an account can silently retarget every historical case that
+//     references it, so we keep it a manager decision.
 // ---------------------------------------------------------------------------
 
 async function resolveOwner(): Promise<
@@ -308,6 +315,40 @@ async function resolveOwner(): Promise<
     return { error: 'هذا الإجراء متاح للمدير فقط.' }
   }
   return { tenantId: caller.tenantId, userId: caller.userId }
+}
+
+/**
+ * Resolve caller and confirm they can act on `projectId`.
+ *   - owner → always allowed (bypasses the assigned-project lookup)
+ *   - supervisor / employee → must have the project in their assignments
+ *   - viewer / deliverer / anything else → rejected (read-only roles can't
+ *     add accounts even for projects they can see)
+ * Used by the add + bulk-add flows below.
+ */
+async function resolveStaffOnProject(
+  projectId: string,
+): Promise<
+  | { tenantId: string; userId: string; dsbRole: StaffRole }
+  | { error: string }
+> {
+  const caller = await resolveStaff()
+  if ('error' in caller) return { error: caller.error }
+  if (!['employee', 'supervisor', 'owner'].includes(caller.dsbRole)) {
+    return { error: 'لا تملك صلاحية الإضافة.' }
+  }
+  if (caller.dsbRole !== 'owner') {
+    const svc = createSupabaseService()
+    const allowed = await assignedProjectIds({
+      svc,
+      tenantId: caller.tenantId,
+      userId: caller.userId,
+      dsbRole: caller.dsbRole,
+    })
+    if (!canAccessProject(allowed, projectId)) {
+      return { error: 'ليست لديك صلاحية على هذا المشروع.' }
+    }
+  }
+  return caller
 }
 
 async function ensureProjectInTenant(
@@ -337,12 +378,13 @@ export interface AddProjectAccountInput {
 export async function addProjectAccount(
   input: AddProjectAccountInput,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-  const caller = await resolveOwner()
-  if ('error' in caller) return { ok: false, error: caller.error }
   const projectId = (input.project_id ?? '').trim()
   const label = (input.label ?? '').trim()
   if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
   if (!label) return { ok: false, error: 'اسم الحساب مطلوب.' }
+  // Open to any staff member assigned to the target project (task #185).
+  const caller = await resolveStaffOnProject(projectId)
+  if ('error' in caller) return { ok: false, error: caller.error }
 
   const svc = createSupabaseService()
   const check = await ensureProjectInTenant(svc, caller.tenantId, projectId)
@@ -510,13 +552,14 @@ export interface BulkUploadProjectAccountsInput {
 export async function bulkUploadProjectAccounts(
   input: BulkUploadProjectAccountsInput,
 ): Promise<{ ok: true; inserted: number } | { ok: false; error: string }> {
-  const caller = await resolveOwner()
-  if ('error' in caller) return { ok: false, error: caller.error }
   const projectId = (input.project_id ?? '').trim()
   if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
   if (!Array.isArray(input.accounts) || input.accounts.length === 0) {
     return { ok: false, error: 'لا توجد صفوف للرفع.' }
   }
+  // Open to any staff member assigned to the target project (task #185).
+  const caller = await resolveStaffOnProject(projectId)
+  if ('error' in caller) return { ok: false, error: caller.error }
 
   const svc = createSupabaseService()
   const check = await ensureProjectInTenant(svc, caller.tenantId, projectId)

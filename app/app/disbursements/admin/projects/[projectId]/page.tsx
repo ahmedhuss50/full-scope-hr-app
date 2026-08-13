@@ -563,22 +563,20 @@ export default async function ProjectDetailPage({
         </div>
       </section>
 
-      {/* Per-project payment accounts — owner-only */}
-      {dsbRole === 'owner' && (
-        <ProjectAccountsSection
-          projectId={project.id}
-          initialAccounts={projectAccounts}
-        />
-      )}
+      {/* Per-project payment accounts — task #185: all staff on the project can add. */}
+      <ProjectAccountsSection
+        projectId={project.id}
+        initialAccounts={projectAccounts}
+      />
 
       {/* الوثائق — restored after the UnitsSection consolidation removed
           them. Contract PDFs (وثائق العقود) live in dsb_unit_contracts and
           need the vision extractor to attach them to a unit. Payments
           (دفعات التحصيل) live in dsb_payments; the card links into the
-          tenant-wide list filtered by this project. Owner-only. */}
-      {dsbRole === 'owner' && (
-        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-          <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          tenant-wide list filtered by this project. Task #185: all staff on
+          the project can upload. */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
             <div>
               <h2 className="serif font-black text-lg text-slate-900">الوثائق</h2>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -651,7 +649,6 @@ export default async function ProjectDetailPage({
             </div>
           </div>
         </section>
-      )}
 
       {/* Units + عقود المشترين — two separate quick-links with per-card
           upload shortcuts. Neither list auto-populates on this page; click
@@ -685,14 +682,12 @@ export default async function ProjectDetailPage({
                 </div>
               </div>
             </Link>
-            {dsbRole === 'owner' && (
-              <Link
-                href={`/app/disbursements/admin/imports/units?project=${project.id}`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 text-xs font-bold transition"
-              >
-                استيراد وحدات
-              </Link>
-            )}
+            <Link
+              href={`/app/disbursements/admin/imports/units?project=${project.id}`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 text-xs font-bold transition"
+            >
+              استيراد وحدات
+            </Link>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
             <Link
@@ -711,14 +706,12 @@ export default async function ProjectDetailPage({
                 </div>
               </div>
             </Link>
-            {dsbRole === 'owner' && (
-              <Link
-                href={`/app/disbursements/admin/imports/contracts?project=${project.id}`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 text-xs font-bold transition"
-              >
-                استيراد عقود ومشترين
-              </Link>
-            )}
+            <Link
+              href={`/app/disbursements/admin/imports/contracts?project=${project.id}`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 text-xs font-bold transition"
+            >
+              استيراد عقود ومشترين
+            </Link>
           </div>
         </div>
       </section>

@@ -34,7 +34,8 @@ export default async function ImportHistoricalCasesPage({
     .eq('email', user.email!)
     .maybeSingle()
   if (!profile) redirect('/login')
-  if (profile.dsb_role !== 'owner') redirect('/app/disbursements/admin')
+  // Task #185: staff can import for their assigned projects — server actions scope-check rows.
+  if (!['owner', 'supervisor', 'employee'].includes(profile.dsb_role ?? '')) redirect('/app/disbursements/admin')
 
   const tenantId = profile.tenant_id as string
   const { data: projsRes } = await svc

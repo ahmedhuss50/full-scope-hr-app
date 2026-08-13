@@ -262,15 +262,13 @@ export default async function ProjectBuyerContractsPage({
             </Link>
           )}
           <div className="flex-1" />
-          {dsbRole === 'owner' && (
-            <Link
-              href={`/app/disbursements/admin/imports/contracts?project=${projectId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-xs font-bold"
-            >
-              <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-              استيراد عقود ومشترين
-            </Link>
-          )}
+          <Link
+            href={`/app/disbursements/admin/imports/contracts?project=${projectId}`}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-xs font-bold"
+          >
+            <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+            استيراد عقود ومشترين
+          </Link>
           {dsbRole === 'owner' && (
             <DeleteAllButton
               label="حذف كل العقود"

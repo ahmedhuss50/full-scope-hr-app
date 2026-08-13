@@ -211,15 +211,13 @@ export default async function ProjectUnitsListPage({
             </Link>
           )}
           <div className="flex-1" />
-          {dsbRole === 'owner' && (
-            <Link
-              href={`/app/disbursements/admin/imports/units?project=${projectId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 text-xs font-bold"
-            >
-              <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-              استيراد وحدات
-            </Link>
-          )}
+          <Link
+            href={`/app/disbursements/admin/imports/units?project=${projectId}`}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 text-xs font-bold"
+          >
+            <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+            استيراد وحدات
+          </Link>
           {dsbRole === 'owner' && (
             <DeleteAllButton
               label="حذف كل الوحدات"
