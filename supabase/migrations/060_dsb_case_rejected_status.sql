@@ -16,9 +16,17 @@
 -- Idempotent. Safe on live DB.
 -- ----------------------------------------------------------------------------
 
--- 1) Extend the enum. Postgres requires ALTER TYPE ... ADD VALUE outside a
---    transaction block, so we wrap the check + add in a DO block that runs
---    the ADD only if the value isn't already present.
+-- Postgres constraint: a newly-added enum value can't be referenced in the
+-- same transaction as the ADD VALUE. Because supabase CLI wraps a migration
+-- file in one transaction and the SQL editor runs multi-statement queries
+-- in one transaction too, we do the enum ADD in its own COMMIT'd block
+-- before the index that uses `where status = 'rejected'`.
+--
+-- If you're running this in the Supabase SQL editor manually, run in TWO
+-- separate queries: everything up to the first `commit;`, then the rest.
+
+-- 1) Extend the enum, in its own transaction.
+begin;
 do $$
 begin
   if not exists (
@@ -29,15 +37,14 @@ begin
     alter type dsb_case_status add value 'rejected';
   end if;
 end $$;
+commit;
 
--- 2) Tracking columns. All nullable — only populated when the case reaches
---    the 'rejected' status.
+-- 2) Tracking columns + partial index (now that 'rejected' is committed).
 alter table dsb_cases
   add column if not exists rejected_at         timestamptz,
   add column if not exists rejected_by_user_id uuid,
   add column if not exists rejection_reason    text;
 
--- 3) Partial index for the archive query "rejected cases most recent first".
 create index if not exists dsb_cases_rejected_idx
   on dsb_cases (tenant_id, rejected_at desc)
   where status = 'rejected';

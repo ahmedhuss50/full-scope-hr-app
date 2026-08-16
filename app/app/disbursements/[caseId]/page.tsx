@@ -205,6 +205,53 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     account_number: string | null
   }>
 
+  // ---- Reassignment dropdowns (developer + project) ----
+  // Feeds the "wrong client/project picked at upload" fix in EditCaseInfo.
+  // Scoped users only see projects they're assigned to, and only see
+  // developers that own at least one of those projects. Owner sees all.
+  const { assignedProjectIds: getAllowedForReassign } = await import('@/lib/dsb/access')
+  const allowedForReassign = await getAllowedForReassign({
+    svc,
+    tenantId,
+    userId: profile.id as string,
+    dsbRole,
+  })
+  let projectsForEdit: Array<{ id: string; code: string; name_ar: string; developer_id: string | null }> = []
+  {
+    let q = svc
+      .from('dsb_projects')
+      .select('id, code, name_ar, developer_id')
+      .eq('tenant_id', tenantId)
+      .order('code', { ascending: true })
+    if (allowedForReassign !== null) {
+      q = q.in('id', allowedForReassign.length > 0 ? allowedForReassign : ['00000000-0000-0000-0000-000000000000'])
+    }
+    const { data } = await q
+    projectsForEdit = (data ?? []) as typeof projectsForEdit
+  }
+  // Developers = distinct developer_id set from the visible projects.
+  const developersForEdit = await (async () => {
+    const devIds = Array.from(
+      new Set(projectsForEdit.map((p) => p.developer_id).filter((x): x is string => !!x)),
+    )
+    if (devIds.length === 0) return []
+    const { data } = await svc
+      .from('dsb_developers')
+      .select('id, company_name_ar')
+      .eq('tenant_id', tenantId)
+      .in('id', devIds)
+      .order('company_name_ar', { ascending: true })
+    return ((data ?? []) as Array<{ id: string; company_name_ar: string }>).map((d) => ({
+      id: d.id,
+      label: d.company_name_ar,
+    }))
+  })()
+  const projectOptionsForEdit = projectsForEdit.map((p) => ({
+    id: p.id,
+    label: `${p.code} — ${p.name_ar}`,
+    developer_id: p.developer_id,
+  }))
+
   // Include version-tracking fields: superseded_at filters CURRENT (active) vs
   // historical uploads. We display the most recent NON-superseded one as the
   // primary PDF; historical rows show in the version-history list.
@@ -452,8 +499,12 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                   amount_sar: kase.amount_sar,
                   delivery_date: kase.delivery_date,
                   notes: kase.notes,
+                  developer_id: developer?.id ?? null,
+                  project_id: project?.id ?? null,
                 }}
                 canEdit={canWrite}
+                developers={developersForEdit}
+                projects={projectOptionsForEdit}
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">

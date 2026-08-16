@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+import { assignedProjectIds, canAccessProject } from '@/lib/dsb/access'
 import {
   sendDeveloperUploadedEmail,
   sendEmployeeApprovedEmail,
@@ -955,6 +956,12 @@ export interface UpdateCaseFieldsInput {
   amount_sar: number | null
   delivery_date: string | null
   notes: string | null
+  // Optional client/project reassignment — used when the wrong developer or
+  // project was picked at upload. When either is omitted we leave the
+  // existing value untouched. When both are present we verify the project
+  // actually belongs to the developer.
+  developer_id?: string | null
+  project_id?: string | null
 }
 
 export async function updateCaseFields(
@@ -970,11 +977,17 @@ export async function updateCaseFields(
   const svc = createSupabaseService()
   const { data: kase } = await svc
     .from('dsb_cases')
-    .select('id')
+    .select('id, developer_id, project_id, paid_from_account_id')
     .eq('tenant_id', caller.tenantId)
     .eq('id', input.case_id)
     .maybeSingle()
   if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  const kRow = kase as {
+    id: string
+    developer_id: string | null
+    project_id: string | null
+    paid_from_account_id: string | null
+  }
 
   // Build the patch — only include fields that pass basic validation. Null
   // values are explicitly allowed so the user can clear an existing field.
@@ -1010,6 +1023,59 @@ export async function updateCaseFields(
   const notes = (input.notes ?? '').trim()
   patch.notes = notes ? notes : null
 
+  // --- Developer + project reassignment ---
+  // Handles the "chose wrong client/project at upload" case. Both flow
+  // together: if either is present, we validate the pair. If the project
+  // is changing, we clear paid_from_account_id (it points to an account
+  // scoped to the OLD project — leaving it dangling would break the case
+  // page's paid-from picker).
+  let newDeveloperId = kRow.developer_id
+  let newProjectId = kRow.project_id
+  const developerChanging = input.developer_id !== undefined
+  const projectChanging = input.project_id !== undefined
+  if (developerChanging || projectChanging) {
+    if (developerChanging) newDeveloperId = (input.developer_id ?? '').trim() || null
+    if (projectChanging) newProjectId = (input.project_id ?? '').trim() || null
+    if (!newDeveloperId) return { ok: false, error: 'العميل مطلوب.' }
+    if (!newProjectId)   return { ok: false, error: 'المشروع مطلوب.' }
+
+    // Verify project belongs to the tenant AND to the selected developer.
+    const { data: proj } = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id, developer_id')
+      .eq('id', newProjectId)
+      .maybeSingle()
+    const pRow = proj as { id: string; tenant_id: string; developer_id: string | null } | null
+    if (!pRow || pRow.tenant_id !== caller.tenantId) {
+      return { ok: false, error: 'المشروع غير موجود.' }
+    }
+    if (pRow.developer_id !== newDeveloperId) {
+      return { ok: false, error: 'المشروع المختار لا ينتمي إلى هذا العميل.' }
+    }
+
+    // Scope-check: non-owner staff can only reassign the case to a project
+    // they're assigned to (mirrors task #185 rules).
+    if (caller.dsbRole !== 'owner') {
+      const allowed = await assignedProjectIds({
+        svc,
+        tenantId: caller.tenantId,
+        userId: caller.userId,
+        dsbRole: caller.dsbRole,
+      })
+      if (!canAccessProject(allowed, newProjectId)) {
+        return { ok: false, error: 'ليست لديك صلاحية على المشروع المختار.' }
+      }
+    }
+
+    patch.developer_id = newDeveloperId
+    patch.project_id = newProjectId
+
+    // Clear the paid-from account if we're moving to a different project.
+    if (kRow.project_id !== newProjectId && kRow.paid_from_account_id) {
+      patch.paid_from_account_id = null
+    }
+  }
+
   const { error } = await svc
     .from('dsb_cases')
     .update(patch)
@@ -1022,12 +1088,18 @@ export async function updateCaseFields(
     case_id: input.case_id,
     event: 'case_fields_edited',
     actor_user_id: caller.userId,
-    notes: 'تم تعديل بيانات الطلب.',
+    notes: (developerChanging || projectChanging)
+      ? 'تم تعديل بيانات الطلب — تم تغيير العميل/المشروع.'
+      : 'تم تعديل بيانات الطلب.',
   })
 
   revalidatePath(`/app/disbursements/${input.case_id}`)
   revalidatePath('/app/disbursements')
   revalidatePath('/app/disbursements/documents')
+  if (kRow.project_id) revalidatePath(`/app/disbursements/admin/projects/${kRow.project_id}`)
+  if (patch.project_id && patch.project_id !== kRow.project_id) {
+    revalidatePath(`/app/disbursements/admin/projects/${patch.project_id}`)
+  }
   return { ok: true }
 }
 

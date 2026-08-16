@@ -12,14 +12,31 @@ type CaseFields = {
   amount_sar: number | null
   delivery_date: string | null
   notes: string | null
+  developer_id: string | null
+  project_id: string | null
 }
 
+export type DeveloperOption = { id: string; label: string }
+export type ProjectOption = { id: string; label: string; developer_id: string | null }
+
 /**
- * Inline edit for the case's top-level metadata. Workflow status, signer, and
- * extracted fields are NOT touched here — those have their own dedicated
- * flows. Any staff role can edit.
+ * Inline edit for the case's top-level metadata. Now also lets a staff
+ * member move the case to a different developer/project when the wrong
+ * one was picked at upload — dropdowns filter each other (project list
+ * narrows to the selected developer). Workflow status, signer, and
+ * extracted fields are NOT touched here.
  */
-export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boolean }) {
+export function EditCaseInfo({
+  kase,
+  canEdit,
+  developers,
+  projects,
+}: {
+  kase: CaseFields
+  canEdit: boolean
+  developers: DeveloperOption[]
+  projects: ProjectOption[]
+}) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
@@ -30,6 +47,26 @@ export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boo
   const [amount, setAmount] = useState<string>(kase.amount_sar != null ? String(kase.amount_sar) : '')
   const [deliveryDate, setDeliveryDate] = useState(kase.delivery_date ?? '')
   const [notes, setNotes] = useState(kase.notes ?? '')
+  const [developerId, setDeveloperId] = useState<string>(kase.developer_id ?? '')
+  const [projectId, setProjectId] = useState<string>(kase.project_id ?? '')
+
+  // Filter the project dropdown to the selected developer's projects. Empty
+  // developer → show every allowed project (before the user makes a choice).
+  const projectOptions = developerId
+    ? projects.filter((p) => p.developer_id === developerId)
+    : projects
+
+  function onDeveloperChange(next: string) {
+    setDeveloperId(next)
+    // If the currently-selected project doesn't belong to the new developer,
+    // clear it so the user is forced to pick one that does.
+    if (projectId) {
+      const stillValid = projects.some(
+        (p) => p.id === projectId && p.developer_id === next,
+      )
+      if (!stillValid) setProjectId('')
+    }
+  }
 
   function reset() {
     setVoucherNumber(kase.voucher_number_text ?? '')
@@ -37,6 +74,8 @@ export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boo
     setAmount(kase.amount_sar != null ? String(kase.amount_sar) : '')
     setDeliveryDate(kase.delivery_date ?? '')
     setNotes(kase.notes ?? '')
+    setDeveloperId(kase.developer_id ?? '')
+    setProjectId(kase.project_id ?? '')
     setError(null)
   }
 
@@ -47,6 +86,19 @@ export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boo
       setError('المبلغ غير صالح.')
       return
     }
+    if (!developerId) { setError('العميل مطلوب.'); return }
+    if (!projectId)   { setError('المشروع مطلوب.'); return }
+
+    // Detect whether developer/project actually changed. Only send the two
+    // fields if they moved so the server-side audit note stays accurate.
+    const devChanged  = developerId !== (kase.developer_id ?? '')
+    const projChanged = projectId   !== (kase.project_id ?? '')
+    const moving = devChanged || projChanged
+    if (moving) {
+      const ok = confirm('تأكيد نقل الطلب إلى العميل/المشروع المختار؟ سيتم مسح حساب الدفع إن اختلف المشروع.')
+      if (!ok) return
+    }
+
     setSaving(true)
     const res = await updateCaseFields({
       case_id: kase.id,
@@ -55,6 +107,7 @@ export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boo
       amount_sar: amountNum,
       delivery_date: deliveryDate || null,
       notes: notes.trim() || null,
+      ...(moving ? { developer_id: developerId, project_id: projectId } : {}),
     })
     setSaving(false)
     if (!res.ok) {
@@ -88,6 +141,41 @@ export function EditCaseInfo({ kase, canEdit }: { kase: CaseFields; canEdit: boo
     <div className="bg-teal-50/30 border border-teal-200 rounded-lg p-4 space-y-3">
       <h3 className="serif font-bold text-sm text-slate-900">تعديل بيانات الطلب</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">العميل (المطوّر)</label>
+          <select
+            className={inputCls}
+            value={developerId}
+            onChange={(e) => onDeveloperChange(e.target.value)}
+            disabled={saving}
+          >
+            <option value="">— اختر العميل —</option>
+            {developers.map((d) => (
+              <option key={d.id} value={d.id}>{d.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">المشروع</label>
+          <select
+            className={inputCls}
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            disabled={saving || !developerId}
+          >
+            <option value="">
+              {developerId ? '— اختر المشروع —' : '— اختر العميل أولاً —'}
+            </option>
+            {projectOptions.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+          {developerId && projectOptions.length === 0 && (
+            <div className="mt-1 text-[11px] text-amber-700">
+              لا توجد مشاريع مرتبطة بهذا العميل ضمن نطاقك.
+            </div>
+          )}
+        </div>
         <div>
           <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم السند</label>
           <input className={inputCls} value={voucherNumber} onChange={(e) => setVoucherNumber(e.target.value)} disabled={saving} />
