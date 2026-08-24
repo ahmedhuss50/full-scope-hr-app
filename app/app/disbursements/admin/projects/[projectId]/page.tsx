@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FolderKanban, FileText, Plus, Users, Scale, Upload } from 'lucide-react'
+import { FolderKanban, FileText, Plus, Users, Scale, Upload, Briefcase } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
@@ -711,6 +711,26 @@ export default async function ProjectDetailPage({
               className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 text-xs font-bold transition"
             >
               استيراد عقود ومشترين
+            </Link>
+          </div>
+          {/* Vendors — per-project directory of contractors + service providers
+              with attached PDF contracts (task #187). */}
+          <div className="sm:col-span-2 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+            <Link
+              href={`/app/disbursements/admin/projects/${project.id}/vendors`}
+              className="group flex items-start gap-3"
+            >
+              <div className="shrink-0 w-10 h-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                <Briefcase className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold text-slate-900 group-hover:text-indigo-800 transition">
+                  الموردون ومقدمو الخدمات
+                </div>
+                <div className="text-xs text-slate-600 mt-0.5">
+                  دليل الشركات والمقاولين ومقدمي الخدمات، مع العقود المرفقة (PDF).
+                </div>
+              </div>
             </Link>
           </div>
         </div>
