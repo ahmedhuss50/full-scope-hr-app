@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 import { ArrowRight, Coins } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
+import { DepositCategoryPicker, DEPOSIT_CATEGORY_LABELS } from './DepositCategoryPicker'
+import type { DepositCategory } from './actions'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -38,6 +40,13 @@ type PaymentRowRaw = {
   description: string | null
   reference_number: string | null
   payment_method: string | null
+  deposit_category: DepositCategory
+}
+
+type CategoryTab = 'all' | DepositCategory
+function parseCategoryTab(v: string | undefined): CategoryTab {
+  const allowed: CategoryTab[] = ['all', 'buyer_collection', 'wrong_transfer', 'self_financing', 'bank_financing', 'other']
+  return (allowed as string[]).includes(v ?? '') ? (v as CategoryTab) : 'all'
 }
 
 function escapeOrTerm(s: string): string {
@@ -59,6 +68,7 @@ export default async function PaymentsListPage({
     q?: string
     project?: string
     account?: string
+    category?: string
     sort?: string
     dir?: string
   }
@@ -84,6 +94,7 @@ export default async function PaymentsListPage({
   const q = (searchParams?.q ?? '').trim()
   const projectFilter = (searchParams?.project ?? '').trim()
   const accountFilter = (searchParams?.account ?? '').trim()
+  const activeCategory: CategoryTab = parseCategoryTab(searchParams?.category)
   const rawSort = (searchParams?.sort ?? 'payment_date') as SortKey
   const sort: SortKey = SORT_KEYS.includes(rawSort) ? rawSort : 'payment_date'
   // Default direction matches the user-preferred read: newest first.
@@ -120,11 +131,12 @@ export default async function PaymentsListPage({
   let paymentsQuery = svc
     .from('dsb_payments')
     .select(
-      'id, project_id, account_id, case_id, unit_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method',
+      'id, project_id, account_id, case_id, unit_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category',
     )
     .eq('tenant_id', tenantId)
   if (projectFilter) paymentsQuery = paymentsQuery.eq('project_id', projectFilter)
   if (accountFilter) paymentsQuery = paymentsQuery.eq('account_id', accountFilter)
+  if (activeCategory !== 'all') paymentsQuery = paymentsQuery.eq('deposit_category', activeCategory)
   if (q) {
     const esc = escapeOrTerm(q)
     paymentsQuery = paymentsQuery.or(
@@ -134,6 +146,34 @@ export default async function PaymentsListPage({
 
   const { data: paymentsData } = await paymentsQuery
   const allPayments = (paymentsData ?? []) as PaymentRowRaw[]
+
+  // ---- Tab counts (respect project/account/search filters, NOT the tab itself)
+  // A separate lightweight query so switching tabs doesn't lose the counts.
+  let countsQuery = svc
+    .from('dsb_payments')
+    .select('deposit_category')
+    .eq('tenant_id', tenantId)
+  if (projectFilter) countsQuery = countsQuery.eq('project_id', projectFilter)
+  if (accountFilter) countsQuery = countsQuery.eq('account_id', accountFilter)
+  if (q) {
+    const esc = escapeOrTerm(q)
+    countsQuery = countsQuery.or(
+      `reference_number.ilike.%${esc}%,beneficiary_name.ilike.%${esc}%,description.ilike.%${esc}%`,
+    )
+  }
+  const { data: countsData } = await countsQuery
+  const categoryCounts: Record<CategoryTab, number> = {
+    all: 0,
+    buyer_collection: 0,
+    wrong_transfer: 0,
+    self_financing: 0,
+    bank_financing: 0,
+    other: 0,
+  }
+  for (const r of ((countsData ?? []) as Array<{ deposit_category: DepositCategory }>)) {
+    categoryCounts.all++
+    categoryCounts[r.deposit_category]++
+  }
 
   // ---- Case + unit lookups for the display columns ----
   const caseIds = Array.from(new Set(allPayments.map((p) => p.case_id).filter((x): x is string => !!x)))
@@ -195,6 +235,7 @@ export default async function PaymentsListPage({
   if (q) baseParams.set('q', q)
   if (projectFilter) baseParams.set('project', projectFilter)
   if (accountFilter) baseParams.set('account', accountFilter)
+  if (activeCategory !== 'all') baseParams.set('category', activeCategory)
   baseParams.set('sort', sort)
   baseParams.set('dir', dir)
 
@@ -202,6 +243,20 @@ export default async function PaymentsListPage({
     q,
     project: projectFilter,
     account: accountFilter,
+    category: activeCategory === 'all' ? '' : activeCategory,
+  }
+
+  // Preserve non-category filters when switching tabs. Default tab (الكل)
+  // omits the param for tidy URLs.
+  function tabHref(tab: CategoryTab): string {
+    const p = new URLSearchParams()
+    if (tab !== 'all') p.set('category', tab)
+    if (q) p.set('q', q)
+    if (projectFilter) p.set('project', projectFilter)
+    if (accountFilter) p.set('account', accountFilter)
+    // don't preserve sort/dir here — tabs deliberately reset to defaults
+    const s = p.toString()
+    return s ? `?${s}` : ''
   }
 
   // Filter the account dropdown to accounts for the selected project — if
@@ -245,6 +300,18 @@ export default async function PaymentsListPage({
         <KpiCard label="عدد الدفعات" value={totalCount.toLocaleString('en-US')} />
         <KpiCard label="إجمالي المبالغ" value={fmtNum(totalAmount)} mono />
         <KpiCard label="إجمالي الضريبة" value={fmtNum(totalVat)} mono />
+      </div>
+
+      {/* Tab strip — filter by deposit category. Counts respect the other
+          filters (project/account/search) so switching tabs stays consistent
+          with what the user is looking at. */}
+      <div className="flex items-center gap-0 border-b border-slate-200 overflow-x-auto">
+        <CategoryTabLink href={tabHref('all')}              active={activeCategory === 'all'}              label="الكل"          count={categoryCounts.all} tone="teal" />
+        <CategoryTabLink href={tabHref('buyer_collection')} active={activeCategory === 'buyer_collection'} label="تحصيل مشتري"    count={categoryCounts.buyer_collection} tone="teal" />
+        <CategoryTabLink href={tabHref('wrong_transfer')}   active={activeCategory === 'wrong_transfer'}   label="حوالة خاطئة"    count={categoryCounts.wrong_transfer} tone="red" />
+        <CategoryTabLink href={tabHref('self_financing')}   active={activeCategory === 'self_financing'}   label="تمويل ذاتي"      count={categoryCounts.self_financing} tone="emerald" />
+        <CategoryTabLink href={tabHref('bank_financing')}   active={activeCategory === 'bank_financing'}   label="تمويل بنكي"      count={categoryCounts.bank_financing} tone="indigo" />
+        <CategoryTabLink href={tabHref('other')}            active={activeCategory === 'other'}            label="أخرى"           count={categoryCounts.other} tone="slate" />
       </div>
 
       <ListToolbar
@@ -299,6 +366,7 @@ export default async function PaymentsListPage({
                   <Th>الطلب</Th>
                   <Th>الوحدة</Th>
                   <Th>الطريقة</Th>
+                  <Th>التصنيف</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -337,6 +405,13 @@ export default async function PaymentsListPage({
                       <Td className="font-mono text-xs">{unitNo ?? '—'}</Td>
                       <Td className="max-w-[8rem] truncate">
                         {p.payment_method ?? '—'}
+                      </Td>
+                      <Td>
+                        <DepositCategoryPicker
+                          paymentId={p.id}
+                          initial={p.deposit_category}
+                          canEdit
+                        />
                       </Td>
                     </tr>
                   )
@@ -384,6 +459,42 @@ function Td({ children, className, dir }: { children: React.ReactNode; className
     <td className={`px-3 py-2 text-sm text-slate-700 align-top ${className ?? ''}`} dir={dir}>
       {children}
     </td>
+  )
+}
+
+// Tab strip link with a count chip. Tone tints the active underline so the
+// user can tell tabs apart at a glance (red for خاطئة is intentional).
+function CategoryTabLink({
+  href,
+  active,
+  label,
+  count,
+  tone,
+}: {
+  href: string
+  active: boolean
+  label: string
+  count: number
+  tone: 'teal' | 'red' | 'emerald' | 'indigo' | 'slate'
+}) {
+  const activeMap: Record<typeof tone, string> = {
+    teal:    'border-teal-600 text-teal-700',
+    red:     'border-red-600 text-red-700',
+    emerald: 'border-emerald-600 text-emerald-700',
+    indigo:  'border-indigo-600 text-indigo-700',
+    slate:   'border-slate-600 text-slate-800',
+  }
+  const idle = 'border-transparent text-slate-500 hover:text-slate-800'
+  return (
+    <Link
+      href={href}
+      className={`inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition whitespace-nowrap ${active ? activeMap[tone] : idle}`}
+    >
+      {label}
+      <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-mono ${active ? 'bg-slate-100 text-slate-800' : 'bg-slate-50 text-slate-500'}`}>
+        {count.toLocaleString('en-US')}
+      </span>
+    </Link>
   )
 }
 
