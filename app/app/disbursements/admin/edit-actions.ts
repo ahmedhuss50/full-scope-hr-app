@@ -367,12 +367,30 @@ async function ensureProjectInTenant(
   return { ok: true }
 }
 
+// Migration 063: `account_role` picks which of the four escrow-mandated
+// slots this account fills (general / construction / admin_marketing /
+// escrow). NULL means "ordinary account, no role" — the majority of rows.
+// Only accounts flagged 'general' trigger the buyer-deposit split.
+const ALLOWED_ACCOUNT_ROLES = ['general', 'construction', 'admin_marketing', 'escrow'] as const
+export type AccountRole = (typeof ALLOWED_ACCOUNT_ROLES)[number]
+
+function normalizeAccountRole(v: string | null | undefined): AccountRole | null | { error: string } {
+  if (v === undefined || v === null) return null
+  const s = String(v).trim()
+  if (s === '') return null
+  if (!(ALLOWED_ACCOUNT_ROLES as readonly string[]).includes(s)) {
+    return { error: 'دور الحساب غير معتمد.' }
+  }
+  return s as AccountRole
+}
+
 export interface AddProjectAccountInput {
   project_id: string
   label: string
   account_number?: string | null
   bank_name?: string | null
   iban?: string | null
+  account_role?: AccountRole | null
 }
 
 export async function addProjectAccount(
@@ -390,6 +408,11 @@ export async function addProjectAccount(
   const check = await ensureProjectInTenant(svc, caller.tenantId, projectId)
   if (!check.ok) return check
 
+  const roleParsed = normalizeAccountRole(input.account_role ?? null)
+  if (typeof roleParsed === 'object' && roleParsed !== null && 'error' in roleParsed) {
+    return { ok: false, error: roleParsed.error }
+  }
+
   const { data, error } = await svc
     .from('dsb_project_accounts')
     .insert({
@@ -399,6 +422,7 @@ export async function addProjectAccount(
       account_number: (input.account_number ?? '').trim() || null,
       bank_name: (input.bank_name ?? '').trim() || null,
       iban: (input.iban ?? '').trim().toUpperCase() || null,
+      account_role: roleParsed as AccountRole | null,
       created_by_user_id: caller.userId,
     })
     .select('id')
@@ -471,6 +495,8 @@ export interface UpdateProjectAccountInput {
   account_number?: string | null
   bank_name?: string | null
   iban?: string | null
+  // Migration 063 — see AccountRole. `null` clears the role.
+  account_role?: AccountRole | null
 }
 
 export async function updateProjectAccount(
@@ -521,6 +547,13 @@ export async function updateProjectAccount(
   }
   if (input.iban !== undefined) {
     patch.iban = (input.iban ?? '').trim().toUpperCase() || null
+  }
+  if (input.account_role !== undefined) {
+    const roleParsed = normalizeAccountRole(input.account_role)
+    if (typeof roleParsed === 'object' && roleParsed !== null && 'error' in roleParsed) {
+      return { ok: false, error: roleParsed.error }
+    }
+    patch.account_role = roleParsed as AccountRole | null
   }
   if (Object.keys(patch).length === 0) return { ok: true } // nothing to do
 

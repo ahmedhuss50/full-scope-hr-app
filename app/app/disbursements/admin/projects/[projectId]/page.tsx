@@ -245,7 +245,7 @@ export default async function ProjectDetailPage({
   // Fetch per-project payment accounts (admin-managed list shown to owners).
   const { data: accountsData } = await svc
     .from('dsb_project_accounts')
-    .select('id, label, account_number, bank_name, iban')
+    .select('id, label, account_number, bank_name, iban, account_role')
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
     .order('label', { ascending: true })

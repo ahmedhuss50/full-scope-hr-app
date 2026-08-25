@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { assignedProjectIds } from '@/lib/dsb/access'
+import { distributeBuyerDeposit } from '@/lib/dsb/distribute-buyer-deposit'
 
 // ----------------------------------------------------------------------------
 // Historical cases + payments — bulk importer server actions.
@@ -706,8 +707,37 @@ export async function bulkImportPayments(input: {
     return { ok: true, inserted: 0, skipped, unmatched }
   }
 
-  const { error: insErr } = await svc.from('dsb_payments').insert(toInsert)
+  const { data: insertedRows, error: insErr } = await svc
+    .from('dsb_payments')
+    .insert(toInsert)
+    .select('id, project_id, account_id, amount_sar, deposit_category')
   if (insErr) return { ok: false, error: insErr.message }
+
+  // Auto-distribute every inserted buyer-collection deposit that landed on
+  // a project's general account (migration 063). Per-row failures append to
+  // `unmatched` so a bad row doesn't fail the whole import.
+  type InsertedLite = {
+    id: string
+    project_id: string | null
+    account_id: string | null
+    amount_sar: number
+    deposit_category: string | null
+  }
+  for (const row of ((insertedRows ?? []) as InsertedLite[])) {
+    if (row.deposit_category !== 'buyer_collection') continue
+    if (!row.project_id || !row.account_id) continue
+    if (!(row.amount_sar > 0)) continue
+    const res = await distributeBuyerDeposit(svc, caller.tenantId, row.id)
+    if (!res.ok) {
+      // Surface as an unmatched entry — this is a soft signal, not a fatal
+      // error. The row itself did land in the ledger.
+      unmatched.push({
+        row: 0,
+        field: 'account',
+        value: `توزيع #${row.id.slice(0, 8)}: ${res.error}`,
+      })
+    }
+  }
 
   revalidatePath('/app/disbursements/admin/lists/payments')
 

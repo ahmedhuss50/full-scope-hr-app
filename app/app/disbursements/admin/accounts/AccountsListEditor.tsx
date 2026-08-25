@@ -5,6 +5,25 @@ import { useRouter } from 'next/navigation'
 import { Pencil, Check, X, Trash2, Search, Loader2 } from 'lucide-react'
 import { updateProjectAccount, deleteProjectAccount } from '../edit-actions'
 
+// Migration 063 — one of the four escrow-mandated slots this account
+// occupies. Null = ordinary account (not part of a project's escrow split).
+export type AccountRole = 'general' | 'construction' | 'admin_marketing' | 'escrow'
+
+const ACCOUNT_ROLE_OPTIONS: Array<{ value: '' | AccountRole; label: string }> = [
+  { value: '',                label: '— (بدون دور)' },
+  { value: 'general',         label: 'الحساب العام' },
+  { value: 'construction',    label: 'الانشاءات' },
+  { value: 'admin_marketing', label: 'الاداري والتسويقي' },
+  { value: 'escrow',          label: 'الحفظ' },
+]
+
+const ROLE_LABEL: Record<AccountRole, string> = {
+  general:         'الحساب العام',
+  construction:    'الانشاءات',
+  admin_marketing: 'الاداري والتسويقي',
+  escrow:          'الحفظ',
+}
+
 export type AccountRow = {
   id: string
   projectId: string
@@ -14,6 +33,7 @@ export type AccountRow = {
   accountNumber: string | null
   bankName: string | null
   iban: string | null
+  accountRole: AccountRole | null
   createdAt: string
 }
 
@@ -85,6 +105,7 @@ export function AccountsListEditor({
                   <Th>اسم الحساب</Th>
                   <Th>المشروع</Th>
                   <Th>العميل</Th>
+                  <Th>الدور</Th>
                   <Th>رقم الحساب</Th>
                   <Th>البنك</Th>
                   <Th>IBAN</Th>
@@ -124,6 +145,7 @@ function EditableRow({
   const [accountNumber, setAccountNumber] = useState(account.accountNumber ?? '')
   const [bankName, setBankName] = useState(account.bankName ?? '')
   const [iban, setIban] = useState(account.iban ?? '')
+  const [accountRole, setAccountRole] = useState<'' | AccountRole>(account.accountRole ?? '')
 
   function startEdit() {
     setError(null)
@@ -132,6 +154,7 @@ function EditableRow({
     setAccountNumber(account.accountNumber ?? '')
     setBankName(account.bankName ?? '')
     setIban(account.iban ?? '')
+    setAccountRole(account.accountRole ?? '')
     setEditing(true)
   }
 
@@ -150,6 +173,7 @@ function EditableRow({
       account_number: accountNumber || null,
       bank_name: bankName || null,
       iban: iban || null,
+      account_role: accountRole || null,
     })
     setSaving(false)
     if (!res.ok) {
@@ -211,6 +235,26 @@ function EditableRow({
         <span className="text-slate-700">
           {editing ? (selectedProject?.developer_name_ar ?? '—') : (account.developerNameAr ?? '—')}
         </span>
+      </Td>
+      <Td>
+        {editing ? (
+          <select
+            value={accountRole}
+            onChange={(e) => setAccountRole(e.target.value as '' | AccountRole)}
+            disabled={saving}
+            className={inputCls}
+          >
+            {ACCOUNT_ROLE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        ) : account.accountRole ? (
+          <span className="inline-flex items-center rounded-md bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-200 px-1.5 py-0.5 text-[11px] font-bold">
+            {ROLE_LABEL[account.accountRole]}
+          </span>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
       </Td>
       <Td>
         {editing ? (

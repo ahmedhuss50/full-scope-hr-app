@@ -3,16 +3,21 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, Check } from 'lucide-react'
-import { updateDepositCategory, type DepositCategory } from './actions'
+import { updateDepositCategory, type DepositCategory, type UserSettableCategory } from './actions'
 
 /**
- * Inline dropdown for classifying a deposit into one of the five categories.
- * Autosaves on change with optimistic UI + rollback on error.
+ * Inline dropdown for classifying a deposit into one of the five user-set
+ * categories. Autosaves on change with optimistic UI + rollback on error.
  *
  * Same UX pattern as DeliveryToggle (buyer-contracts): single-click flip,
  * green tick briefly after save, loader while pending.
+ *
+ * Split rows (deposit_category='auto_distribution') are locked: we render a
+ * read-only tag instead of the dropdown. Splits are owned by their parent
+ * payment and shouldn't be user-reclassified — reclassifying the parent is
+ * what triggers regeneration or deletion of the split children.
  */
-const OPTIONS: Array<{ value: DepositCategory; label: string; tone: string }> = [
+const OPTIONS: Array<{ value: UserSettableCategory; label: string; tone: string }> = [
   { value: 'buyer_collection', label: 'تحصيل مشتري', tone: 'bg-teal-50 text-teal-800 ring-teal-200 focus:ring-teal-500' },
   { value: 'wrong_transfer',   label: 'حوالة خاطئة', tone: 'bg-red-50 text-red-800 ring-red-200 focus:ring-red-500' },
   { value: 'self_financing',   label: 'تمويل ذاتي',   tone: 'bg-emerald-50 text-emerald-800 ring-emerald-200 focus:ring-emerald-500' },
@@ -33,11 +38,26 @@ export function DepositCategoryPicker({
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
-  const [value, setValue] = useState<DepositCategory>(initial)
+
+  // Split rows: read-only tag, no dropdown. The DB value doesn't round-trip
+  // through the user-settable subtype, so this branch keeps the picker sound.
+  if (initial === 'auto_distribution') {
+    return (
+      <span
+        className="inline-flex items-center rounded-md text-[11px] font-bold px-1.5 py-0.5 ring-1 ring-inset bg-slate-50 text-slate-500 ring-slate-200 italic"
+        title="صف تم توليده تلقائيًا من دفعة المشتري — لا يمكن تعديل تصنيفه"
+      >
+        توزيع تلقائي
+      </span>
+    )
+  }
+
+  const initialUser = initial as UserSettableCategory
+  const [value, setValue] = useState<UserSettableCategory>(initialUser)
   const [busy, setBusy] = useState(false)
   const [savedTick, setSavedTick] = useState(0)
 
-  async function save(next: DepositCategory) {
+  async function save(next: UserSettableCategory) {
     if (!canEdit) return
     const prev = value
     setValue(next)
@@ -59,7 +79,7 @@ export function DepositCategoryPicker({
     <div className="flex items-center gap-1 min-w-[9rem]">
       <select
         value={value}
-        onChange={(e) => save(e.target.value as DepositCategory)}
+        onChange={(e) => save(e.target.value as UserSettableCategory)}
         disabled={!canEdit || busy}
         className={`rounded-md text-[11px] font-bold px-1.5 py-0.5 ring-1 ring-inset focus:outline-none focus:ring-2 disabled:cursor-not-allowed ${tone}`}
       >
@@ -75,9 +95,10 @@ export function DepositCategoryPicker({
 
 // Reusable in the page for the tab strip.
 export const DEPOSIT_CATEGORY_LABELS: Record<DepositCategory, string> = {
-  buyer_collection: 'تحصيل مشتري',
-  wrong_transfer:   'حوالة خاطئة',
-  self_financing:   'تمويل ذاتي',
-  bank_financing:   'تمويل بنكي',
-  other:            'أخرى',
+  buyer_collection:  'تحصيل مشتري',
+  wrong_transfer:    'حوالة خاطئة',
+  self_financing:    'تمويل ذاتي',
+  bank_financing:    'تمويل بنكي',
+  other:             'أخرى',
+  auto_distribution: 'توزيع تلقائي',
 }

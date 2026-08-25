@@ -23,6 +23,7 @@ type AccountRowRaw = {
   account_number: string | null
   bank_name: string | null
   iban: string | null
+  account_role: 'general' | 'construction' | 'admin_marketing' | 'escrow' | null
   created_at: string
   project: { id: string; name_ar: string; developer_id: string | null } | { id: string; name_ar: string; developer_id: string | null }[] | null
 }
@@ -53,7 +54,7 @@ export default async function AccountsListPage() {
   const [accountsRes, projectsRes, devsRes] = await Promise.all([
     svc
       .from('dsb_project_accounts')
-      .select(`id, project_id, label, account_number, bank_name, iban, created_at,
+      .select(`id, project_id, label, account_number, bank_name, iban, account_role, created_at,
                project:dsb_projects!dsb_project_accounts_project_id_fkey(id, name_ar, developer_id)`)
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false }),
@@ -86,6 +87,7 @@ export default async function AccountsListPage() {
       accountNumber: r.account_number,
       bankName: r.bank_name,
       iban: r.iban,
+      accountRole: r.account_role,
       createdAt: r.created_at,
     }
   })

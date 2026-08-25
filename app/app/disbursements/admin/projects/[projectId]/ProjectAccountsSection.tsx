@@ -9,12 +9,33 @@ import {
   bulkUploadProjectAccounts,
 } from '../../edit-actions'
 
+// Migration 063 — one of the four escrow-mandated slots this account
+// occupies (or null for ordinary accounts). Only 'general' accounts trigger
+// the buyer-deposit auto-distribution.
+export type AccountRole = 'general' | 'construction' | 'admin_marketing' | 'escrow'
+
+const ACCOUNT_ROLE_OPTIONS: Array<{ value: '' | AccountRole; label: string }> = [
+  { value: '',                'label': '— (بدون دور)' },
+  { value: 'general',         'label': 'الحساب العام' },
+  { value: 'construction',    'label': 'الانشاءات' },
+  { value: 'admin_marketing', 'label': 'الاداري والتسويقي' },
+  { value: 'escrow',          'label': 'الحفظ' },
+]
+
+const ROLE_LABEL: Record<AccountRole, string> = {
+  general:         'الحساب العام',
+  construction:    'الانشاءات',
+  admin_marketing: 'الاداري والتسويقي',
+  escrow:          'الحفظ',
+}
+
 export type ProjectAccount = {
   id: string
   label: string
   account_number: string | null
   bank_name: string | null
   iban: string | null
+  account_role: AccountRole | null
 }
 
 type ParsedRow = {
@@ -55,6 +76,7 @@ export function ProjectAccountsSection({
   const [accountNumber, setAccountNumber] = useState('')
   const [bankName, setBankName] = useState('')
   const [iban, setIban] = useState('')
+  const [accountRole, setAccountRole] = useState<'' | AccountRole>('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,6 +90,7 @@ export function ProjectAccountsSection({
     setAccountNumber('')
     setBankName('')
     setIban('')
+    setAccountRole('')
     setError(null)
   }
 
@@ -80,6 +103,7 @@ export function ProjectAccountsSection({
       account_number: accountNumber || null,
       bank_name: bankName || null,
       iban: iban || null,
+      account_role: accountRole || null,
     })
     setSaving(false)
     if (!res.ok) {
@@ -282,6 +306,22 @@ export function ProjectAccountsSection({
                 placeholder="SA__ ____ ____ ____ ____ ____"
               />
             </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1 block">دور الحساب</label>
+              <select
+                className={inputCls}
+                value={accountRole}
+                onChange={(e) => setAccountRole(e.target.value as '' | AccountRole)}
+                disabled={saving}
+              >
+                {ACCOUNT_ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                عيّن «الحساب العام» ليتم توزيع دفعات المشتري تلقائيًا على الحسابات الفرعية الثلاثة (انشاءات، اداري وتسويقي، حفظ).
+              </p>
+            </div>
           </div>
           {error && (
             <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -395,6 +435,7 @@ export function ProjectAccountsSection({
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-right">
                 <Th>اسم الحساب</Th>
+                <Th>الدور</Th>
                 <Th>رقم الحساب</Th>
                 <Th>البنك</Th>
                 <Th>IBAN</Th>
@@ -405,6 +446,15 @@ export function ProjectAccountsSection({
               {initialAccounts.map((a) => (
                 <tr key={a.id} className="hover:bg-slate-50 transition">
                   <Td><span className="font-semibold text-slate-900">{a.label}</span></Td>
+                  <Td>
+                    {a.account_role ? (
+                      <span className="inline-flex items-center rounded-md bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-200 px-1.5 py-0.5 text-[11px] font-bold">
+                        {ROLE_LABEL[a.account_role]}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </Td>
                   <Td><span className="font-mono text-xs" dir="ltr">{a.account_number ?? '—'}</span></Td>
                   <Td>{a.bank_name ?? '—'}</Td>
                   <Td><span className="font-mono text-xs" dir="ltr">{a.iban ?? '—'}</span></Td>
