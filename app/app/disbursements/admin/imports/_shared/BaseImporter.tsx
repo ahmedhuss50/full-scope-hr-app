@@ -284,8 +284,16 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
         const at = (row: unknown[], idx: number | null): unknown =>
           idx === null || idx < 0 ? '' : row[idx]
 
+        // Count parse-time drops so we can WARN the user instead of silently
+        // losing rows. Blank rows (all cells empty) don't count — those are
+        // spreadsheet trailing whitespace, not lost data.
+        let droppedInSheet = 0
         for (let i = header_row_index + 1; i < pack.aoa.length; i++) {
           const row = (pack.aoa[i] ?? []) as unknown[]
+          const isBlank = row.every(
+            (c) => c === null || c === undefined || String(c).trim() === '',
+          )
+          if (isBlank) continue
           const projectRaw = toStr(at(row, columns.project_name))
           const built = parseRow({
             rowValues: row,
@@ -294,13 +302,21 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
             rowNumber: i + 1,
             projectRaw,
           })
-          if (!built) continue
+          if (!built) {
+            droppedInSheet++
+            continue
+          }
           collected.push({
             ...built,
             matchedProjectId: null,
             selectedProjectId: '',
             unitExists: null,
           })
+        }
+        if (droppedInSheet > 0) {
+          warns.push(
+            `تم تجاهل ${droppedInSheet} صف من صفحة «${pack.name}» — عادةً بسبب فقدان تاريخ الدفعة أو المبلغ الرقمي. راجع الملف قبل الرفع.`,
+          )
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

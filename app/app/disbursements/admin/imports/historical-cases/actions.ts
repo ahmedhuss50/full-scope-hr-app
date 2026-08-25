@@ -624,8 +624,11 @@ export async function bulkImportPayments(input: {
       return
     }
     const amount = typeof r.amount_sar === 'number' ? r.amount_sar : Number(r.amount_sar)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      skipped.push({ row: rowNum, reason: 'المبلغ غير صالح (يجب > 0)' })
+    // Any finite number is allowed. Negatives are legitimate ledger entries
+    // (refunds, reversals, corrections). Only reject NaN / Infinity /
+    // non-numeric strings.
+    if (!Number.isFinite(amount)) {
+      skipped.push({ row: rowNum, reason: 'المبلغ غير رقمي' })
       return
     }
 

@@ -45,9 +45,11 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
 
     const payment_date = toIsoDateOrNull(at(columns.payment_date))
     const amount = toNumOrNull(at(columns.payment_amount))
-    // Ledger rows without a date or a positive amount are useless — drop
-    // them at parse time so the preview only lists usable rows.
-    if (!payment_date || amount === null || amount <= 0) return null
+    // Only drop rows we truly can't store: no date OR no numeric amount at
+    // all. NEGATIVE and ZERO amounts are legitimate (refunds, reversals,
+    // adjustments) and belong in the ledger — dropping them was silently
+    // losing data the user wants uploaded.
+    if (!payment_date || amount === null) return null
 
     const vat = toNumOrNull(at(columns.vat_sar))
     const beneficiary = toStr(at(columns.beneficiary_name)) || null
