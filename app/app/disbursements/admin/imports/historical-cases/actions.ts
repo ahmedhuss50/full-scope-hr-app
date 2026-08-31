@@ -482,6 +482,7 @@ export interface PaymentRow {
   account_label?: string | null
   case_number?: string | null
   unit_number?: string | null
+  contract_number?: string | null
 
   payment_date: string             // YYYY-MM-DD (required)
   amount_sar: number               // required, > 0
@@ -497,7 +498,7 @@ export interface PaymentRow {
 
 export interface PaymentUnmatched {
   row: number
-  field: 'project' | 'account' | 'case' | 'unit'
+  field: 'project' | 'account' | 'case' | 'unit' | 'contract'
   value: string
 }
 
@@ -612,6 +613,79 @@ export async function bulkImportPayments(input: {
     }
   }
 
+  // ---- Sale lookup — migration 064: payments now link to contracts
+  //      (dsb_unit_sales), not units directly. Primary match by
+  //      contract_number (case-insensitive, tenant-scoped). Fallback (below)
+  //      is the "most recent sale per unit" — same backfill rule the
+  //      migration uses. We build two lookups so the per-row logic stays
+  //      simple:
+  //        saleByContractLower : lowercased contract_number → sale row
+  //        latestSaleByUnitId  : unit_id → most-recent sale row
+  type SaleLite = {
+    id: string
+    unit_id: string | null
+    contract_number: string | null
+    created_at: string
+  }
+  const saleByContractLower = new Map<string, SaleLite>()
+  const latestSaleByUnitId = new Map<string, SaleLite>()
+  {
+    // Grab every sale that could possibly match by contract number.
+    const contractNumbers = Array.from(
+      new Set(
+        input.rows
+          .map((r) => (r.contract_number ?? '').trim().toLowerCase())
+          .filter((x) => !!x),
+      ),
+    )
+    if (contractNumbers.length > 0) {
+      const CHUNK = 300
+      for (let i = 0; i < contractNumbers.length; i += CHUNK) {
+        const slice = contractNumbers.slice(i, i + CHUNK)
+        // Case-insensitive: fetch with ilike ANY. Supabase JS's .in() is
+        // case-sensitive, so we OR-chain ilike per value. Cheap because
+        // (tenant_id, contract_number) is indexed.
+        const orClauses = slice
+          .map((v) => `contract_number.ilike.${v.replace(/[,()]/g, ' ')}`)
+          .join(',')
+        const { data } = await svc
+          .from('dsb_unit_sales')
+          .select('id, unit_id, contract_number, created_at')
+          .eq('tenant_id', caller.tenantId)
+          .or(orClauses)
+        for (const s of ((data ?? []) as SaleLite[])) {
+          if (s.contract_number) {
+            saleByContractLower.set(s.contract_number.trim().toLowerCase(), s)
+          }
+        }
+      }
+    }
+    // Fallback: latest-sale-per-unit for every unit the payment rows point
+    // to. Mirrors the migration 064 backfill (DISTINCT ON unit_id
+    // ORDER BY created_at DESC).
+    const relevantUnitIds = new Set<string>()
+    for (const u of unitByKey.values()) relevantUnitIds.add(u.id)
+    if (relevantUnitIds.size > 0) {
+      const unitIdList = Array.from(relevantUnitIds)
+      const CHUNK = 300
+      for (let i = 0; i < unitIdList.length; i += CHUNK) {
+        const slice = unitIdList.slice(i, i + CHUNK)
+        const { data } = await svc
+          .from('dsb_unit_sales')
+          .select('id, unit_id, contract_number, created_at')
+          .eq('tenant_id', caller.tenantId)
+          .in('unit_id', slice)
+          .order('created_at', { ascending: false })
+        for (const s of ((data ?? []) as SaleLite[])) {
+          if (!s.unit_id) continue
+          if (!latestSaleByUnitId.has(s.unit_id)) {
+            latestSaleByUnitId.set(s.unit_id, s)
+          }
+        }
+      }
+    }
+  }
+
   // ---- Build insert set ----
   const skipped: HistoricalCaseSkip[] = []
   const unmatched: PaymentUnmatched[] = []
@@ -683,12 +757,37 @@ export async function bulkImportPayments(input: {
       if (!unitId) unmatched.push({ row: rowNum, field: 'unit', value: unitNum })
     }
 
+    // Sale (contract) link — migration 064. Primary match on contract_number
+    // (case-insensitive, tenant-scoped). Fallback: most-recent sale on the
+    // resolved unit — same rule as the migration's backfill. When a sale is
+    // matched we also carry its unit_id into the deprecated unit_id column
+    // so older readers still see something sensible.
+    let saleId: string | null = null
+    const contractNum = (r.contract_number ?? '').trim()
+    if (contractNum) {
+      const s = saleByContractLower.get(contractNum.toLowerCase())
+      if (s) {
+        saleId = s.id
+        if (s.unit_id) unitId = s.unit_id
+      } else {
+        unmatched.push({ row: rowNum, field: 'contract', value: contractNum })
+      }
+    }
+    if (!saleId && unitId) {
+      const s = latestSaleByUnitId.get(unitId)
+      if (s) {
+        saleId = s.id
+        // Don't overwrite unitId here — it already came from the unit lookup.
+      }
+    }
+
     toInsert.push({
       tenant_id: caller.tenantId,
       project_id: projectId,
       account_id: accountId,
       case_id: caseId,
       unit_id: unitId,
+      sale_id: saleId,
       payment_date: paymentDate,
       amount_sar: amount,
       vat_sar: r.vat_sar ?? null,

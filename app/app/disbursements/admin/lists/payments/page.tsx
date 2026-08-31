@@ -5,6 +5,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DepositCategoryPicker, DEPOSIT_CATEGORY_LABELS } from './DepositCategoryPicker'
 import type { DepositCategory } from './actions'
+import { EditPaymentRow, type PaymentEditable, type ProjectOption, type AccountOption } from './EditPaymentRow'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -32,6 +33,8 @@ type PaymentRowRaw = {
   account_id: string | null
   case_id: string | null
   unit_id: string | null
+  // Migration 064: preferred link — payment → sale (contract) → unit.
+  sale_id: string | null
   payment_date: string
   amount_sar: number
   vat_sar: number | null
@@ -130,11 +133,23 @@ export default async function PaymentsListPage({
   }>)
   const accountById = new Map(accounts.map((a) => [a.id, a]))
 
+  // Dropdown options passed to the inline edit panel. Owner-scope only —
+  // the list page already redirects non-owners above.
+  const editProjectOptions: ProjectOption[] = projects.map((p) => ({
+    id: p.id,
+    label: p.name_ar,
+  }))
+  const editAccountOptions: AccountOption[] = accounts.map((a) => ({
+    id: a.id,
+    project_id: a.project_id,
+    label: a.label,
+  }))
+
   // ---- Fetch payments ----
   let paymentsQuery = svc
     .from('dsb_payments')
     .select(
-      'id, project_id, account_id, case_id, unit_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage',
+      'id, project_id, account_id, case_id, unit_id, sale_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage',
     )
     .eq('tenant_id', tenantId)
   if (projectFilter) paymentsQuery = paymentsQuery.eq('project_id', projectFilter)
@@ -179,9 +194,11 @@ export default async function PaymentsListPage({
     categoryCounts[r.deposit_category]++
   }
 
-  // ---- Case + unit lookups for the display columns ----
+  // ---- Case + sale + unit lookups for the display columns ----
+  // Migration 064: payment → sale → unit. We still fall back to the direct
+  // payment.unit_id for older rows that haven't been re-imported/edited.
   const caseIds = Array.from(new Set(allPayments.map((p) => p.case_id).filter((x): x is string => !!x)))
-  const unitIds = Array.from(new Set(allPayments.map((p) => p.unit_id).filter((x): x is string => !!x)))
+  const saleIds = Array.from(new Set(allPayments.map((p) => p.sale_id).filter((x): x is string => !!x)))
   const caseNumberById = new Map<string, string>()
   if (caseIds.length > 0) {
     const CHUNK = 300
@@ -197,9 +214,36 @@ export default async function PaymentsListPage({
       }
     }
   }
-  const unitNumberById = new Map<string, string>()
-  if (unitIds.length > 0) {
+  type SaleLite = {
+    id: string
+    contract_number: string | null
+    buyer_name_ar: string | null
+    unit_id: string | null
+  }
+  const saleById = new Map<string, SaleLite>()
+  if (saleIds.length > 0) {
     const CHUNK = 300
+    for (let i = 0; i < saleIds.length; i += CHUNK) {
+      const slice = saleIds.slice(i, i + CHUNK)
+      const { data } = await svc
+        .from('dsb_unit_sales')
+        .select('id, contract_number, buyer_name_ar, unit_id')
+        .eq('tenant_id', tenantId)
+        .in('id', slice)
+      for (const s of ((data ?? []) as SaleLite[])) {
+        saleById.set(s.id, s)
+      }
+    }
+  }
+  // Union: unit ids from the payment (older rows) + unit ids surfaced via
+  // sales (new rows). One lookup keeps the render path simple.
+  const unitIdSet = new Set<string>()
+  for (const p of allPayments) if (p.unit_id) unitIdSet.add(p.unit_id)
+  for (const s of saleById.values()) if (s.unit_id) unitIdSet.add(s.unit_id)
+  const unitById = new Map<string, { id: string; unit_number: string }>()
+  if (unitIdSet.size > 0) {
+    const CHUNK = 300
+    const unitIds = Array.from(unitIdSet)
     for (let i = 0; i < unitIds.length; i += CHUNK) {
       const slice = unitIds.slice(i, i + CHUNK)
       const { data } = await svc
@@ -208,7 +252,7 @@ export default async function PaymentsListPage({
         .eq('tenant_id', tenantId)
         .in('id', slice)
       for (const u of ((data ?? []) as Array<{ id: string; unit_number: string }>)) {
-        unitNumberById.set(u.id, u.unit_number)
+        unitById.set(u.id, u)
       }
     }
   }
@@ -369,9 +413,10 @@ export default async function PaymentsListPage({
                   <Th>المشروع</Th>
                   <Th>الحساب</Th>
                   <Th>الطلب</Th>
-                  <Th>الوحدة</Th>
+                  <Th>العقد / الوحدة</Th>
                   <Th>الطريقة</Th>
                   <Th>التصنيف</Th>
+                  <Th>الإجراءات</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -379,7 +424,14 @@ export default async function PaymentsListPage({
                   const proj = p.project_id ? projectById.get(p.project_id) : null
                   const acct = p.account_id ? accountById.get(p.account_id) : null
                   const caseNo = p.case_id ? caseNumberById.get(p.case_id) : null
-                  const unitNo = p.unit_id ? unitNumberById.get(p.unit_id) : null
+                  const sale = p.sale_id ? saleById.get(p.sale_id) : null
+                  // Prefer the unit that hangs off the sale (migration 064
+                  // chain: payment → sale → unit). Fall back to the payment's
+                  // deprecated unit_id column so older rows still show a unit
+                  // number until they're re-imported/edited.
+                  const unit = sale?.unit_id
+                    ? unitById.get(sale.unit_id)
+                    : (p.unit_id ? unitById.get(p.unit_id) : null)
                   // Split rows recede visually — muted background + italic
                   // description — so parent deposits stay the focal reading.
                   const isSplit = p.split_source_payment_id !== null
@@ -389,8 +441,30 @@ export default async function PaymentsListPage({
                   const descCls = isSplit
                     ? 'max-w-[14rem] truncate italic text-slate-500'
                     : 'max-w-[14rem] truncate'
+                  const editable: PaymentEditable = {
+                    id: p.id,
+                    payment_date: p.payment_date,
+                    amount_sar: p.amount_sar,
+                    vat_sar: p.vat_sar,
+                    beneficiary_name: p.beneficiary_name,
+                    description: p.description,
+                    reference_number: p.reference_number,
+                    payment_method: p.payment_method,
+                    project_id: p.project_id,
+                    account_id: p.account_id,
+                    contract_number: sale?.contract_number ?? null,
+                    case_number: caseNo ?? null,
+                    is_split_child: isSplit,
+                  }
                   return (
-                    <tr key={p.id} className={rowCls}>
+                    <EditPaymentRow
+                      key={p.id}
+                      payment={editable}
+                      projects={editProjectOptions}
+                      accounts={editAccountOptions}
+                      rowClassName={rowCls}
+                      totalCols={13}
+                    >
                       <Td className="font-mono text-xs" dir="ltr">
                         {p.payment_date}
                       </Td>
@@ -416,7 +490,24 @@ export default async function PaymentsListPage({
                         {acct?.label ?? '—'}
                       </Td>
                       <Td className="font-mono text-xs">{caseNo ?? '—'}</Td>
-                      <Td className="font-mono text-xs">{unitNo ?? '—'}</Td>
+                      <Td className="max-w-[12rem]">
+                        {sale?.contract_number ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-xs font-semibold text-teal-700" dir="ltr">
+                              {sale.contract_number}
+                            </span>
+                            {sale.buyer_name_ar && (
+                              <span className="text-[11px] text-slate-500 truncate">
+                                {sale.buyer_name_ar}
+                              </span>
+                            )}
+                          </div>
+                        ) : unit?.unit_number ? (
+                          <span className="font-mono text-xs text-slate-700">{unit.unit_number}</span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </Td>
                       <Td className="max-w-[8rem] truncate">
                         {p.payment_method ?? '—'}
                       </Td>
@@ -438,7 +529,7 @@ export default async function PaymentsListPage({
                           )}
                         </div>
                       </Td>
-                    </tr>
+                    </EditPaymentRow>
                   )
                 })}
               </tbody>

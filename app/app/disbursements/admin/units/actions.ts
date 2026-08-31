@@ -324,7 +324,12 @@ export async function bulkImportUnitsFromRows(
         price_before_tax_sar: r.price_before_tax_sar ?? null,
         vat_sar: r.vat_sar ?? null,
         price_with_vat_sar: r.price_with_vat_sar ?? null,
-        delivery_status: r.delivery_status ?? null,
+        // Default to 'pending' when the sheet is silent — physical hand-off
+        // is recorded by hand later via the row's delivery dropdown.
+        // (Migration 065 also sets the DB default, but only takes effect when
+        // the column is omitted from INSERT — we explicitly write it here so
+        // the intent is visible.)
+        delivery_status: r.delivery_status ?? 'pending',
         delivery_date: r.delivery_date ?? null,
         // Financial tracking (055).
         retention_percentage: r.retention_percentage ?? null,
@@ -1190,7 +1195,8 @@ export async function bulkImportContractsFromRows(
     price_before_tax_sar: row.price_before_tax_sar ?? null,
     vat_sar: row.vat_sar ?? null,
     price_with_vat_sar: row.price_with_vat_sar ?? null,
-    delivery_status: row.delivery_status ?? null,
+    // Migration 065: default to 'pending' when sheet is silent.
+    delivery_status: row.delivery_status ?? 'pending',
     delivery_date: row.delivery_date ?? null,
     retention_percentage: row.retention_percentage ?? null,
     installment_number: row.installment_number ?? null,

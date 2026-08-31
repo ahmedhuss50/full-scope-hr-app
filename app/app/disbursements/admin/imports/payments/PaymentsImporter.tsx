@@ -22,6 +22,7 @@ const PREVIEW_COLUMNS = [
   { key: 'method', label: 'الطريقة' },
   { key: 'account', label: 'الحساب' },
   { key: 'case', label: 'رقم الطلب' },
+  { key: 'contract', label: 'رقم العقد' },
 ] as const
 
 function fmtAmount(v: number | null): string {
@@ -60,6 +61,7 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
     const account_label = toStr(at(columns.account_label)) || null
     const case_number = toStr(at(columns.case_number)) || null
     const unit_number = toStr(at(columns.unit_number)) || null
+    const contract_number = toStr(at(columns.contract_number)) || null
 
     return {
       sheetName,
@@ -77,6 +79,7 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
         method: method ?? '—',
         account: account_number ?? account_label ?? '—',
         case: case_number ?? '—',
+        contract: contract_number ?? '—',
       },
       payload: {
         project_id: '', // filled by attachProjectId (or left empty for orphans)
@@ -84,6 +87,7 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
         account_label,
         case_number,
         unit_number,
+        contract_number,
         payment_date,
         amount_sar: amount,
         vat_sar: vat,

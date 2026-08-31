@@ -231,6 +231,7 @@ export const HISTORICAL_CASE_FIELDS: readonly MappingField[] = [
 export const PAYMENT_FIELDS: readonly MappingField[] = [
   'project_name',
   'unit_number',
+  'contract_number',
   'case_number',
   'account_number',
   'account_label',
