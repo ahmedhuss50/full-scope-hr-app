@@ -167,6 +167,11 @@ export default async function EscrowAccountReportPage({
   type PayRow = {
     id: string
     account_id: string | null
+    // Migration 064: sale_id is the preferred link (contract). We fetch it so
+    // we can resolve الطرف الآخر (counterparty name) via sale.buyer_name_ar
+    // when the payment's beneficiary_name is null — same fallback the payments
+    // list uses, so what shows in one place shows here too.
+    sale_id: string | null
     payment_date: string
     amount_sar: number
     beneficiary_name: string | null
@@ -178,7 +183,7 @@ export default async function EscrowAccountReportPage({
   for (let page = 0; page < CHUNK_HARD_LIMIT; page++) {
     let payQuery = svc
       .from('dsb_payments')
-      .select('id, account_id, payment_date, amount_sar, beneficiary_name, reference_number, description, deposit_category')
+      .select('id, account_id, sale_id, payment_date, amount_sar, beneficiary_name, reference_number, description, deposit_category')
       .eq('tenant_id', tenantId)
       .eq('project_id', projectId)
     if (fFrom) payQuery = payQuery.gte('payment_date', fFrom)
@@ -188,6 +193,31 @@ export default async function EscrowAccountReportPage({
     const rows = (pageData ?? []) as PayRow[]
     allPayments.push(...rows)
     if (rows.length < CHUNK) break
+  }
+
+  // Resolve buyer names from linked sales in bulk (only for payments where
+  // beneficiary_name is blank) so we can fall back gracefully.
+  const orphanSaleIds = Array.from(
+    new Set(
+      allPayments
+        .filter((p) => !p.beneficiary_name && p.sale_id)
+        .map((p) => p.sale_id!),
+    ),
+  )
+  const buyerNameBySaleId = new Map<string, string | null>()
+  if (orphanSaleIds.length > 0) {
+    const SALE_CHUNK = 300
+    for (let i = 0; i < orphanSaleIds.length; i += SALE_CHUNK) {
+      const slice = orphanSaleIds.slice(i, i + SALE_CHUNK)
+      const { data: saleRows } = await svc
+        .from('dsb_unit_sales')
+        .select('id, buyer_name_ar')
+        .eq('tenant_id', tenantId)
+        .in('id', slice)
+      for (const s of ((saleRows ?? []) as Array<{ id: string; buyer_name_ar: string | null }>)) {
+        buyerNameBySaleId.set(s.id, s.buyer_name_ar)
+      }
+    }
   }
 
   // Apply the derivation model based on the selected account's role:
@@ -258,6 +288,10 @@ export default async function EscrowAccountReportPage({
   // ---------- Merge streams into a single ledger ----------
   const ledger: LedgerRow[] = []
   for (const p of payments) {
+    // Counterparty falls back to the linked sale's buyer_name_ar — matches
+    // the payments-list display, since importers usually leave
+    // beneficiary_name blank when the contract link already carries the name.
+    const buyerFallback = p.sale_id ? (buyerNameBySaleId.get(p.sale_id) ?? null) : null
     ledger.push({
       kind: 'in',
       date: p.payment_date,
@@ -265,7 +299,7 @@ export default async function EscrowAccountReportPage({
       // for «كل الحسابات» / general, × pct for the three sub-accounts).
       amount: p.display_amount,
       reference: p.reference_number,
-      counterparty: p.beneficiary_name,
+      counterparty: p.beneficiary_name ?? buyerFallback,
       note: p.description,
       linkHref: null,
       accountLabel: p.account_id ? acctLabelById.get(p.account_id) ?? null : null,
