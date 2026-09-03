@@ -291,7 +291,16 @@ export default async function ProjectUnitsListPage({
                               {sale.contract_number && (
                                 <span>
                                   <span className="text-slate-400">عقد </span>
-                                  <span className="font-mono">{sale.contract_number}</span>
+                                  {/* Clickable → عقود المشترين filtered to
+                                      this contract number. Reverse of the
+                                      unit-number link on the contracts page. */}
+                                  <Link
+                                    href={`/app/disbursements/admin/projects/${projectId}/buyer-contracts?q=${encodeURIComponent(sale.contract_number)}`}
+                                    className="font-mono text-teal-700 hover:text-teal-900 hover:underline decoration-dotted underline-offset-2"
+                                    title={`عرض العقد ${sale.contract_number}`}
+                                  >
+                                    {sale.contract_number}
+                                  </Link>
                                 </span>
                               )}
                               {sale.sale_date && (

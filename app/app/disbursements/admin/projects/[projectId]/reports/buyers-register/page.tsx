@@ -184,11 +184,18 @@ export default async function BuyersRegisterReportPage({
   // sale link. This is what «رقم العقد» resolves to at import time — the
   // importer looks up the sale by contract_number and writes sale_id, so the
   // UUID is the mechanical form of the contract-number link.
+  //
+  // Category filter: this page is «سجل المشترين» — buyer collections only.
+  // wrong_transfer / self_financing / bank_financing / other are legitimate
+  // ledger entries but they don't count toward «إجمالي المحصَّل» on a per-
+  // contract page. This makes the number reconcile with سجل الدفعات →
+  // «تحصيل مشتري» tab filtered by the same project.
   const { data: paymentsData } = await svc
     .from('dsb_payments')
     .select('id, unit_id, case_id, sale_id, payment_date, amount_sar, vat_sar, beneficiary_name, reference_number, payment_method, description')
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
+    .eq('deposit_category', 'buyer_collection')
     .order('payment_date', { ascending: true })
   const payments = (paymentsData ?? []) as PaymentRow[]
 
@@ -466,7 +473,7 @@ export default async function BuyersRegisterReportPage({
                               plain text since there's nothing to link to. */}
                           {sale?.contract_number ? (
                             <Link
-                              href={`/app/disbursements/admin/lists/payments?project=${projectId}&contract=${encodeURIComponent(sale.contract_number)}`}
+                              href={`/app/disbursements/admin/lists/payments?project=${projectId}&contract=${encodeURIComponent(sale.contract_number)}&category=buyer_collection`}
                               className="font-mono font-semibold text-emerald-700 hover:text-emerald-900 hover:underline decoration-dotted underline-offset-2"
                               title={`عرض دفعات التحصيل للعقد ${sale.contract_number}`}
                             >

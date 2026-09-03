@@ -331,9 +331,16 @@ export default async function ProjectBuyerContractsPage({
                       <Td>
                         {unit && unit.unit_number ? (
                           <div className="leading-tight">
-                            <span className="font-mono font-semibold text-emerald-800">
+                            {/* Clickable link → units list filtered to this
+                                unit_number. One click from a contract row to
+                                its linked unit's row on the units page. */}
+                            <Link
+                              href={`/app/disbursements/admin/projects/${projectId}/units?q=${encodeURIComponent(unit.unit_number)}`}
+                              className="font-mono font-semibold text-emerald-800 hover:text-emerald-900 hover:underline decoration-dotted underline-offset-2"
+                              title={`عرض الوحدة ${unit.unit_number}`}
+                            >
                               {unit.unit_number}
-                            </span>
+                            </Link>
                             <div className="text-[11px] text-slate-600 mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5">
                               {unit.unit_type && <span>{unitTypeLabel(unit.unit_type)}</span>}
                               {unit.area_m2 != null && (
