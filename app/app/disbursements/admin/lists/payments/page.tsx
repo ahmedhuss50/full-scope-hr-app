@@ -551,7 +551,11 @@ export default async function PaymentsListPage({
                     payment_date: p.payment_date,
                     amount_sar: p.amount_sar,
                     vat_sar: p.vat_sar,
-                    beneficiary_name: p.beneficiary_name,
+                    // Mirror the display cell's fallback so the edit form
+                    // pre-populates with the linked contract's buyer name when
+                    // the DB column is empty. Saving then persists it, turning
+                    // the implicit display fallback into a real stored value.
+                    beneficiary_name: p.beneficiary_name ?? sale?.buyer_name_ar ?? null,
                     description: p.description,
                     reference_number: p.reference_number,
                     payment_method: p.payment_method,
