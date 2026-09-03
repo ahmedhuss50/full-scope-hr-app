@@ -494,6 +494,11 @@ export interface PaymentRow {
   reference_number?: string | null
   payment_method?: string | null
   notes?: string | null
+
+  // «نوع الإيداع» — mapped from the sheet by PaymentsImporter.parseRow.
+  // Only 'buyer_collection' triggers the 76/20/4 auto-split. If omitted,
+  // the DB default kicks in ('buyer_collection' from migration 062).
+  deposit_category?: 'buyer_collection' | 'wrong_transfer' | 'self_financing' | 'bank_financing' | 'other' | null
 }
 
 export interface PaymentUnmatched {
@@ -797,6 +802,9 @@ export async function bulkImportPayments(input: {
       reference_number: (r.reference_number ?? '').trim() || null,
       payment_method: (r.payment_method ?? '').trim() || null,
       notes: (r.notes ?? '').trim() || null,
+      // Category from the sheet's «نوع الإيداع». Only 'buyer_collection'
+      // will trigger the 76/20/4 auto-split in the loop below.
+      deposit_category: r.deposit_category ?? 'buyer_collection',
       imported_from: 'ledger_import',
       created_by_user_id: caller.userId,
     })

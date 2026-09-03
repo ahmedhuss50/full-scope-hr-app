@@ -23,7 +23,31 @@ const PREVIEW_COLUMNS = [
   { key: 'account', label: 'الحساب' },
   { key: 'case', label: 'رقم الطلب' },
   { key: 'contract', label: 'رقم العقد' },
+  { key: 'category', label: 'نوع الإيداع' },
 ] as const
+
+/**
+ * Map the raw «نوع الإيداع» text from the Excel sheet to our internal
+ * deposit_category code. Only «تحصيل مشتري» triggers the 76/20/4 split
+ * (see distributeBuyerDeposit). Everything else lands as-is with no split.
+ *
+ * We normalize whitespace + drop diacritics before matching so «تَحْصِيل مُشْتَرِي»
+ * or «تحصيل  مشتري» still resolves correctly.
+ */
+function mapDepositCategory(raw: string | null): 'buyer_collection' | 'wrong_transfer' | 'self_financing' | 'bank_financing' | 'other' {
+  if (!raw) return 'buyer_collection' // default matches migration 062 default
+  const n = raw
+    .normalize('NFKC')
+    .replace(/[ً-ْٰـ]/g, '') // diacritics + tatweel
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (n.includes('تحصيل مشتري') || n.includes('تحصيل المشتري')) return 'buyer_collection'
+  if (n.includes('حوالة خاطئة') || n.includes('حواله خاطئه') || n.includes('خاطئة') || n.includes('خاطئه')) return 'wrong_transfer'
+  if (n.includes('تمويل ذاتي')) return 'self_financing'
+  if (n.includes('تمويل بنكي')) return 'bank_financing'
+  if (n === 'أخرى' || n === 'اخرى' || n.includes('أخرى') || n.includes('اخرى')) return 'other'
+  return 'buyer_collection' // unknown value → treat as buyer collection (safe default)
+}
 
 function fmtAmount(v: number | null): string {
   if (v === null) return '—'
@@ -62,6 +86,8 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
     const case_number = toStr(at(columns.case_number)) || null
     const unit_number = toStr(at(columns.unit_number)) || null
     const contract_number = toStr(at(columns.contract_number)) || null
+    const category_raw = toStr(at(columns.deposit_category_raw)) || null
+    const deposit_category = mapDepositCategory(category_raw)
 
     return {
       sheetName,
@@ -80,6 +106,12 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
         account: account_number ?? account_label ?? '—',
         case: case_number ?? '—',
         contract: contract_number ?? '—',
+        // Show the resolved code + a hint when we defaulted or the raw
+        // value was unrecognized. Helps the operator spot misspelled
+        // categories BEFORE hitting submit.
+        category: category_raw
+          ? `${category_raw} → ${deposit_category}`
+          : deposit_category,
       },
       payload: {
         project_id: '', // filled by attachProjectId (or left empty for orphans)
@@ -95,6 +127,7 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
         description,
         reference_number: reference,
         payment_method: method,
+        deposit_category,
       },
     }
   }

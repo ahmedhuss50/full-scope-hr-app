@@ -69,6 +69,11 @@ export const MAPPING_FIELDS = [
   'invoice_payment_type',    // سداد الفاتورة كامل / جزئي
   'recipient_name',          // اسم المستلم
   'recipient_phone',         // رقم جوال المستلم
+  // Payments-ledger: raw Arabic text of «نوع الإيداع» — mapped to
+  // deposit_category codes (buyer_collection / wrong_transfer / …) by
+  // PaymentsImporter.parseRow. Only «تحصيل مشتري» triggers the 76/20/4
+  // auto-split; everything else lands untouched.
+  'deposit_category_raw',
 ] as const
 
 export type MappingField = (typeof MAPPING_FIELDS)[number]
@@ -134,6 +139,7 @@ export const FIELD_LABELS_AR: Record<MappingField, string> = {
   invoice_payment_type: 'سداد الفاتورة (كامل/جزئي)',
   recipient_name: 'اسم المستلم',
   recipient_phone: 'جوال المستلم',
+  deposit_category_raw: 'نوع الإيداع',
 }
 
 // Subsets used by the three focused importers. Kept as a `readonly` array so
@@ -242,6 +248,9 @@ export const PAYMENT_FIELDS: readonly MappingField[] = [
   'payment_description',
   'payment_reference',
   'payment_method',
+  // «نوع الإيداع» — تحصيل مشتري / حوالة خاطئة / تمويل ذاتي / تمويل بنكي / أخرى.
+  // Only rows tagged «تحصيل مشتري» trigger the 76/20/4 escrow auto-split.
+  'deposit_category_raw',
 ]
 
 // -----------------------------------------------------------------------------
