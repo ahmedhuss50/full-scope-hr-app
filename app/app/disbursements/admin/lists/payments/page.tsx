@@ -892,7 +892,7 @@ function PaymentsFilterBar({
           type="submit"
           className="inline-flex items-center px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
         >
-          تطبيق التصفية
+          تطبيق
         </button>
         {anyActive && (
           // Reset — links to basePath with only the preserved toolbar state
