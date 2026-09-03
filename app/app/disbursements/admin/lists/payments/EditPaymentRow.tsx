@@ -38,6 +38,9 @@ export interface PaymentEditable {
   // case_id on save. Keeps the edit UI simple (no free-text vs id juggling).
   contract_number: string | null
   case_number: string | null
+  // Buyer identity — read-only display only, sourced from the linked sale.
+  buyer_id_number: string | null
+  buyer_phone: string | null
   is_split_child: boolean
 }
 
@@ -243,14 +246,30 @@ export function EditPaymentRow({
                     disabled={saving}
                   />
                 </div>
+                {/* رقم الهوية — read-only, sourced from the linked sale.
+                    Edited on the عقود المشترين page, not here. */}
                 <div>
-                  <label className="text-xs font-semibold text-slate-500 mb-1 block">طريقة الدفع</label>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم الهوية</label>
                   <input
                     type="text"
-                    className={inputCls}
-                    value={method}
-                    onChange={(e) => setMethod(e.target.value)}
-                    disabled={saving}
+                    className={`${inputCls} bg-slate-50 text-slate-600`}
+                    value={payment.buyer_id_number ?? ''}
+                    readOnly
+                    dir="ltr"
+                    placeholder="—"
+                    title="مصدره من عقد المشتري المرتبط — يُعدَّل من صفحة عقود المشترين"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم الجوال</label>
+                  <input
+                    type="text"
+                    className={`${inputCls} bg-slate-50 text-slate-600`}
+                    value={payment.buyer_phone ?? ''}
+                    readOnly
+                    dir="ltr"
+                    placeholder="—"
+                    title="مصدره من عقد المشتري المرتبط — يُعدَّل من صفحة عقود المشترين"
                   />
                 </div>
                 <div className="sm:col-span-2 lg:col-span-3">
@@ -300,18 +319,6 @@ export function EditPaymentRow({
                     className={inputCls}
                     value={contractNumber}
                     onChange={(e) => setContractNumber(e.target.value)}
-                    disabled={saving}
-                    dir="ltr"
-                    placeholder="—"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم الطلب</label>
-                  <input
-                    type="text"
-                    className={inputCls}
-                    value={caseNumber}
-                    onChange={(e) => setCaseNumber(e.target.value)}
                     disabled={saving}
                     dir="ltr"
                     placeholder="—"

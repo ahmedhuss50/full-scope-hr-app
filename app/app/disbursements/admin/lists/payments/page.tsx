@@ -301,6 +301,8 @@ export default async function PaymentsListPage({
     id: string
     contract_number: string | null
     buyer_name_ar: string | null
+    buyer_id_number: string | null
+    buyer_phone: string | null
     unit_id: string | null
   }
   const saleById = new Map<string, SaleLite>()
@@ -310,7 +312,7 @@ export default async function PaymentsListPage({
       const slice = saleIds.slice(i, i + CHUNK)
       const { data } = await svc
         .from('dsb_unit_sales')
-        .select('id, contract_number, buyer_name_ar, unit_id')
+        .select('id, contract_number, buyer_name_ar, buyer_id_number, buyer_phone, unit_id')
         .eq('tenant_id', tenantId)
         .in('id', slice)
       for (const s of ((data ?? []) as SaleLite[])) {
@@ -521,7 +523,7 @@ export default async function PaymentsListPage({
                   <Th>العقد</Th>
                   <Th>الوحدة</Th>
                   <Th>التصنيف</Th>
-                  <Th>الإجراءات</Th>
+                  <Th>تعديل</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -563,6 +565,11 @@ export default async function PaymentsListPage({
                     account_id: p.account_id,
                     contract_number: sale?.contract_number ?? null,
                     case_number: caseNo ?? null,
+                    // Buyer identity fields pulled from the linked sale — read-only
+                    // in the edit form. Editing them would mean editing the sale
+                    // record, which is done on the عقود المشترين page.
+                    buyer_id_number: sale?.buyer_id_number ?? null,
+                    buyer_phone: sale?.buyer_phone ?? null,
                     is_split_child: isSplit,
                   }
                   return (
