@@ -570,6 +570,9 @@ export default async function PaymentsListPage({
                     // record, which is done on the عقود المشترين page.
                     buyer_id_number: sale?.buyer_id_number ?? null,
                     buyer_phone: sale?.buyer_phone ?? null,
+                    // Unit number pulled from whichever unit row we resolved
+                    // (sale.unit_id first, payment.unit_id fallback).
+                    unit_number: unit?.unit_number ?? null,
                     is_split_child: isSplit,
                   }
                   return (

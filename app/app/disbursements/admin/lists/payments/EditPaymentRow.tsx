@@ -41,6 +41,9 @@ export interface PaymentEditable {
   // Buyer identity — read-only display only, sourced from the linked sale.
   buyer_id_number: string | null
   buyer_phone: string | null
+  // Unit number — read-only, sourced from the linked sale's unit (or the
+  // payment's own unit_id for older rows).
+  unit_number: string | null
   is_split_child: boolean
 }
 
@@ -322,6 +325,20 @@ export function EditPaymentRow({
                     disabled={saving}
                     dir="ltr"
                     placeholder="—"
+                  />
+                </div>
+                {/* رقم الوحدة — read-only, resolved via the linked sale's unit.
+                    Changing the contract number cascades to a different unit. */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم الوحدة</label>
+                  <input
+                    type="text"
+                    className={`${inputCls} bg-slate-50 text-slate-600`}
+                    value={payment.unit_number ?? ''}
+                    readOnly
+                    dir="ltr"
+                    placeholder="—"
+                    title="مصدره من العقد المرتبط — يتغيّر بتغيير رقم العقد"
                   />
                 </div>
               </div>
