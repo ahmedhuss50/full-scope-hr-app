@@ -436,7 +436,7 @@ export default async function PaymentsListPage({
              escrow         = 4% share
           Values respect any project / account / search filter above. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiCard label="الحساب العام (صافي)"    value={fmtNum(roleTotals.general)}         mono tone="teal"    />
+        <KpiCard label="إجمالي المبالغ"           value={fmtNum(roleTotals.general)}         mono tone="teal"    />
         <KpiCard label="حساب الانشاءات · 76%"    value={fmtNum(roleTotals.construction)}    mono tone="indigo"  />
         <KpiCard label="الاداري والتسويقي · 20%" value={fmtNum(roleTotals.admin_marketing)} mono tone="amber"   />
         <KpiCard label="حساب الحفظ · 4%"         value={fmtNum(roleTotals.escrow)}          mono tone="emerald" />
