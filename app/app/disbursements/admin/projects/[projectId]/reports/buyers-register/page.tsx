@@ -190,14 +190,27 @@ export default async function BuyersRegisterReportPage({
   // ledger entries but they don't count toward «إجمالي المحصَّل» on a per-
   // contract page. This makes the number reconcile with سجل الدفعات →
   // «تحصيل مشتري» tab filtered by the same project.
-  const { data: paymentsData } = await svc
-    .from('dsb_payments')
-    .select('id, unit_id, case_id, sale_id, payment_date, amount_sar, vat_sar, beneficiary_name, reference_number, payment_method, description')
-    .eq('tenant_id', tenantId)
-    .eq('project_id', projectId)
-    .eq('deposit_category', 'buyer_collection')
-    .order('payment_date', { ascending: true })
-  const payments = (paymentsData ?? []) as PaymentRow[]
+  // Chunk-loop the fetch — Supabase-hosted PostgREST enforces max_rows=1000
+  // regardless of .limit() or .range() on a single request. A large tenant
+  // easily has >1k buyer_collection payments per project, so a single call
+  // would silently truncate and skew every downstream total. We loop in
+  // 1000-row pages until the endpoint returns fewer rows than requested.
+  const CHUNK = 1000
+  const CHUNK_HARD_LIMIT = 100 // safety valve → max 100k rows per project
+  const payments: PaymentRow[] = []
+  for (let page = 0; page < CHUNK_HARD_LIMIT; page++) {
+    const { data: pageData } = await svc
+      .from('dsb_payments')
+      .select('id, unit_id, case_id, sale_id, payment_date, amount_sar, vat_sar, beneficiary_name, reference_number, payment_method, description')
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId)
+      .eq('deposit_category', 'buyer_collection')
+      .order('payment_date', { ascending: true })
+      .range(page * CHUNK, page * CHUNK + CHUNK - 1)
+    const rows = (pageData ?? []) as PaymentRow[]
+    payments.push(...rows)
+    if (rows.length < CHUNK) break
+  }
 
   // For LEGACY payments (no sale_id) with only case_id, resolve unit via case.
   const orphanCaseIds = Array.from(
