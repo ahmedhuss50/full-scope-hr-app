@@ -253,24 +253,27 @@ export default async function PaymentsListPage({
         : null,
     )
   }
+  // Sums driving the 4 KPI cards. Category-driven (not account-role-driven)
+  // so the shares still appear even when the caller hasn't tagged accounts
+  // with a role yet — the user's mental model is «show me the 76/20/4 of
+  // buyer collections», full stop.
+  let buyerCollectionSum = 0
+  let allDepositsSum = 0
   for (const r of (countsData as Array<{ deposit_category: DepositCategory; account_id: string | null; amount_sar: number | null }>)) {
     categoryCounts.all++
     categoryCounts[r.deposit_category]++
-    const role = r.account_id ? roleByAccountId.get(r.account_id) : null
     const amt = typeof r.amount_sar === 'number' ? r.amount_sar : 0
-    // General account: sum every parent deposit landing there, all categories.
-    if (role === 'general') {
-      roleTotals.general += amt
-      if (r.deposit_category === 'buyer_collection') {
-        buyerCollectionOnGeneral += amt
-      }
+    allDepositsSum += amt
+    if (r.deposit_category === 'buyer_collection') {
+      buyerCollectionSum += amt
     }
   }
-  // Derive the 3 sub-account allocations from the buyer_collection subtotal.
-  // Not persisted anywhere — a pure display computation.
-  roleTotals.construction    = buyerCollectionOnGeneral * 0.76
-  roleTotals.admin_marketing = buyerCollectionOnGeneral * 0.20
-  roleTotals.escrow          = buyerCollectionOnGeneral * 0.04
+  void roleByAccountId // kept in case future work needs per-role bucketing
+  void buyerCollectionOnGeneral
+  roleTotals.general         = allDepositsSum       // net of everything on the ledger
+  roleTotals.construction    = buyerCollectionSum * 0.76
+  roleTotals.admin_marketing = buyerCollectionSum * 0.20
+  roleTotals.escrow          = buyerCollectionSum * 0.04
 
   // ---- Case + sale + unit lookups for the display columns ----
   // Migration 064: payment → sale → unit. We still fall back to the direct
