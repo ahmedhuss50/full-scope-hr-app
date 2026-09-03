@@ -146,12 +146,19 @@ export default async function PaymentsListPage({
   }))
 
   // ---- Fetch payments ----
+  // NOTE: PostgREST caps unbounded SELECTs at 1,000 rows by default. When the
+  // ledger holds thousands of rows (e.g. after a big backfill of auto-
+  // distribution splits) we were silently truncating and the tab counts / KPIs
+  // reflected only the sampled slice. Explicit .range() lifts the cap so
+  // counts + KPIs stay honest. The paginator slices the fetched set in JS.
+  const FETCH_CAP = 50_000
   let paymentsQuery = svc
     .from('dsb_payments')
     .select(
       'id, project_id, account_id, case_id, unit_id, sale_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage',
     )
     .eq('tenant_id', tenantId)
+    .range(0, FETCH_CAP - 1)
   if (projectFilter) paymentsQuery = paymentsQuery.eq('project_id', projectFilter)
   if (accountFilter) paymentsQuery = paymentsQuery.eq('account_id', accountFilter)
   if (activeCategory !== 'all') paymentsQuery = paymentsQuery.eq('deposit_category', activeCategory)
@@ -165,12 +172,14 @@ export default async function PaymentsListPage({
   const { data: paymentsData } = await paymentsQuery
   const allPayments = (paymentsData ?? []) as PaymentRowRaw[]
 
-  // ---- Tab counts (respect project/account/search filters, NOT the tab itself)
-  // A separate lightweight query so switching tabs doesn't lose the counts.
+  // ---- Tab counts + per-role totals (respect project/account/search filters,
+  // NOT the tab itself) — lightweight query so switching tabs doesn't lose
+  // the numbers. Same 1,000-row cap issue: lifted with .range().
   let countsQuery = svc
     .from('dsb_payments')
-    .select('deposit_category')
+    .select('deposit_category, account_id, amount_sar')
     .eq('tenant_id', tenantId)
+    .range(0, FETCH_CAP - 1)
   if (projectFilter) countsQuery = countsQuery.eq('project_id', projectFilter)
   if (accountFilter) countsQuery = countsQuery.eq('account_id', accountFilter)
   if (q) {
@@ -189,9 +198,40 @@ export default async function PaymentsListPage({
     other: 0,
     auto_distribution: 0,
   }
-  for (const r of ((countsData ?? []) as Array<{ deposit_category: DepositCategory }>)) {
+  // Per-role totals across the FILTERED set, ignoring the active tab. Signed
+  // sums — general shows the net (deposits – distribution offset = 0 when
+  // fully split); sub-accounts show their credited share.
+  type RoleKey = 'general' | 'construction' | 'admin_marketing' | 'escrow'
+  const roleTotals: Record<RoleKey, number> = {
+    general: 0,
+    construction: 0,
+    admin_marketing: 0,
+    escrow: 0,
+  }
+  const roleByAccountId = new Map<string, RoleKey | null>()
+  // Bulk-load account_role for every account in the current tenant so we can
+  // bucket the payments without a per-row query.
+  const { data: allAccountRoles } = await svc
+    .from('dsb_project_accounts')
+    .select('id, account_role')
+    .eq('tenant_id', tenantId)
+    .range(0, FETCH_CAP - 1)
+  for (const a of ((allAccountRoles ?? []) as Array<{ id: string; account_role: string | null }>)) {
+    const r = a.account_role
+    roleByAccountId.set(
+      a.id,
+      r === 'general' || r === 'construction' || r === 'admin_marketing' || r === 'escrow'
+        ? (r as RoleKey)
+        : null,
+    )
+  }
+  for (const r of ((countsData ?? []) as Array<{ deposit_category: DepositCategory; account_id: string | null; amount_sar: number | null }>)) {
     categoryCounts.all++
     categoryCounts[r.deposit_category]++
+    const role = r.account_id ? roleByAccountId.get(r.account_id) : null
+    if (role && typeof r.amount_sar === 'number') {
+      roleTotals[role] += r.amount_sar
+    }
   }
 
   // ---- Case + sale + unit lookups for the display columns ----
@@ -343,6 +383,23 @@ export default async function PaymentsListPage({
           </span>
         </div>
       </header>
+
+      {/* Per-role distribution summary — signed net totals per escrow
+          sub-account, always computed on the FULL filtered set (ignores the
+          active tab). Buyer collections land on «الحساب العام» and are
+          auto-split 76/20/4 into the three sub-accounts, so:
+             general        = gross deposits + distribution offset (≈ 0 once
+                              every parent has been split)
+             construction   = 76% share of buyer collections
+             admin/mkt      = 20% share
+             escrow         = 4% share
+          Values respect any project / account / search filter above. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <KpiCard label="الحساب العام (صافي)"    value={fmtNum(roleTotals.general)}         mono tone="teal"    />
+        <KpiCard label="حساب الانشاءات · 76%"    value={fmtNum(roleTotals.construction)}    mono tone="indigo"  />
+        <KpiCard label="الاداري والتسويقي · 20%" value={fmtNum(roleTotals.admin_marketing)} mono tone="amber"   />
+        <KpiCard label="حساب الحفظ · 4%"         value={fmtNum(roleTotals.escrow)}          mono tone="emerald" />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <KpiCard label="عدد الدفعات" value={totalCount.toLocaleString('en-US')} />
@@ -549,9 +606,27 @@ export default async function PaymentsListPage({
   )
 }
 
-function KpiCard({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function KpiCard({
+  label,
+  value,
+  mono,
+  tone,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  tone?: 'teal' | 'indigo' | 'amber' | 'emerald'
+}) {
+  // Subtle tinted top-border to help the four role-cards read as a set at a
+  // glance. Undefined tone → plain slate (matches existing cards).
+  const borderCls =
+    tone === 'teal'    ? 'border-t-4 border-t-teal-500'    :
+    tone === 'indigo'  ? 'border-t-4 border-t-indigo-500'  :
+    tone === 'amber'   ? 'border-t-4 border-t-amber-500'   :
+    tone === 'emerald' ? 'border-t-4 border-t-emerald-500' :
+    ''
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+    <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm ${borderCls}`}>
       <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
         {label}
       </div>
