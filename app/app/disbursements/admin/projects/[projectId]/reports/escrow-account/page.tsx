@@ -73,7 +73,26 @@ type LedgerRow = {
   accountLabel: string | null
 }
 
-type AccountLite = { id: string; label: string; bank_name: string | null; account_number: string | null }
+type AccountLite = {
+  id: string
+  label: string
+  bank_name: string | null
+  account_number: string | null
+  // Migration 063: role tag drives the buyer-deposit 76/20/4 derivation.
+  //   'general'         → holds non-buyer categories (wrong_transfer, self_financing, …)
+  //   'construction'    → derived 76% share of buyer_collection
+  //   'admin_marketing' → derived 20% share
+  //   'escrow'          → derived  4% share
+  account_role: 'general' | 'construction' | 'admin_marketing' | 'escrow' | null
+}
+
+// Share each derived sub-account gets of the buyer_collection total. Mirrors
+// the KPI strip on سجل الدفعات (see admin/lists/payments/page.tsx).
+const ROLE_SHARE: Record<'construction' | 'admin_marketing' | 'escrow', number> = {
+  construction:    0.76,
+  admin_marketing: 0.20,
+  escrow:          0.04,
+}
 
 // ---------------------------------------------------------------------------
 // Page
@@ -119,7 +138,7 @@ export default async function EscrowAccountReportPage({
   // ---------- Account picker options ----------
   const { data: acctData } = await svc
     .from('dsb_project_accounts')
-    .select('id, label, bank_name, account_number')
+    .select('id, label, bank_name, account_number, account_role')
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
     .order('label', { ascending: true })
@@ -134,16 +153,18 @@ export default async function EscrowAccountReportPage({
     : null
 
   // ---------- IN: payments ----------
-  let payQuery = svc
-    .from('dsb_payments')
-    .select('id, account_id, payment_date, amount_sar, beneficiary_name, reference_number, description')
-    .eq('tenant_id', tenantId)
-    .eq('project_id', projectId)
-  if (selectedAccountId) payQuery = payQuery.eq('account_id', selectedAccountId)
-  if (fFrom) payQuery = payQuery.gte('payment_date', fFrom)
-  if (fTo) payQuery = payQuery.lte('payment_date', fTo)
-  const { data: paymentsData } = await payQuery
-  const payments = (paymentsData ?? []) as Array<{
+  // Chunk-loop the fetch — Supabase-hosted PostgREST enforces max_rows=1000
+  // per request, and a project easily has >1k payments (the escrow report
+  // used to silently truncate to 1000 → totals off by ~950 rows).
+  //
+  // We DON'T filter by account_id at fetch time anymore. The 76/20/4
+  // derivation (below) needs the full buyer_collection set for the whole
+  // project regardless of which account the user picked — because buyer
+  // deposits physically all land on الحساب العام, and the sub-account
+  // views are computed shares of that pool.
+  const CHUNK = 1000
+  const CHUNK_HARD_LIMIT = 100
+  type PayRow = {
     id: string
     account_id: string | null
     payment_date: string
@@ -151,7 +172,52 @@ export default async function EscrowAccountReportPage({
     beneficiary_name: string | null
     reference_number: string | null
     description: string | null
-  }>
+    deposit_category: string | null
+  }
+  const allPayments: PayRow[] = []
+  for (let page = 0; page < CHUNK_HARD_LIMIT; page++) {
+    let payQuery = svc
+      .from('dsb_payments')
+      .select('id, account_id, payment_date, amount_sar, beneficiary_name, reference_number, description, deposit_category')
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId)
+    if (fFrom) payQuery = payQuery.gte('payment_date', fFrom)
+    if (fTo) payQuery = payQuery.lte('payment_date', fTo)
+    payQuery = payQuery.range(page * CHUNK, page * CHUNK + CHUNK - 1)
+    const { data: pageData } = await payQuery
+    const rows = (pageData ?? []) as PayRow[]
+    allPayments.push(...rows)
+    if (rows.length < CHUNK) break
+  }
+
+  // Apply the derivation model based on the selected account's role:
+  //   - null (all accounts): every payment shows raw, sums to the project total
+  //   - construction / admin_marketing / escrow: only buyer_collection rows,
+  //     each with amount × its role's percentage share
+  //   - general: only non-buyer categories (buyer deposits are treated as
+  //     "already flowed out" to the three sub-accounts via the derivation)
+  //   - any account that isn't role-tagged: same behavior as before (filter
+  //     literally by account_id) — a safety valve for tenants that haven't
+  //     tagged their accounts yet.
+  const selectedRole = selectedAccount?.account_role ?? null
+  let payments: Array<PayRow & { display_amount: number }>
+  if (!selectedAccountId) {
+    payments = allPayments.map((p) => ({ ...p, display_amount: Number(p.amount_sar || 0) }))
+  } else if (selectedRole === 'construction' || selectedRole === 'admin_marketing' || selectedRole === 'escrow') {
+    const pct = ROLE_SHARE[selectedRole]
+    payments = allPayments
+      .filter((p) => p.deposit_category === 'buyer_collection')
+      .map((p) => ({ ...p, display_amount: Number(p.amount_sar || 0) * pct }))
+  } else if (selectedRole === 'general') {
+    payments = allPayments
+      .filter((p) => p.deposit_category !== 'buyer_collection')
+      .map((p) => ({ ...p, display_amount: Number(p.amount_sar || 0) }))
+  } else {
+    // Untagged account: fall back to the literal account_id match.
+    payments = allPayments
+      .filter((p) => p.account_id === selectedAccountId)
+      .map((p) => ({ ...p, display_amount: Number(p.amount_sar || 0) }))
+  }
 
   // ---------- OUT: cases (signed/delivered OR historical) ----------
   // The "spent" moment is:
@@ -195,7 +261,9 @@ export default async function EscrowAccountReportPage({
     ledger.push({
       kind: 'in',
       date: p.payment_date,
-      amount: Number(p.amount_sar || 0),
+      // display_amount already has the role's derivation applied (raw amount
+      // for «كل الحسابات» / general, × pct for the three sub-accounts).
+      amount: p.display_amount,
       reference: p.reference_number,
       counterparty: p.beneficiary_name,
       note: p.description,
