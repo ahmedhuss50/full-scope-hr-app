@@ -224,7 +224,7 @@ export function EditPaymentRow({
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-500 mb-1 block">اسم المستفيد</label>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">اسم المشتري</label>
                   <input
                     type="text"
                     className={inputCls}

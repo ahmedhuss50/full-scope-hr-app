@@ -368,7 +368,7 @@ export default async function PaymentsListPage({
         q={q}
         projectFilter={projectFilter}
         projects={projects}
-        searchPlaceholder="بحث بالمرجع أو المستفيد أو البيان…"
+        searchPlaceholder="بحث بالمرجع أو المشتري أو البيان…"
         extraSelects={[
           {
             name: 'account',
@@ -407,7 +407,7 @@ export default async function PaymentsListPage({
                     otherParams={otherParamsForSort}
                   />
                   <Th>الضريبة</Th>
-                  <Th>المستفيد</Th>
+                  <Th>المشتري</Th>
                   <Th>البيان</Th>
                   <Th>المرجع</Th>
                   <Th>المشروع</Th>

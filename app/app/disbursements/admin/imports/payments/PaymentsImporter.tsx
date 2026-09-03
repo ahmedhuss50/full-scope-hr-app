@@ -17,7 +17,7 @@ const PREVIEW_COLUMNS = [
   { key: 'date', label: 'تاريخ الدفع' },
   { key: 'amount', label: 'المبلغ' },
   { key: 'vat', label: 'الضريبة' },
-  { key: 'beneficiary', label: 'المستفيد' },
+  { key: 'beneficiary', label: 'المشتري' },
   { key: 'reference', label: 'المرجع' },
   { key: 'method', label: 'الطريقة' },
   { key: 'account', label: 'الحساب' },
@@ -102,7 +102,7 @@ export function PaymentsImporter({ projects }: { projects: ProjectLite[] }) {
   return (
     <BaseImporter<Payload>
       title="ملف Excel: سجل الدفعات المالية"
-      subtitle="ارفع ملف يحتوي على سجل المعاملات (تاريخ الدفع، المبلغ، الضريبة، اسم المستفيد، رقم المرجع، طريقة الدفع، رقم الحساب، رقم الطلب، رقم الوحدة، اسم المشروع). الروابط للمشروع/الحساب/الطلب/الوحدة اختيارية — الصفوف غير المرتبطة تُدرَج كذلك."
+      subtitle="ارفع ملف يحتوي على سجل المعاملات (تاريخ الدفع، المبلغ، الضريبة، اسم المشتري، رقم المرجع، طريقة الدفع، رقم الحساب، رقم الطلب، رقم الوحدة، اسم المشروع). الروابط للمشروع/الحساب/الطلب/الوحدة اختيارية — الصفوف غير المرتبطة تُدرَج كذلك."
       projects={projects}
       relevantFields={PAYMENT_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
