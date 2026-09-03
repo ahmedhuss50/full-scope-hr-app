@@ -77,6 +77,12 @@ export default async function PaymentsListPage({
     category?: string
     sort?: string
     dir?: string
+    date_from?: string
+    date_to?: string
+    buyer?: string
+    id_num?: string
+    unit?: string
+    contract?: string
   }
 }) {
   const supabase = createSupabaseServer()
@@ -101,6 +107,19 @@ export default async function PaymentsListPage({
   const projectFilter = (searchParams?.project ?? '').trim()
   const accountFilter = (searchParams?.account ?? '').trim()
   const activeCategory: CategoryTab = parseCategoryTab(searchParams?.category)
+  // Column-level filters (added to complement the free-text search box).
+  //   date_from / date_to → payment_date range (inclusive)
+  //   buyer              → ilike on beneficiary_name
+  //   id_num             → ilike on dsb_unit_sales.buyer_id_number (via sale_id)
+  //   unit               → ilike on dsb_project_units.unit_number (via sale.unit_id
+  //                                                                  OR payment.unit_id fallback)
+  //   contract           → ilike on dsb_unit_sales.contract_number (via sale_id)
+  const dateFromFilter = (searchParams?.date_from ?? '').trim()
+  const dateToFilter   = (searchParams?.date_to ?? '').trim()
+  const buyerFilter    = (searchParams?.buyer ?? '').trim()
+  const idNumFilter    = (searchParams?.id_num ?? '').trim()
+  const unitFilter     = (searchParams?.unit ?? '').trim()
+  const contractFilter = (searchParams?.contract ?? '').trim()
   const rawSort = (searchParams?.sort ?? 'payment_date') as SortKey
   const sort: SortKey = SORT_KEYS.includes(rawSort) ? rawSort : 'payment_date'
   // Default direction matches the user-preferred read: newest first.
@@ -167,12 +186,101 @@ export default async function PaymentsListPage({
     return out
   }
 
+  // ---- Pre-resolve column filters that live on related tables ----
+  // contract_number and buyer_id_number live on dsb_unit_sales; unit_number
+  // lives on dsb_project_units. Rather than trying to embed a filtered join
+  // through PostgREST (fragile with our chunk-loop), we resolve each filter
+  // to a set of sale_ids (and unit_ids) up front, then intersect and feed
+  // the final set into the payments query via .in('sale_id', ...).
+  //
+  // Sanity cap: each intermediate lookup is limited to 5,000 rows. If a user
+  // types a two-letter fragment that matches thousands, they should refine
+  // it — pushing 5k UUIDs into an IN clause is the practical ceiling.
+  const FILTER_MATCH_CAP = 5000
+  let restrictSaleIds: Set<string> | null = null
+  let restrictUnitIds: Set<string> | null = null
+
+  async function narrowSaleIdsByField(col: 'contract_number' | 'buyer_id_number', needle: string) {
+    const { data } = await svc
+      .from('dsb_unit_sales')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .ilike(col, `%${needle}%`)
+      .limit(FILTER_MATCH_CAP)
+    const ids = new Set(((data ?? []) as Array<{ id: string }>).map((r) => r.id))
+    restrictSaleIds = restrictSaleIds
+      ? new Set([...restrictSaleIds].filter((id) => ids.has(id)))
+      : ids
+  }
+  if (contractFilter) await narrowSaleIdsByField('contract_number', contractFilter)
+  if (idNumFilter)    await narrowSaleIdsByField('buyer_id_number', idNumFilter)
+  if (unitFilter) {
+    // Step 1: units matching the number fragment.
+    const { data: unitRows } = await svc
+      .from('dsb_project_units')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .ilike('unit_number', `%${unitFilter}%`)
+      .limit(FILTER_MATCH_CAP)
+    restrictUnitIds = new Set(((unitRows ?? []) as Array<{ id: string }>).map((r) => r.id))
+    // Step 2: sales linked to those units. Intersect with any prior restriction.
+    if (restrictUnitIds.size > 0) {
+      const uidArr = Array.from(restrictUnitIds)
+      const { data: salesForUnits } = await svc
+        .from('dsb_unit_sales')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .in('unit_id', uidArr)
+        .limit(FILTER_MATCH_CAP)
+      const sids = new Set(((salesForUnits ?? []) as Array<{ id: string }>).map((r) => r.id))
+      restrictSaleIds = restrictSaleIds
+        ? new Set([...restrictSaleIds].filter((id) => sids.has(id)))
+        : sids
+    } else {
+      // No matching units → no matching sales for the unit-filter branch.
+      // (The payment.unit_id fallback below also gets nothing.)
+      restrictSaleIds = restrictSaleIds ?? new Set()
+    }
+  }
+
+  // Helper: apply the resolved sale/unit sets to a payments query.
+  // Truth table:
+  //   - contract or id_num set (with or without unit): payments filtered by sale_id ∈ restrictSaleIds
+  //   - only unit set: payments filtered by (sale_id ∈ restrictSaleIds) OR (unit_id ∈ restrictUnitIds)
+  //     — the OR picks up legacy rows that store unit_id directly.
+  //   - no relational filters: no-op.
+  const onlyUnitRel = unitFilter && !contractFilter && !idNumFilter
+  function applyRelationalFilters<T extends { in: any; or: any; eq: any }>(base: T): T {
+    if (restrictSaleIds === null) return base
+    const sArr = Array.from(restrictSaleIds)
+    const uArr = restrictUnitIds ? Array.from(restrictUnitIds) : []
+    if (onlyUnitRel) {
+      // combined OR: sale_id match ∪ direct unit_id match (legacy rows)
+      const parts: string[] = []
+      if (sArr.length > 0) parts.push(`sale_id.in.(${sArr.join(',')})`)
+      if (uArr.length > 0) parts.push(`unit_id.in.(${uArr.join(',')})`)
+      if (parts.length === 0) {
+        // No matches on either path → force empty result set.
+        return base.eq('id', '00000000-0000-0000-0000-000000000000') as T
+      }
+      return base.or(parts.join(',')) as T
+    }
+    if (sArr.length === 0) {
+      return base.eq('id', '00000000-0000-0000-0000-000000000000') as T
+    }
+    return base.in('sale_id', sArr) as T
+  }
+
   const paymentsSelect = 'id, project_id, account_id, case_id, unit_id, sale_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage'
   function buildPaymentsQuery() {
     let base = svc.from('dsb_payments').select(paymentsSelect).eq('tenant_id', tenantId)
     if (projectFilter) base = base.eq('project_id', projectFilter)
     if (accountFilter) base = base.eq('account_id', accountFilter)
     if (activeCategory !== 'all') base = base.eq('deposit_category', activeCategory)
+    if (dateFromFilter) base = base.gte('payment_date', dateFromFilter)
+    if (dateToFilter)   base = base.lte('payment_date', dateToFilter)
+    if (buyerFilter)    base = base.ilike('beneficiary_name', `%${buyerFilter}%`)
+    base = applyRelationalFilters(base)
     if (q) {
       const esc = escapeOrTerm(q)
       base = base.or(
@@ -194,6 +302,10 @@ export default async function PaymentsListPage({
       .eq('tenant_id', tenantId)
     if (projectFilter) base = base.eq('project_id', projectFilter)
     if (accountFilter) base = base.eq('account_id', accountFilter)
+    if (dateFromFilter) base = base.gte('payment_date', dateFromFilter)
+    if (dateToFilter)   base = base.lte('payment_date', dateToFilter)
+    if (buyerFilter)    base = base.ilike('beneficiary_name', `%${buyerFilter}%`)
+    base = applyRelationalFilters(base)
     if (q) {
       const esc = escapeOrTerm(q)
       base = base.or(
@@ -369,6 +481,12 @@ export default async function PaymentsListPage({
   if (projectFilter) baseParams.set('project', projectFilter)
   if (accountFilter) baseParams.set('account', accountFilter)
   if (activeCategory !== 'all') baseParams.set('category', activeCategory)
+  if (dateFromFilter) baseParams.set('date_from', dateFromFilter)
+  if (dateToFilter)   baseParams.set('date_to',   dateToFilter)
+  if (buyerFilter)    baseParams.set('buyer',     buyerFilter)
+  if (idNumFilter)    baseParams.set('id_num',    idNumFilter)
+  if (unitFilter)     baseParams.set('unit',      unitFilter)
+  if (contractFilter) baseParams.set('contract',  contractFilter)
   baseParams.set('sort', sort)
   baseParams.set('dir', dir)
 
@@ -377,6 +495,12 @@ export default async function PaymentsListPage({
     project: projectFilter,
     account: accountFilter,
     category: activeCategory === 'all' ? '' : activeCategory,
+    date_from: dateFromFilter,
+    date_to:   dateToFilter,
+    buyer:     buyerFilter,
+    id_num:    idNumFilter,
+    unit:      unitFilter,
+    contract:  contractFilter,
   }
 
   // Preserve non-category filters when switching tabs. Default tab (الكل)
@@ -387,6 +511,12 @@ export default async function PaymentsListPage({
     if (q) p.set('q', q)
     if (projectFilter) p.set('project', projectFilter)
     if (accountFilter) p.set('account', accountFilter)
+    if (dateFromFilter) p.set('date_from', dateFromFilter)
+    if (dateToFilter)   p.set('date_to',   dateToFilter)
+    if (buyerFilter)    p.set('buyer',     buyerFilter)
+    if (idNumFilter)    p.set('id_num',    idNumFilter)
+    if (unitFilter)     p.set('unit',      unitFilter)
+    if (contractFilter) p.set('contract',  contractFilter)
     // don't preserve sort/dir here — tabs deliberately reset to defaults
     const s = p.toString()
     return s ? `?${s}` : ''
@@ -486,6 +616,28 @@ export default async function PaymentsListPage({
           },
         ]}
         preservedParams={{ sort, dir }}
+      />
+
+      {/* Column-level filters. Plain GET form so submitting swaps the URL
+          exactly like the toolbar's search. We keep the toolbar filters
+          (q, project, account, category, sort, dir) as hidden inputs so they
+          survive a filter submit. */}
+      <PaymentsFilterBar
+        basePath={basePath}
+        preserve={{
+          q,
+          project: projectFilter,
+          account: accountFilter,
+          category: activeCategory === 'all' ? '' : activeCategory,
+          sort,
+          dir,
+        }}
+        dateFrom={dateFromFilter}
+        dateTo={dateToFilter}
+        buyer={buyerFilter}
+        idNum={idNumFilter}
+        unit={unitFilter}
+        contract={contractFilter}
       />
 
       {pageRows.length === 0 ? (
@@ -659,6 +811,120 @@ export default async function PaymentsListPage({
         </div>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// PaymentsFilterBar
+// ---------------------------------------------------------------------------
+// Column-level filter row rendered under the ListToolbar. All fields submit as
+// GET params on the same URL; the page picks them up on the next request.
+// Toolbar-level filters (q/project/account/category/sort/dir) are carried
+// through as hidden inputs so a filter submit doesn't wipe them.
+// ---------------------------------------------------------------------------
+function PaymentsFilterBar({
+  basePath,
+  preserve,
+  dateFrom,
+  dateTo,
+  buyer,
+  idNum,
+  unit,
+  contract,
+}: {
+  basePath: string
+  preserve: {
+    q: string
+    project: string
+    account: string
+    category: string
+    sort: string
+    dir: string
+  }
+  dateFrom: string
+  dateTo: string
+  buyer: string
+  idNum: string
+  unit: string
+  contract: string
+}) {
+  const anyActive = !!(dateFrom || dateTo || buyer || idNum || unit || contract)
+  const inputCls =
+    'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 ' +
+    'focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500'
+  return (
+    <form
+      action={basePath}
+      method="GET"
+      className="bg-white border border-slate-200 rounded-xl shadow-sm p-3"
+      dir="rtl"
+    >
+      {/* Carry toolbar-level state across submits. */}
+      {preserve.q        && <input type="hidden" name="q"        value={preserve.q} />}
+      {preserve.project  && <input type="hidden" name="project"  value={preserve.project} />}
+      {preserve.account  && <input type="hidden" name="account"  value={preserve.account} />}
+      {preserve.category && <input type="hidden" name="category" value={preserve.category} />}
+      <input type="hidden" name="sort" value={preserve.sort} />
+      <input type="hidden" name="dir"  value={preserve.dir} />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-2 items-end">
+        <FilterField label="من تاريخ">
+          <input type="date" name="date_from" defaultValue={dateFrom} className={inputCls} dir="ltr" />
+        </FilterField>
+        <FilterField label="إلى تاريخ">
+          <input type="date" name="date_to" defaultValue={dateTo} className={inputCls} dir="ltr" />
+        </FilterField>
+        <FilterField label="اسم المشتري">
+          <input type="text" name="buyer" defaultValue={buyer} className={inputCls} placeholder="جزء من الاسم…" />
+        </FilterField>
+        <FilterField label="رقم الهوية">
+          <input type="text" name="id_num" defaultValue={idNum} className={inputCls} dir="ltr" placeholder="1234567890" />
+        </FilterField>
+        <FilterField label="رقم الوحدة">
+          <input type="text" name="unit" defaultValue={unit} className={inputCls} dir="ltr" placeholder="A-101" />
+        </FilterField>
+        <FilterField label="رقم العقد">
+          <input type="text" name="contract" defaultValue={contract} className={inputCls} dir="ltr" placeholder="EAS287" />
+        </FilterField>
+      </div>
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <button
+          type="submit"
+          className="inline-flex items-center px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+        >
+          تطبيق التصفية
+        </button>
+        {anyActive && (
+          // Reset — links to basePath with only the preserved toolbar state
+          // (drops the column filters).
+          <a
+            href={(() => {
+              const p = new URLSearchParams()
+              if (preserve.q)        p.set('q',        preserve.q)
+              if (preserve.project)  p.set('project',  preserve.project)
+              if (preserve.account)  p.set('account',  preserve.account)
+              if (preserve.category) p.set('category', preserve.category)
+              p.set('sort', preserve.sort)
+              p.set('dir',  preserve.dir)
+              const s = p.toString()
+              return s ? `${basePath}?${s}` : basePath
+            })()}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+          >
+            مسح التصفية
+          </a>
+        )}
+      </div>
+    </form>
+  )
+}
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-semibold text-slate-500 mb-1">{label}</span>
+      {children}
+    </label>
   )
 }
 
