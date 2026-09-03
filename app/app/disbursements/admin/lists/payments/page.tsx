@@ -146,49 +146,63 @@ export default async function PaymentsListPage({
   }))
 
   // ---- Fetch payments ----
-  // NOTE: PostgREST caps unbounded SELECTs at 1,000 rows by default. When the
-  // ledger holds thousands of rows (e.g. after a big backfill of auto-
-  // distribution splits) we were silently truncating and the tab counts / KPIs
-  // reflected only the sampled slice. Explicit .range() lifts the cap so
-  // counts + KPIs stay honest. The paginator slices the fetched set in JS.
-  const FETCH_CAP = 50_000
-  let paymentsQuery = svc
-    .from('dsb_payments')
-    .select(
-      'id, project_id, account_id, case_id, unit_id, sale_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage',
-    )
-    .eq('tenant_id', tenantId)
-    .range(0, FETCH_CAP - 1)
-  if (projectFilter) paymentsQuery = paymentsQuery.eq('project_id', projectFilter)
-  if (accountFilter) paymentsQuery = paymentsQuery.eq('account_id', accountFilter)
-  if (activeCategory !== 'all') paymentsQuery = paymentsQuery.eq('deposit_category', activeCategory)
-  if (q) {
-    const esc = escapeOrTerm(q)
-    paymentsQuery = paymentsQuery.or(
-      `reference_number.ilike.%${esc}%,beneficiary_name.ilike.%${esc}%,description.ilike.%${esc}%`,
-    )
+  // NOTE: Supabase-hosted PostgREST enforces max_rows=1000 regardless of
+  // .range() on a single request. To fetch a full ledger of ~10k rows we
+  // loop .range() in CHUNK-sized pages until PostgREST returns fewer rows
+  // than requested (signals end-of-data).
+  const CHUNK = 1000
+  const CHUNK_HARD_LIMIT = 100 // safety valve → max 100k rows fetched
+  async function fetchAllPayments<
+    T extends { select: (cols: string) => any },
+  >(build: () => T): Promise<any[]> {
+    const out: any[] = []
+    for (let page = 0; page < CHUNK_HARD_LIMIT; page++) {
+      let q = build() as any
+      q = q.range(page * CHUNK, page * CHUNK + CHUNK - 1)
+      const { data } = await q
+      const rows = (data ?? []) as any[]
+      out.push(...rows)
+      if (rows.length < CHUNK) break
+    }
+    return out
   }
 
-  const { data: paymentsData } = await paymentsQuery
-  const allPayments = (paymentsData ?? []) as PaymentRowRaw[]
+  const paymentsSelect = 'id, project_id, account_id, case_id, unit_id, sale_id, payment_date, amount_sar, vat_sar, currency, beneficiary_name, description, reference_number, payment_method, deposit_category, split_source_payment_id, split_percentage'
+  function buildPaymentsQuery() {
+    let base = svc.from('dsb_payments').select(paymentsSelect).eq('tenant_id', tenantId)
+    if (projectFilter) base = base.eq('project_id', projectFilter)
+    if (accountFilter) base = base.eq('account_id', accountFilter)
+    if (activeCategory !== 'all') base = base.eq('deposit_category', activeCategory)
+    if (q) {
+      const esc = escapeOrTerm(q)
+      base = base.or(
+        `reference_number.ilike.%${esc}%,beneficiary_name.ilike.%${esc}%,description.ilike.%${esc}%`,
+      )
+    }
+    return base
+  }
+  const allPayments = (await fetchAllPayments(buildPaymentsQuery)) as PaymentRowRaw[]
 
   // ---- Tab counts + per-role totals (respect project/account/search filters,
-  // NOT the tab itself) — lightweight query so switching tabs doesn't lose
-  // the numbers. Same 1,000-row cap issue: lifted with .range().
-  let countsQuery = svc
-    .from('dsb_payments')
-    .select('deposit_category, account_id, amount_sar')
-    .eq('tenant_id', tenantId)
-    .range(0, FETCH_CAP - 1)
-  if (projectFilter) countsQuery = countsQuery.eq('project_id', projectFilter)
-  if (accountFilter) countsQuery = countsQuery.eq('account_id', accountFilter)
-  if (q) {
-    const esc = escapeOrTerm(q)
-    countsQuery = countsQuery.or(
-      `reference_number.ilike.%${esc}%,beneficiary_name.ilike.%${esc}%,description.ilike.%${esc}%`,
-    )
+  // NOT the tab itself) — separate lightweight query that ignores the active
+  // tab so switching tabs doesn't lose the numbers. Uses the same chunk-loop
+  // to bypass Supabase's 1,000-row cap.
+  function buildCountsQuery() {
+    let base = svc
+      .from('dsb_payments')
+      .select('deposit_category, account_id, amount_sar')
+      .eq('tenant_id', tenantId)
+    if (projectFilter) base = base.eq('project_id', projectFilter)
+    if (accountFilter) base = base.eq('account_id', accountFilter)
+    if (q) {
+      const esc = escapeOrTerm(q)
+      base = base.or(
+        `reference_number.ilike.%${esc}%,beneficiary_name.ilike.%${esc}%,description.ilike.%${esc}%`,
+      )
+    }
+    return base
   }
-  const { data: countsData } = await countsQuery
+  const countsData = await fetchAllPayments(buildCountsQuery)
   const categoryCounts: Record<CategoryTab, number> = {
     all: 0,
     buyer_collection: 0,
@@ -210,13 +224,16 @@ export default async function PaymentsListPage({
   }
   const roleByAccountId = new Map<string, RoleKey | null>()
   // Bulk-load account_role for every account in the current tenant so we can
-  // bucket the payments without a per-row query.
-  const { data: allAccountRoles } = await svc
-    .from('dsb_project_accounts')
-    .select('id, account_role')
-    .eq('tenant_id', tenantId)
-    .range(0, FETCH_CAP - 1)
-  for (const a of ((allAccountRoles ?? []) as Array<{ id: string; account_role: string | null }>)) {
+  // bucket the payments without a per-row query. Chunk-loop for the same
+  // 1,000-row PostgREST cap reason as above (in case the tenant has many
+  // accounts across projects).
+  const allAccountRoles = await fetchAllPayments(() =>
+    svc
+      .from('dsb_project_accounts')
+      .select('id, account_role')
+      .eq('tenant_id', tenantId),
+  )
+  for (const a of (allAccountRoles as Array<{ id: string; account_role: string | null }>)) {
     const r = a.account_role
     roleByAccountId.set(
       a.id,
@@ -225,7 +242,7 @@ export default async function PaymentsListPage({
         : null,
     )
   }
-  for (const r of ((countsData ?? []) as Array<{ deposit_category: DepositCategory; account_id: string | null; amount_sar: number | null }>)) {
+  for (const r of (countsData as Array<{ deposit_category: DepositCategory; account_id: string | null; amount_sar: number | null }>)) {
     categoryCounts.all++
     categoryCounts[r.deposit_category]++
     const role = r.account_id ? roleByAccountId.get(r.account_id) : null
