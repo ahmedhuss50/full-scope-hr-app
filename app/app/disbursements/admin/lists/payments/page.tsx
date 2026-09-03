@@ -212,9 +212,19 @@ export default async function PaymentsListPage({
     other: 0,
     auto_distribution: 0,
   }
-  // Per-role totals across the FILTERED set, ignoring the active tab. Signed
-  // sums — general shows the net (deposits – distribution offset = 0 when
-  // fully split); sub-accounts show their credited share.
+  // Per-role totals across the FILTERED set, ignoring the active tab.
+  //
+  // As of this change we no longer generate offset/split rows in the ledger.
+  // The KPI strip is a *computed view*: buyer_collection deposits land on
+  // the general account as-is; the 76/20/4 shares are derived at display
+  // time from the buyer_collection subtotal so the sub-account cards read
+  // like an allocation summary rather than actual rows in the DB.
+  //
+  //   general        = sum of ALL parent deposits on the general account
+  //                    (buyer + wrong_transfer + self/bank_financing + other)
+  //   construction   = 76% of buyer_collection deposits on general
+  //   admin_marketing= 20% of buyer_collection deposits on general
+  //   escrow         =  4% of buyer_collection deposits on general
   type RoleKey = 'general' | 'construction' | 'admin_marketing' | 'escrow'
   const roleTotals: Record<RoleKey, number> = {
     general: 0,
@@ -222,6 +232,7 @@ export default async function PaymentsListPage({
     admin_marketing: 0,
     escrow: 0,
   }
+  let buyerCollectionOnGeneral = 0
   const roleByAccountId = new Map<string, RoleKey | null>()
   // Bulk-load account_role for every account in the current tenant so we can
   // bucket the payments without a per-row query. Chunk-loop for the same
@@ -246,10 +257,20 @@ export default async function PaymentsListPage({
     categoryCounts.all++
     categoryCounts[r.deposit_category]++
     const role = r.account_id ? roleByAccountId.get(r.account_id) : null
-    if (role && typeof r.amount_sar === 'number') {
-      roleTotals[role] += r.amount_sar
+    const amt = typeof r.amount_sar === 'number' ? r.amount_sar : 0
+    // General account: sum every parent deposit landing there, all categories.
+    if (role === 'general') {
+      roleTotals.general += amt
+      if (r.deposit_category === 'buyer_collection') {
+        buyerCollectionOnGeneral += amt
+      }
     }
   }
+  // Derive the 3 sub-account allocations from the buyer_collection subtotal.
+  // Not persisted anywhere — a pure display computation.
+  roleTotals.construction    = buyerCollectionOnGeneral * 0.76
+  roleTotals.admin_marketing = buyerCollectionOnGeneral * 0.20
+  roleTotals.escrow          = buyerCollectionOnGeneral * 0.04
 
   // ---- Case + sale + unit lookups for the display columns ----
   // Migration 064: payment → sale → unit. We still fall back to the direct
@@ -434,7 +455,10 @@ export default async function PaymentsListPage({
         <CategoryTabLink href={tabHref('self_financing')}   active={activeCategory === 'self_financing'}   label="تمويل ذاتي"      count={categoryCounts.self_financing} tone="emerald" />
         <CategoryTabLink href={tabHref('bank_financing')}   active={activeCategory === 'bank_financing'}   label="تمويل بنكي"      count={categoryCounts.bank_financing} tone="indigo" />
         <CategoryTabLink href={tabHref('other')}            active={activeCategory === 'other'}            label="أخرى"           count={categoryCounts.other} tone="slate" />
-        <CategoryTabLink href={tabHref('auto_distribution')} active={activeCategory === 'auto_distribution'} label="توزيع تلقائي"  count={categoryCounts.auto_distribution} tone="slate" />
+        {/* توزيع تلقائي tab intentionally hidden — the 76/20/4 shares are
+            shown as KPI cards above; no derived rows in the ledger any more.
+            Legacy split rows (if any survive in the DB from earlier tests)
+            still appear under «الكل» with their «توزيع تلقائي» chip. */}
       </div>
 
       <ListToolbar

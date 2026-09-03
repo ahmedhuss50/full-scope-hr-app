@@ -92,21 +92,19 @@ export async function updateDepositCategory(
     .eq('tenant_id', tenantId)
   if (error) return { ok: false, error: error.message }
 
-  // Migration 063 side-effect: sync the auto-distribution children.
-  if (input.category === 'buyer_collection') {
-    // Regenerate the 4 split rows (idempotent — helper deletes-then-inserts).
-    // We tolerate a "not eligible" outcome silently; a hard error surfaces so
-    // the owner knows their account roles are misconfigured.
-    const res = await distributeBuyerDeposit(svc, tenantId, paymentId)
-    if (!res.ok) return { ok: false, error: res.error }
-  } else if (oldCategory === 'buyer_collection') {
-    // Moved OUT of buyer_collection — nuke any children we generated before.
-    const { error: delErr } = await svc
+  // NOTE: auto-distribution split rows were removed from the flow. The 76/20/4
+  // shares are now derived at display time on the payments list (see
+  // page.tsx — buyerCollectionOnGeneral × percentage). We keep this cleanup
+  // block so any leftover split children from the old logic get purged the
+  // moment their parent gets touched.
+  if (oldCategory === 'buyer_collection') {
+    await svc
       .from('dsb_payments')
       .delete()
       .eq('split_source_payment_id', paymentId)
-    if (delErr) return { ok: false, error: delErr.message }
   }
+  // Suppress unused-import warning while we phase out the helper.
+  void distributeBuyerDeposit
 
   revalidatePath('/app/disbursements/admin/lists/payments')
   return { ok: true }
@@ -300,19 +298,8 @@ export async function updatePayment(
     .eq('tenant_id', tenantId)
   if (updErr) return { ok: false, error: updErr.message }
 
-  // ---- Re-run auto-distribution when the parent's money or destination
-  //      account moved. Only fires on buyer_collection parents (skips split
-  //      children — those are refused above anyway).
-  const amountChanged = Number(ex.amount_sar) !== Number(amount)
-  const accountChanged = (ex.account_id ?? null) !== accountId
-  if (
-    ex.deposit_category === 'buyer_collection' &&
-    ex.split_source_payment_id === null &&
-    (amountChanged || accountChanged)
-  ) {
-    const res = await distributeBuyerDeposit(svc, tenantId, paymentId)
-    if (!res.ok) return { ok: false, error: res.error }
-  }
+  // Auto-distribution split rows are no longer generated (shares are computed
+  // at display time on the payments list). Nothing to re-run here.
 
   revalidatePath('/app/disbursements/admin/lists/payments')
   return { ok: true }
