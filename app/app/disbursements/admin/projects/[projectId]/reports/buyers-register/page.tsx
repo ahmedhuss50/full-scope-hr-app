@@ -265,17 +265,25 @@ export default async function BuyersRegisterReportPage({
     const price = priceOf(sale)
     if (price) grandTotals.contractsTotal += price
     // Row's collected total = payments linked to the contract (primary) +
-    // legacy payments linked to the unit (fallback). Same combination the
-    // row renderer uses so the header sum matches the visible rows.
+    // legacy payments linked to the unit (fallback).
     const paysFromSale = sale ? (paymentsBySale.get(sale.id) ?? []) : []
     const paysFromUnit = paymentsByUnit.get(u.id) ?? []
     const paid = [...paysFromSale, ...paysFromUnit].reduce((s, p) => s + Number(p.amount_sar || 0), 0)
-    grandTotals.paymentsTotal += paid
+    // NOTE: grandTotals.paymentsTotal is NOT summed per-row anymore — it's
+    // now the total of every buyer_collection payment in the project (see
+    // below), so the header reconciles with سجل الدفعات → تحصيل مشتري tab
+    // even when a payment couldn't be attributed to a contract row.
     if (price) {
       grandTotals.remaining += Math.max(0, price - paid)
     }
   }
   const unassignedTotal = unassignedPayments.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
+  // Header total: sum of the whole (already-buyer_collection, already-project-
+  // scoped) payments array. Reconciles exactly with سجل الدفعات → تحصيل مشتري
+  // filtered by this project. Per-row cells still show only the portion
+  // attributed to each specific contract; the rest sits in the unassigned
+  // panel below and (matched-per-row) + (unassigned) = this number.
+  grandTotals.paymentsTotal = payments.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
