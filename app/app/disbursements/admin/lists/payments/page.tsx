@@ -225,12 +225,13 @@ export default async function PaymentsListPage({
   //   construction   = 76% of buyer_collection deposits on general
   //   admin_marketing= 20% of buyer_collection deposits on general
   //   escrow         =  4% of buyer_collection deposits on general
-  type RoleKey = 'general' | 'construction' | 'admin_marketing' | 'escrow'
+  type RoleKey = 'general' | 'construction' | 'admin_marketing' | 'escrow' | 'general_account'
   const roleTotals: Record<RoleKey, number> = {
-    general: 0,
-    construction: 0,
-    admin_marketing: 0,
-    escrow: 0,
+    general: 0,           // sum of ALL deposits (buyer + everything else)
+    construction: 0,      // buyer_collection × 76%
+    admin_marketing: 0,   // buyer_collection × 20%
+    escrow: 0,            // buyer_collection ×  4%
+    general_account: 0,   // sum of everything NOT tagged 'تحصيل مشتري'
   }
   let buyerCollectionOnGeneral = 0
   const roleByAccountId = new Map<string, RoleKey | null>()
@@ -274,6 +275,7 @@ export default async function PaymentsListPage({
   roleTotals.construction    = buyerCollectionSum * 0.76
   roleTotals.admin_marketing = buyerCollectionSum * 0.20
   roleTotals.escrow          = buyerCollectionSum * 0.04
+  roleTotals.general_account = allDepositsSum - buyerCollectionSum
 
   // ---- Case + sale + unit lookups for the display columns ----
   // Migration 064: payment → sale → unit. We still fall back to the direct
@@ -435,11 +437,14 @@ export default async function PaymentsListPage({
              admin/mkt      = 20% share
              escrow         = 4% share
           Values respect any project / account / search filter above. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiCard label="إجمالي المبالغ"           value={fmtNum(roleTotals.general)}         mono tone="teal"    />
-        <KpiCard label="حساب الانشاءات · 76%"    value={fmtNum(roleTotals.construction)}    mono tone="indigo"  />
-        <KpiCard label="الاداري والتسويقي · 20%" value={fmtNum(roleTotals.admin_marketing)} mono tone="amber"   />
-        <KpiCard label="حساب الحفظ · 4%"         value={fmtNum(roleTotals.escrow)}          mono tone="emerald" />
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <KpiCard label="إجمالي المبالغ"           value={fmtNum(roleTotals.general)}                                     mono tone="teal"    />
+        <KpiCard label="حساب الانشاءات · 76%"    value={fmtNum(roleTotals.construction)}                                mono tone="indigo"  />
+        <KpiCard label="الاداري والتسويقي · 20%" value={fmtNum(roleTotals.admin_marketing)}                             mono tone="amber"   />
+        <KpiCard label="حساب الحفظ · 4%"         value={fmtNum(roleTotals.escrow)}                                      mono tone="emerald" />
+        {/* الحساب العام — everything NOT tagged 'تحصيل مشتري' lives here.
+            i.e. wrong_transfer + self_financing + bank_financing + other. */}
+        <KpiCard label="الحساب العام"             value={fmtNum(roleTotals.general_account)}                             mono tone="teal"    />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
