@@ -518,9 +518,8 @@ export default async function PaymentsListPage({
                   <Th>المرجع</Th>
                   <Th>المشروع</Th>
                   <Th>الحساب</Th>
-                  <Th>الطلب</Th>
-                  <Th>العقد / الوحدة</Th>
-                  <Th>الطريقة</Th>
+                  <Th>العقد</Th>
+                  <Th>الوحدة</Th>
                   <Th>التصنيف</Th>
                   <Th>الإجراءات</Th>
                 </tr>
@@ -569,7 +568,7 @@ export default async function PaymentsListPage({
                       projects={editProjectOptions}
                       accounts={editAccountOptions}
                       rowClassName={rowCls}
-                      totalCols={13}
+                      totalCols={12}
                     >
                       <Td className="font-mono text-xs" dir="ltr">
                         {p.payment_date}
@@ -581,7 +580,11 @@ export default async function PaymentsListPage({
                         {fmtNum(p.vat_sar)}
                       </Td>
                       <Td className="max-w-[12rem] truncate">
-                        {p.beneficiary_name ?? '—'}
+                        {/* المشتري: prefer the beneficiary_name field the operator
+                            typed in; fall back to the buyer_name from the linked
+                            contract (importers often leave beneficiary blank when
+                            the sale is auto-linked by contract_number). */}
+                        {p.beneficiary_name ?? sale?.buyer_name_ar ?? '—'}
                       </Td>
                       <Td className={descCls}>
                         {p.description ?? '—'}
@@ -595,27 +598,17 @@ export default async function PaymentsListPage({
                       <Td className="max-w-[10rem] truncate">
                         {acct?.label ?? '—'}
                       </Td>
-                      <Td className="font-mono text-xs">{caseNo ?? '—'}</Td>
-                      <Td className="max-w-[12rem]">
+                      <Td className="max-w-[10rem]">
                         {sale?.contract_number ? (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-mono text-xs font-semibold text-teal-700" dir="ltr">
-                              {sale.contract_number}
-                            </span>
-                            {sale.buyer_name_ar && (
-                              <span className="text-[11px] text-slate-500 truncate">
-                                {sale.buyer_name_ar}
-                              </span>
-                            )}
-                          </div>
-                        ) : unit?.unit_number ? (
-                          <span className="font-mono text-xs text-slate-700">{unit.unit_number}</span>
+                          <span className="font-mono text-xs font-semibold text-teal-700" dir="ltr">
+                            {sale.contract_number}
+                          </span>
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
                       </Td>
-                      <Td className="max-w-[8rem] truncate">
-                        {p.payment_method ?? '—'}
+                      <Td className="font-mono text-xs">
+                        {unit?.unit_number ?? '—'}
                       </Td>
                       <Td>
                         <div className="flex items-center gap-1.5 flex-wrap">
