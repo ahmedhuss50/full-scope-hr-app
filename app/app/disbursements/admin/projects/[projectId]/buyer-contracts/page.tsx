@@ -387,7 +387,22 @@ export default async function ProjectBuyerContractsPage({
                         )}
                       </Td>
                       <Td>
-                        <span className="font-mono text-xs">{s.contract_number ?? '—'}</span>
+                        {/* Contract number + a tiny «دفعات التحصيل» link that
+                            opens the payments ledger pre-filtered to this
+                            contract. Only shown when the contract actually has
+                            a number to filter by. */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs">{s.contract_number ?? '—'}</span>
+                          {s.contract_number && (
+                            <Link
+                              href={`/app/disbursements/admin/lists/payments?project=${projectId}&contract=${encodeURIComponent(s.contract_number)}`}
+                              className="text-[10px] font-semibold text-teal-700 hover:text-teal-900 hover:underline"
+                              title={`عرض دفعات التحصيل للعقد ${s.contract_number}`}
+                            >
+                              دفعات التحصيل ↗
+                            </Link>
+                          )}
+                        </div>
                         {s.contract_type && (
                           <div className="text-[10px] text-slate-500 mt-0.5">{s.contract_type}</div>
                         )}

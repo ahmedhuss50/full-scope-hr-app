@@ -84,6 +84,10 @@ type PaymentRow = {
   id: string
   unit_id: string | null
   case_id: string | null
+  // Migration 064: preferred link — payment → sale (contract). We match on
+  // this first and only fall through to unit_id / case_id for legacy rows
+  // that were imported before the sale link existed.
+  sale_id: string | null
   payment_date: string
   amount_sar: number
   vat_sar: number | null
@@ -175,20 +179,26 @@ export default async function BuyersRegisterReportPage({
   }
 
   // ---------- Payments (all for this project) ----------
-  // Matched two ways: dsb_payments.unit_id set directly, OR via case:
-  // payment.case_id → dsb_cases.unit_id / .sale_id. We fetch all project
-  // payments and let the grouping loop below pick which unit each belongs to.
+  // Match policy: prefer the CONTRACT link (payment.sale_id, migration 064).
+  // Only fall back to unit_id / case_id for legacy payments that predate the
+  // sale link. This is what «رقم العقد» resolves to at import time — the
+  // importer looks up the sale by contract_number and writes sale_id, so the
+  // UUID is the mechanical form of the contract-number link.
   const { data: paymentsData } = await svc
     .from('dsb_payments')
-    .select('id, unit_id, case_id, payment_date, amount_sar, vat_sar, beneficiary_name, reference_number, payment_method, description')
+    .select('id, unit_id, case_id, sale_id, payment_date, amount_sar, vat_sar, beneficiary_name, reference_number, payment_method, description')
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
     .order('payment_date', { ascending: true })
   const payments = (paymentsData ?? []) as PaymentRow[]
 
-  // For payments with only case_id (no direct unit_id), resolve unit via case.
+  // For LEGACY payments (no sale_id) with only case_id, resolve unit via case.
   const orphanCaseIds = Array.from(
-    new Set(payments.filter((p) => !p.unit_id && p.case_id).map((p) => p.case_id!)),
+    new Set(
+      payments
+        .filter((p) => !p.sale_id && !p.unit_id && p.case_id)
+        .map((p) => p.case_id!),
+    ),
   )
   const caseToUnitId = new Map<string, string | null>()
   if (orphanCaseIds.length > 0) {
@@ -202,11 +212,24 @@ export default async function BuyersRegisterReportPage({
     }
   }
 
-  // Group payments by resolved unit_id. Payments that can't be traced to a
-  // unit fall into an "unassigned" bucket shown at the bottom.
-  const paymentsByUnit = new Map<string, PaymentRow[]>()
+  // Set of sale IDs that belong to a contract on THIS project — used to filter
+  // out cross-project sale links (shouldn't happen, but defensive).
+  const projectSaleIds = new Set<string>()
+  for (const s of sales) projectSaleIds.add(s.id)
+
+  // Primary grouping: payment.sale_id → contract. Fallback grouping:
+  // payment.unit_id / case→unit → unit. Payments that hit neither path fall
+  // into an "unassigned" bucket shown at the bottom.
+  const paymentsBySale = new Map<string, PaymentRow[]>() // key = sale.id
+  const paymentsByUnit = new Map<string, PaymentRow[]>() // key = unit.id  (legacy only)
   const unassignedPayments: PaymentRow[] = []
   for (const p of payments) {
+    if (p.sale_id && projectSaleIds.has(p.sale_id)) {
+      if (!paymentsBySale.has(p.sale_id)) paymentsBySale.set(p.sale_id, [])
+      paymentsBySale.get(p.sale_id)!.push(p)
+      continue
+    }
+    // Fallback for pre-migration-064 rows.
     const uid = p.unit_id ?? (p.case_id ? caseToUnitId.get(p.case_id) ?? null : null)
     if (!uid) {
       unassignedPayments.push(p)
@@ -234,7 +257,12 @@ export default async function BuyersRegisterReportPage({
     if (sale) grandTotals.soldCount += 1
     const price = priceOf(sale)
     if (price) grandTotals.contractsTotal += price
-    const paid = (paymentsByUnit.get(u.id) ?? []).reduce((s, p) => s + Number(p.amount_sar || 0), 0)
+    // Row's collected total = payments linked to the contract (primary) +
+    // legacy payments linked to the unit (fallback). Same combination the
+    // row renderer uses so the header sum matches the visible rows.
+    const paysFromSale = sale ? (paymentsBySale.get(sale.id) ?? []) : []
+    const paysFromUnit = paymentsByUnit.get(u.id) ?? []
+    const paid = [...paysFromSale, ...paysFromUnit].reduce((s, p) => s + Number(p.amount_sar || 0), 0)
     grandTotals.paymentsTotal += paid
     if (price) {
       grandTotals.remaining += Math.max(0, price - paid)
@@ -356,7 +384,12 @@ export default async function BuyersRegisterReportPage({
                   if (active === 'delivered' && sale?.delivery_status !== 'delivered') return null
                   if (active === 'pending' && sale?.delivery_status === 'delivered') return null
 
-                  const pays = paymentsByUnit.get(u.id) ?? []
+                  // Contract-first payment lookup: pull payments linked via
+                  // sale_id (the migration-064 contract link), and append any
+                  // legacy payments still hanging off unit_id / case→unit.
+                  const paysFromSale = sale ? (paymentsBySale.get(sale.id) ?? []) : []
+                  const paysFromUnit = paymentsByUnit.get(u.id) ?? []
+                  const pays = [...paysFromSale, ...paysFromUnit]
                   const collected = pays.reduce((s, p) => s + Number(p.amount_sar || 0), 0)
                   // Fall back to before-tax when the file omits with-VAT
                   // (common — most developer files only have one price col).
@@ -426,9 +459,24 @@ export default async function BuyersRegisterReportPage({
                           )}
                         </Td>
                         <Td>
-                          <span className="font-mono font-semibold text-emerald-700">
-                            {fmtSar(collected)}
-                          </span>
+                          {/* Clickable link → payments list filtered by this
+                              contract number. Opens the ledger view of every
+                              دفعة تحصيل that adds up to this number. When the
+                              row has no contract yet (no sale), fall back to
+                              plain text since there's nothing to link to. */}
+                          {sale?.contract_number ? (
+                            <Link
+                              href={`/app/disbursements/admin/lists/payments?project=${projectId}&contract=${encodeURIComponent(sale.contract_number)}`}
+                              className="font-mono font-semibold text-emerald-700 hover:text-emerald-900 hover:underline decoration-dotted underline-offset-2"
+                              title={`عرض دفعات التحصيل للعقد ${sale.contract_number}`}
+                            >
+                              {fmtSar(collected)}
+                            </Link>
+                          ) : (
+                            <span className="font-mono font-semibold text-emerald-700">
+                              {fmtSar(collected)}
+                            </span>
+                          )}
                         </Td>
                         <Td>
                           <span className="font-mono text-amber-700">
@@ -496,7 +544,7 @@ export default async function BuyersRegisterReportPage({
         <section className="bg-white border border-amber-200 rounded-xl shadow-sm p-5">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
             <h2 className="serif font-bold text-base text-slate-900">
-              دفعات غير مرتبطة بوحدة
+              دفعات غير مرتبطة بعقد
               <span className="text-slate-400 font-mono text-xs mr-2">
                 ({unassignedPayments.length})
               </span>
@@ -506,8 +554,8 @@ export default async function BuyersRegisterReportPage({
             </div>
           </div>
           <p className="text-xs text-slate-500 mb-3">
-            هذه الدفعات مُسجَّلة على مستوى المشروع دون رقم وحدة أو رقم طلب مطابق. لتوصيلها بالوحدة، أضِف
-            رقم الوحدة إلى ملف Excel وأعِد الاستيراد، أو اربط الطلب يدويًا من صفحة الطلب.
+            هذه الدفعات مُسجَّلة على مستوى المشروع دون رقم عقد مطابق (ولا رقم وحدة أو رقم طلب من الروابط القديمة).
+            لتوصيلها بالعقد، أضِف رقم العقد إلى ملف Excel وأعِد الاستيراد، أو عدّل الدفعة يدويًا من سجل الدفعات.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
