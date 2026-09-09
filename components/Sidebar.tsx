@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive, FolderKanban, History, ListChecks, Sliders } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -73,9 +73,10 @@ const ESCROW_ITEMS: Item[] = [
   // { href: '/app/escrow/settings',  labelKey: 'escrow.nav.settings',  icon: Settings },        // hidden
 ]
 
-// Disbursements (الصرف) — the active workflow module after the pivot.
-// `Reports` is appended below at render time for owner users only; building
-// it conditionally keeps the rest of the static list cacheable.
+// Disbursements (الصرف) — the active workflow module. Kept only for the
+// legacy flat-list fallback and the isActive() checks below; the new grouped
+// UI lives in DSB_GROUPS and is what actually renders. Deleting these would
+// noise up the file diff for no runtime gain.
 const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements',           labelKey: 'dsb.nav.home',      icon: LayoutDashboard },
   { href: '/app/disbursements/board',     labelKey: 'dsb.nav.board',     icon: Inbox },
@@ -83,14 +84,66 @@ const DSB_ITEMS: Item[] = [
   { href: '/app/disbursements/archive',   labelKey: 'dsb.nav.archive',   icon: Archive },
   { href: '/app/disbursements/admin',     labelKey: 'dsb.nav.admin',     icon: Settings },
 ]
-// Owner-only addition. Using a plain Arabic label because we don't have a
-// translation key for "reports" yet; the rest of the module already mixes
-// keyed and inline strings.
-const DSB_REPORTS_ITEM: Item = {
-  href: '/app/disbursements/reports',
-  labelKey: 'dsb.nav.reports' as StringKey,
-  icon: BarChart3,
+void DSB_ITEMS // silence unused warning — see comment above.
+
+// -------------------------------------------------------------------------
+// Disbursements — grouped sidebar (replaces the flat list above).
+// Sections read top-to-bottom in order of what an owner opens most often:
+//   1. العمليات اليومية — the case pipeline (workflow)
+//   2. البيانات        — data browsers (projects, payments)
+//   3. التقارير        — reports (owner-only)
+//   4. الإدارة          — configuration (owner-only; several entries are
+//                         `soon: true` and render as disabled with a
+//                         «قريبًا» chip until we build the admin panels)
+// -------------------------------------------------------------------------
+type DsbNavItem = {
+  href: string
+  label: string                 // Arabic label — no translation key needed
+  icon: typeof LayoutDashboard
+  ownerOnly?: boolean
+  soon?: boolean                // renders as disabled with «قريبًا» chip
 }
+type DsbNavGroup = {
+  title: string
+  items: DsbNavItem[]
+  ownerOnly?: boolean           // whole group only visible to owners
+}
+
+const DSB_GROUPS: DsbNavGroup[] = [
+  {
+    title: 'العمليات اليومية',
+    items: [
+      { href: '/app/disbursements',           label: 'الرئيسية',      icon: LayoutDashboard },
+      { href: '/app/disbursements/board',     label: 'لوحة المراحل',   icon: Inbox },
+      { href: '/app/disbursements/documents', label: 'وثائق التسليم', icon: FileText },
+      { href: '/app/disbursements/archive',   label: 'الأرشيف',       icon: Archive },
+    ],
+  },
+  {
+    title: 'البيانات',
+    items: [
+      { href: '/app/disbursements/admin',                label: 'المشاريع', icon: FolderKanban },
+      { href: '/app/disbursements/admin/lists/payments', label: 'الدفعات',   icon: Wallet, ownerOnly: true },
+    ],
+  },
+  {
+    title: 'التقارير',
+    ownerOnly: true,
+    items: [
+      { href: '/app/disbursements/reports', label: 'تقرير المدير', icon: BarChart3 },
+    ],
+  },
+  {
+    title: 'الإدارة',
+    ownerOnly: true,
+    items: [
+      { href: '/app/disbursements/admin', label: 'المستخدمون والصلاحيات', icon: Users },
+      { href: '#', label: 'تهيئة النظام',    icon: Sliders,     soon: true },
+      { href: '#', label: 'القوائم والنسب',  icon: ListChecks,  soon: true },
+      { href: '#', label: 'سجل التدقيق',     icon: History,     soon: true },
+    ],
+  },
+]
 
 function isActive(pathname: string, href: string) {
   // Strip query strings — nav items may include ?tab=… for tabbed sub-pages.
@@ -138,15 +191,10 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
   // brand header + sign-out. The user is choosing a module, not navigating
   // inside one.
   const showModuleNav = currentModule === 'hr' || currentModule === 'dms' || currentModule === 'crm' || currentModule === 'dsb'
-  // Append the Reports item to DSB nav only for managers. Plays nice with
-  // the static base list — non-owners never see the link or get a chance
-  // to navigate to /reports.
-  const dsbItemsForUser =
-    user.dsb_role === 'owner' ? [...DSB_ITEMS, DSB_REPORTS_ITEM] : DSB_ITEMS
+  // Non-DSB modules still use the flat-list rendering path below.
   const items =
     currentModule === 'dms'    ? DMS_ITEMS :
     currentModule === 'crm'    ? CRM_ITEMS :
-    currentModule === 'dsb'    ? dsbItemsForUser :
     currentModule === 'escrow' ? ESCROW_ITEMS :
     HR_ITEMS
 
@@ -249,40 +297,95 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
       </div>
 
       {showModuleNav ? (
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {items.map((item) => {
-            const active = isActive(pathname, item.href)
-            const Icon = item.icon
-            const count = item.countKey ? counts[item.countKey] : undefined
-            const urgentCount = item.countKey === 'certs' || item.countKey === 'costs'
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                  active
-                    ? 'bg-teal-50 text-teal-600'
-                    : 'text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
-                <span className="flex-1 truncate">{t(item.labelKey)}</span>
-                {typeof count === 'number' && count > 0 && (
-                  <span
-                    className={`inline-flex items-center justify-center min-w-[1.25rem] px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      urgentCount
-                        ? 'bg-red-50 text-red-700'
-                        : 'bg-gray-100 text-slate-700'
-                    }`}
-                  >
-                    {count}
-                  </span>
-                )}
-              </Link>
-            )
-          })}
-        </nav>
+        currentModule === 'dsb' ? (
+          // Grouped rendering — only DSB uses this today. Other modules keep
+          // the flat list below until we do the same treatment for them.
+          <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
+            {DSB_GROUPS.filter((g) => !g.ownerOnly || user.dsb_role === 'owner').map((group) => {
+              const visibleItems = group.items.filter((it) => !it.ownerOnly || user.dsb_role === 'owner')
+              if (visibleItems.length === 0) return null
+              return (
+                <div key={group.title} className="space-y-1">
+                  <div className="px-3 pt-2 pb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    {group.title}
+                  </div>
+                  {visibleItems.map((item) => {
+                    const active = !item.soon && isActive(pathname, item.href)
+                    const Icon = item.icon
+                    // "soon" items render as disabled rows with a chip so
+                    // the client can see the roadmap without hitting 404s.
+                    if (item.soon) {
+                      return (
+                        <div
+                          key={item.label}
+                          aria-disabled="true"
+                          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 cursor-not-allowed"
+                          title="قيد التطوير"
+                        >
+                          <Icon className="w-5 h-5 shrink-0 text-slate-300" aria-hidden="true" />
+                          <span className="flex-1 truncate">{item.label}</span>
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200">
+                            قريبًا
+                          </span>
+                        </div>
+                      )
+                    }
+                    return (
+                      <Link
+                        key={`${group.title}-${item.href}-${item.label}`}
+                        href={item.href}
+                        aria-current={active ? 'page' : undefined}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                          active
+                            ? 'bg-teal-50 text-teal-600'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
+                        <span className="flex-1 truncate">{item.label}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </nav>
+        ) : (
+          <nav className="flex-1 px-3 py-4 space-y-1">
+            {items.map((item) => {
+              const active = isActive(pathname, item.href)
+              const Icon = item.icon
+              const count = item.countKey ? counts[item.countKey] : undefined
+              const urgentCount = item.countKey === 'certs' || item.countKey === 'costs'
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? 'page' : undefined}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    active
+                      ? 'bg-teal-50 text-teal-600'
+                      : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
+                  <span className="flex-1 truncate">{t(item.labelKey)}</span>
+                  {typeof count === 'number' && count > 0 && (
+                    <span
+                      className={`inline-flex items-center justify-center min-w-[1.25rem] px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        urgentCount
+                          ? 'bg-red-50 text-red-700'
+                          : 'bg-gray-100 text-slate-700'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
+          </nav>
+        )
       ) : (
         <div className="flex-1 px-5 py-6 text-xs text-slate-500 leading-relaxed">
           {/* Sidebar nav is module-scoped. On the picker page (/app) and on
