@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FolderKanban, FileText, Plus, Users, Scale, Upload, Briefcase } from 'lucide-react'
+import { FolderKanban, FileText, Plus, Users, Scale, Upload, Briefcase, Settings2 } from 'lucide-react'
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
@@ -415,6 +415,19 @@ export default async function ProjectDetailPage({
             </div>
           </div>
           <div className="shrink-0 flex items-center gap-2 flex-wrap">
+            {/* Owner-only: opens the consolidated تهيئة المشروع screen with a
+                completion checklist across all sections. Sits next to the
+                existing سند صرف جديد + inline EditProjectInfo actions. */}
+            {dsbRole === 'owner' && (
+              <Link
+                href={`/app/disbursements/admin/projects/${project.id}/setup`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-300 bg-teal-50 text-teal-800 text-xs font-semibold hover:bg-teal-100 transition"
+                title="فتح شاشة تهيئة المشروع الشاملة"
+              >
+                <Settings2 className="w-3.5 h-3.5" aria-hidden="true" />
+                تهيئة المشروع
+              </Link>
+            )}
             <Link
               href={newCaseHref}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
