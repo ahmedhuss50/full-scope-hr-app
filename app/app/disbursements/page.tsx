@@ -5,6 +5,7 @@ import { FileText, Plus, Settings, LayoutDashboard, Activity, UploadCloud, Arrow
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from './CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
+import { ProjectComplianceSummary } from './ProjectComplianceSummary'
 
 export const dynamic = 'force-dynamic'
 
@@ -492,6 +493,18 @@ export default async function DisbursementsDashboardPage({
         />
         <KpiCard label="متوسط الزمن للتوقيع (يوم)" value={avgCycleLabel} />
       </section>
+
+      {/* Compliance overview — owner only. Alerts banner when any project
+          violates the 20% admin / 76% construction / net-cash caps, plus a
+          per-project performance table with inline progress bars and status
+          pills. Sits right under the KPI strip so it's the first thing the
+          owner sees after login. */}
+      {dsbRole === 'owner' && (
+        <ProjectComplianceSummary
+          tenantId={tenantId}
+          projectIds={projectOptions.map((p) => p.id)}
+        />
+      )}
 
       {/* Kanban + Activity feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
