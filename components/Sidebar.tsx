@@ -173,10 +173,10 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
         type="button"
         aria-label="Open navigation"
         onClick={() => setMobileOpen(true)}
-        // Force right-3 (not start-3) so the hamburger stays pinned to the
-        // right in both AR and EN. The sidebar itself is right-anchored
-        // unconditionally (see aside below).
-        className={`md:hidden fixed top-3 right-3 z-50 inline-flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 shadow-sm text-slate-700 ${
+        // `start-3` is a logical property: right-3 under dir=rtl, left-3
+        // under dir=ltr. Matches the sidebar's anchor side, so the
+        // hamburger sits at the edge of the drawer on both languages.
+        className={`md:hidden fixed top-3 start-3 z-50 inline-flex items-center justify-center w-10 h-10 rounded-lg bg-white border border-slate-200 shadow-sm text-slate-700 ${
           mobileOpen ? 'hidden' : ''
         }`}
       >
@@ -193,17 +193,21 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
       )}
 
       <aside
-        // Sidebar is anchored to the RIGHT on every viewport, in both AR
-        // and EN. Mobile uses `fixed right-0` (was `start-0`, which flipped
-        // to left before RTL was applied on hydration). Desktop uses
-        // md:static — the parent's flex-row-reverse puts it visually on
-        // the right. Drawer slides in from the right, so the closed state
-        // is `translate-x-full` (unconditional — no rtl: variant needed).
-        className={`bg-white border-s border-slate-200 flex flex-col
-          fixed md:static inset-y-0 right-0 z-50 w-72 md:w-64 md:shrink-0 md:min-h-screen
+        // Logical properties throughout so RTL and LTR both work correctly:
+        //   start-0  → right in RTL, left in LTR (drawer anchored to the
+        //              same edge as the writing direction's leading edge)
+        //   border-e → border on the trailing edge (opposite the anchor)
+        //   translate-x for the closed state: `-translate-x-full` slides
+        //   off to the LEFT (correct for LTR). Under RTL we need the
+        //   OPPOSITE — the drawer sits on the right, so closed = slid to
+        //   the right = `rtl:translate-x-full`.
+        // On desktop (md:static) the sidebar joins the flex row and its
+        // side is determined by plain flex + dir (see AppLayout).
+        className={`bg-white border-e border-slate-200 flex flex-col
+          fixed md:static inset-y-0 start-0 z-50 w-72 md:w-64 md:shrink-0 md:min-h-screen
           transition-transform duration-200 ease-out
-          ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}
-          md:translate-x-0`}
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full rtl:translate-x-full'}
+          md:translate-x-0 rtl:md:translate-x-0`}
         aria-label="Primary"
       >
       {/* Brand + module switcher */}

@@ -121,14 +121,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <LocaleProvider initial={(profile.locale as 'en' | 'ar') ?? 'ar'}>
-      {/* Sidebar is pinned to the RIGHT unconditionally. Full Scope is an
-          Arabic-primary app and users expect the nav on the right whether
-          they've toggled to English or not. flex-row-reverse achieves that
-          in both directions: the sidebar renders first in the DOM but
-          visually sits on the right, and logical properties (start-* /
-          end-*) inside the sidebar keep working under dir=rtl on the
-          document root. */}
-      <div className="app-shell flex flex-row-reverse min-h-screen">
+      {/* Plain `flex` (row). Under dir=rtl on <html> the flex axis flows
+          right-to-left, so the first DOM child (Sidebar) sits visually on
+          the right and content flows to the left. Under dir=ltr (English
+          toggle) the sidebar naturally sits on the left. We do NOT use
+          row-reverse here — it would flip the axis relative to the writing
+          direction and land the sidebar on the WRONG side under RTL. */}
+      <div className="app-shell flex min-h-screen">
         <Sidebar
           counts={counts}
           user={{

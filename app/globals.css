@@ -30,9 +30,12 @@
 }
 
 @layer utilities {
-  /* RTL: flip the app shell so the sidebar appears on the right.
-     Apply to a `flex` container with the .app-shell class. */
-  [dir='rtl'] .app-shell { flex-direction: row-reverse; }
+  /* RTL sidebar placement is handled by plain `display: flex` (row) on the
+     app-shell — under dir=rtl the flex axis flows right-to-left, so the
+     first DOM child (the sidebar) naturally sits on the right. Do NOT set
+     row-reverse here: row-reverse flips the axis relative to the writing
+     direction, which would land the sidebar on the LEFT under RTL (the
+     opposite of what we want). This block is intentionally empty. */
 }
 
 @layer components {
