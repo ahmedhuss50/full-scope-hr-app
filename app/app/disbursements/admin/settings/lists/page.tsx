@@ -12,32 +12,19 @@ import { ArrowRight, ListChecks } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { SharesEditor } from './SharesEditor'
 import { VendorCategoriesEditor, type VendorCategory } from './VendorCategoriesEditor'
+import { LabelListEditor, type LabelRow } from './LabelListEditor'
 import type { DistributionShares } from './actions'
+import {
+  DEPOSIT_CATEGORY_DEFAULTS,
+  DISBURSEMENT_TYPE_DEFAULTS,
+} from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
 
-// Kept in sync with DepositCategoryPicker.OPTIONS (see the payments list
-// component). Read-only here — changing values in the DB would require an
-// enum-tolerance change across imports + tabs.
-const DEPOSIT_CATEGORIES: Array<{ code: string; label: string; description: string; tone: string }> = [
-  { code: 'buyer_collection', label: 'تحصيل مشتري',   description: 'أي إيداع من مشتري (يخضع لنسب التوزيع).',                 tone: 'bg-teal-50 text-teal-800 ring-teal-200' },
-  { code: 'wrong_transfer',   label: 'حوالة خاطئة',   description: 'حوالات وردت بالخطأ وتُستَرد.',                              tone: 'bg-red-50 text-red-800 ring-red-200' },
-  { code: 'self_financing',   label: 'تمويل ذاتي',     description: 'ضخ من المطور بدون قرض بنكي.',                              tone: 'bg-emerald-50 text-emerald-800 ring-emerald-200' },
-  { code: 'bank_financing',   label: 'تمويل بنكي',     description: 'قرض تنموي أو تمويل مؤسسي.',                                tone: 'bg-indigo-50 text-indigo-800 ring-indigo-200' },
-  { code: 'other',            label: 'أخرى',           description: 'أي إيداع لا يندرج تحت التصنيفات أعلاه.',                    tone: 'bg-slate-50 text-slate-800 ring-slate-200' },
-]
-
-// Kept in sync with /api/dsb-extract prompt (disbursement_type_code enum).
-const DISBURSEMENT_TYPES: Array<{ code: string; label_ar: string }> = [
-  { code: 'construction',           label_ar: 'إنشائي (مقاول رئيسي، بنية تحتية، مواد)' },
-  { code: 'admin_marketing',        label_ar: 'إداري / تسويقي (رواتب، عمولات، أتعاب)' },
-  { code: 'bank_financing',         label_ar: 'تمويل بنكي' },
-  { code: 'moh_incentive',          label_ar: 'حوافز وزارة الإسكان' },
-  { code: 'unit_seriousness_fees',  label_ar: 'رسوم جدية شراء وحدة' },
-  { code: 'vat_project_registry',   label_ar: 'ضريبة قيمة مضافة — تسجيل مشروع' },
-  { code: 'vat_sales_payment',      label_ar: 'ضريبة قيمة مضافة — دفعة بيع' },
-  { code: 'other',                  label_ar: 'أخرى' },
-]
+// Deposit + disbursement rows come from DEPOSIT_CATEGORY_DEFAULTS /
+// DISBURSEMENT_TYPE_DEFAULTS in lib/dsb/category-labels.ts. The
+// LabelListEditor merges those defaults with the tenant's saved overrides
+// (tenants.deposit_category_labels / .disbursement_type_labels).
 
 export default async function ListsAndPercentagesPage() {
   const supabase = createSupabaseServer()
@@ -58,7 +45,7 @@ export default async function ListsAndPercentagesPage() {
   const [tenantRes, vendorCatsRes] = await Promise.all([
     svc
       .from('tenants')
-      .select('deposit_distribution_shares')
+      .select('deposit_distribution_shares, deposit_category_labels, disbursement_type_labels')
       .eq('id', profile.tenant_id as string)
       .maybeSingle(),
     svc
@@ -76,6 +63,29 @@ export default async function ListsAndPercentagesPage() {
     escrow:          rawShares?.escrow          ?? 0.04,
   }
   const vendorCategories = ((vendorCatsRes.data ?? []) as VendorCategory[])
+  const depositLabelOverrides      = (tenantRes.data?.deposit_category_labels    as Record<string, string> | null | undefined) ?? {}
+  const disbursementLabelOverrides = (tenantRes.data?.disbursement_type_labels   as Record<string, string> | null | undefined) ?? {}
+
+  // Build the LabelRow arrays for both fixed-enum lists. The tones on the
+  // deposit rows carry over so the pill in the preview matches what the
+  // payments list shows.
+  const depositRows: LabelRow[] = [
+    { code: 'buyer_collection', defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.buyer_collection, description: 'أي إيداع من مشتري (يخضع لنسب التوزيع).',           toneCls: 'bg-teal-50 text-teal-800 ring-teal-200' },
+    { code: 'wrong_transfer',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.wrong_transfer,   description: 'حوالات وردت بالخطأ وتُستَرد.',                        toneCls: 'bg-red-50 text-red-800 ring-red-200' },
+    { code: 'self_financing',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.self_financing,   description: 'ضخ من المطور بدون قرض بنكي.',                        toneCls: 'bg-emerald-50 text-emerald-800 ring-emerald-200' },
+    { code: 'bank_financing',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.bank_financing,   description: 'قرض تنموي أو تمويل مؤسسي.',                          toneCls: 'bg-indigo-50 text-indigo-800 ring-indigo-200' },
+    { code: 'other',            defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.other,            description: 'أي إيداع لا يندرج تحت التصنيفات أعلاه.',              toneCls: 'bg-slate-50 text-slate-800 ring-slate-200' },
+  ]
+  const disbursementRows: LabelRow[] = [
+    { code: 'construction',          defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.construction },
+    { code: 'admin_marketing',       defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.admin_marketing },
+    { code: 'bank_financing',        defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.bank_financing },
+    { code: 'moh_incentive',         defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.moh_incentive },
+    { code: 'unit_seriousness_fees', defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.unit_seriousness_fees },
+    { code: 'vat_project_registry',  defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.vat_project_registry },
+    { code: 'vat_sales_payment',     defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.vat_sales_payment },
+    { code: 'other',                 defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.other },
+  ]
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto" dir="rtl">
@@ -124,55 +134,28 @@ export default async function ListsAndPercentagesPage() {
         <VendorCategoriesEditor initial={vendorCategories} />
       </section>
 
-      {/* Deposit categories — read-only */}
+      {/* Deposit categories — editable labels (codes fixed) */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
         <div>
           <h2 className="serif font-bold text-base text-slate-900">تصنيفات الإيداع</h2>
           <p className="text-xs text-slate-500 mt-1">
-            التصنيفات المستخدَمة في تبويبات سجل الدفعات. تعديل القائمة يتطلَّب تحديث نظامي (تواصل مع الدعم).
+            التصنيفات المستخدَمة في تبويبات سجل الدفعات. يمكنك إعادة تسمية أي تصنيف —
+            التغيير ينعكس على كل الشاشات والتقارير. أكواد النظام تبقى ثابتة لضمان توافق البيانات المستوردة.
           </p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {DEPOSIT_CATEGORIES.map((c) => (
-            <div key={c.code} className="rounded-lg border border-slate-200 p-3 flex items-start gap-3">
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ring-1 ring-inset shrink-0 ${c.tone}`}>
-                {c.label}
-              </span>
-              <div className="min-w-0">
-                <div className="text-xs text-slate-700 leading-relaxed">{c.description}</div>
-                <div className="text-[10px] font-mono text-slate-400 mt-1" dir="ltr">{c.code}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <LabelListEditor kind="deposit" rows={depositRows} overrides={depositLabelOverrides} />
       </section>
 
-      {/* Disbursement types — read-only */}
+      {/* Disbursement types — editable labels (codes fixed) */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
         <div>
           <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف (نوع الصرف)</h2>
           <p className="text-xs text-slate-500 mt-1">
-            القائمة التي يستخدمها الذكاء الاصطناعي لتصنيف سندات الصرف تلقائيًا. القيم مثبّتة على مستوى النظام لضمان توافق التقارير.
+            القائمة التي يستخدمها الذكاء الاصطناعي لتصنيف سندات الصرف تلقائيًا. يمكن إعادة التسمية —
+            الأكواد تبقى ثابتة لضمان دقة التصنيف الآلي.
           </p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200 text-right">
-              <tr>
-                <th className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase">الاسم</th>
-                <th className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase">الكود</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {DISBURSEMENT_TYPES.map((t) => (
-                <tr key={t.code}>
-                  <td className="px-3 py-2 text-slate-800">{t.label_ar}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500" dir="ltr">{t.code}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <LabelListEditor kind="disbursement" rows={disbursementRows} overrides={disbursementLabelOverrides} />
       </section>
     </div>
   )

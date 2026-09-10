@@ -92,6 +92,47 @@ export async function updateDistributionShares(
 }
 
 // ---------------------------------------------------------------------------
+// Label overrides for the fixed enum lists (migration 070).
+// Owner renames what appears on screen; underlying enum codes stay fixed.
+// ---------------------------------------------------------------------------
+
+export type LabelKind = 'deposit' | 'disbursement'
+
+export async function updateLabelOverrides(
+  input: { kind: LabelKind; labels: Record<string, string> },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+
+  // Normalize: trim, strip empty overrides (fall back to defaults), reject
+  // pathologically long values so a mis-paste doesn't fill the DB.
+  const cleaned: Record<string, string> = {}
+  for (const [code, label] of Object.entries(input.labels ?? {})) {
+    const c = String(code).trim()
+    const l = String(label ?? '').trim()
+    if (!c || !l) continue
+    if (l.length > 120) return { ok: false, error: 'أحد الأسماء طويل جدًا (بحد أقصى 120 حرفًا).' }
+    cleaned[c] = l
+  }
+
+  const column =
+    input.kind === 'deposit'      ? 'deposit_category_labels' :
+    input.kind === 'disbursement' ? 'disbursement_type_labels' :
+    null
+  if (!column) return { ok: false, error: 'قائمة غير معروفة.' }
+
+  const svc = createSupabaseService()
+  const { error } = await svc
+    .from('tenants')
+    .update({ [column]: cleaned })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Vendor / service-provider categories — CRUD
 // ---------------------------------------------------------------------------
 
