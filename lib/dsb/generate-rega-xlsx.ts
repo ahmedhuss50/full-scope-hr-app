@@ -54,6 +54,12 @@ function setCell(sheet: XLSX.WorkSheet, address: string, value: unknown, t?: XLS
   else if (typeof value === 'number') cell.t = 'n'
   else if (value instanceof Date) { cell.t = 'd' }
   else cell.t = 's'
+  // Ensure date cells carry a date number-format so Excel displays them as
+  // dates AND treats them as date serials in formulas. Without a `z`,
+  // SheetJS may write the cell as a generic number that referring formulas
+  // subtract from other date serials without issue, but the display comes
+  // out as an integer — confusing for the accountant.
+  if (cell.t === 'd' && !cell.z) cell.z = 'yyyy-mm-dd'
   sheet[address] = cell
   // Ensure the sheet's range covers this cell so xlsx serializes it.
   const ref = sheet['!ref'] ?? 'A1'
@@ -62,6 +68,22 @@ function setCell(sheet: XLSX.WorkSheet, address: string, value: unknown, t?: XLS
   if (addr.r > range.e.r) range.e.r = addr.r
   if (addr.c > range.e.c) range.e.c = addr.c
   sheet['!ref'] = XLSX.utils.encode_range(range)
+}
+
+// Parse a Supabase date string ("YYYY-MM-DD" or ISO timestamp) into a JS
+// Date, or null if the input is empty / unparseable. We use midday UTC so
+// timezone shifts near date boundaries don't push the value onto the
+// wrong calendar day when Excel renders it in the user's locale.
+function parseSupabaseDate(input: string | null | undefined): Date | null {
+  if (!input) return null
+  const s = String(input).trim()
+  if (!s) return null
+  const datePart = s.slice(0, 10)
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart)
+  if (!m) return null
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3])
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null
+  return new Date(Date.UTC(y, mo, d, 12, 0, 0))
 }
 
 function clearCellsRange(sheet: XLSX.WorkSheet, startRow: number, endRow: number, startCol: number, endCol: number) {
@@ -277,18 +299,34 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   if (!ws) throw new Error(`template missing sheet: ${sheetName}`)
 
   // -----------------------------------------------------------------------
-  // STEP 1 — Snapshot template formulas from row 8 BEFORE clearing.
-  // These are the per-row calculations (VAT, price-with-VAT, days-elapsed,
-  // supervision fee, remaining, collection %, price/m²) that the accountant
-  // relies on. We copy them into every populated data row further down.
+  // STEP 1 — Snapshot template row 8 BEFORE clearing.
+  //
+  // For each column we cache:
+  //   • formula (`.f`)  — replicated on every output row w/ retargeted refs
+  //   • number format (`.z`)  — so dates show as "mm-dd-yy", money as such
+  //   • cell style   (`.s`) — carries font, fill, borders, alignment
+  //
+  // Without the `.z` snapshot, date cells like U (sale date) would render
+  // as a 5-digit serial number until the accountant reformats them.
   // -----------------------------------------------------------------------
+  type TemplateCellSnapshot = { f?: string; z?: XLSX.CellObject['z']; s?: unknown }
+  const templateRow: Map<number, TemplateCellSnapshot> = new Map()
+  const TEMPLATE_ROW_R0 = BUYERS_DATA_START_ROW - 1
+  for (let c = 0; c < 49; c++) {
+    const addr = XLSX.utils.encode_cell({ r: TEMPLATE_ROW_R0, c })
+    const cell = ws[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+    if (!cell) continue
+    const snap: TemplateCellSnapshot = {}
+    if (typeof cell.f === 'string' && cell.f.length > 0) snap.f = cell.f
+    if (cell.z != null) snap.z = cell.z
+    if (cell.s != null) snap.s = cell.s
+    templateRow.set(c, snap)
+  }
+  // Formula columns whitelist — only these are treated as replicated formulas.
   const templateFormulas = new Map<number, string>()
   for (const col of BUYERS_FORMULA_COLS_0IDX) {
-    const addr = XLSX.utils.encode_cell({ r: BUYERS_DATA_START_ROW - 1, c: col })
-    const cell = ws[addr] as XLSX.CellObject | undefined
-    if (cell && typeof cell.f === 'string' && cell.f.length > 0) {
-      templateFormulas.set(col, cell.f)
-    }
+    const snap = templateRow.get(col)
+    if (snap?.f) templateFormulas.set(col, snap.f)
   }
 
   // -----------------------------------------------------------------------
@@ -336,11 +374,16 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 17 }), s?.contract_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 18 }), s?.financing_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 19 }), s?.financing_bank ?? '', 's')
-    if (s?.sale_date) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 20 }), s.sale_date, 's')
+    // Sale date — MUST be a real Date so the AB..AK yearly formulas work
+    // (they do numeric date arithmetic like $AB$7-U{r}). Writing a string
+    // makes Excel treat the cell as text and the formulas silently return 0.
+    const saleDate = parseSupabaseDate(s?.sale_date)
+    if (saleDate) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 20 }), saleDate, 'd')
     // Price + delivery — Y (VAT) / Z (price-with-VAT) come from formulas
     if (s?.price_before_tax_sar != null) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 21 }), Number(s.price_before_tax_sar), 'n')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 22 }), s?.delivery_status === 'delivered' ? 'مُسلَّمة' : 'لم يتم', 's')
-    if (s?.delivery_date) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 23 }), s.delivery_date, 's')
+    const deliveryDate = parseSupabaseDate(s?.delivery_date)
+    if (deliveryDate) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 23 }), deliveryDate, 'd')
 
     // Total collected (across all years) for THIS sale. AN's formula is
     // =AV+AU, so we drop the running total into AU (col 46, 0-idx). If we
@@ -368,6 +411,17 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
       ws[addr] = existing
         ? { ...existing, f: adjusted, v: undefined, w: undefined, t: 'n' }
         : { t: 'n', f: adjusted }
+    }
+
+    // Apply the template row's styling (number format + fill/borders/font)
+    // to every cell we wrote in this row. Without this, date cells render
+    // as a 5-digit serial and money cells lose their thousands separator.
+    for (const [col, snap] of templateRow) {
+      const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+      const cell = ws[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+      if (!cell) continue
+      if (snap.z != null && cell.z == null) cell.z = snap.z
+      if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
     }
   }
 

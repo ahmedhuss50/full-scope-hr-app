@@ -16,6 +16,7 @@ import { ArrowRight, Building2, Upload } from 'lucide-react'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteUnit, deleteAllUnitsForProject } from '../../../units/actions'
+import { DeliveryToggle } from '../buyer-contracts/DeliveryToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -247,6 +248,7 @@ export default async function ProjectUnitsListPage({
                   <Th>النوع / المساحة</Th>
                   <Th>الموقع</Th>
                   <Th>المشتري والعقد</Th>
+                  <Th>التسليم</Th>
                   {dsbRole === 'owner' && <Th> </Th>}
                 </tr>
               </thead>
@@ -310,23 +312,23 @@ export default async function ProjectUnitsListPage({
                                 <span className="font-mono text-emerald-700">{fmtSar(displayPrice)}</span>
                               )}
                             </div>
-                            <div className="text-[10px] mt-0.5">
-                              {sale.delivery_status === 'delivered' && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200">
-                                  مُسلَّمة
-                                </span>
-                              )}
-                              {sale.delivery_status === 'pending' && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full font-bold bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200">
-                                  قيد التسليم
-                                </span>
-                              )}
-                            </div>
                           </div>
                         ) : (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200">
                             لم تُبَع
                           </span>
+                        )}
+                      </Td>
+                      <Td>
+                        {sale ? (
+                          <DeliveryToggle
+                            saleId={sale.id}
+                            initialDelivered={sale.delivery_status === 'delivered'}
+                            initialDate={sale.delivery_date}
+                            canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                          />
+                        ) : (
+                          <span className="text-[10px] text-slate-400 italic">—</span>
                         )}
                       </Td>
                       {dsbRole === 'owner' && (

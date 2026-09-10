@@ -11,10 +11,10 @@ import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ArrowRight, ScrollText, Upload } from 'lucide-react'
 import { AutoLinkButton } from './AutoLinkButton'
+import { StatusToggle } from './StatusToggle'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteSale, deleteAllSalesForProject } from '../../../units/actions'
-import { DeliveryToggle } from './DeliveryToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,6 +61,7 @@ type SaleRow = {
   price_before_tax_sar: number | null
   delivery_status: string | null
   delivery_date: string | null
+  sale_status: string | null
   // Nested unit (when linked) for showing the resolved unit_number + specs.
   unit:
     | {
@@ -134,7 +135,7 @@ export default async function ProjectBuyerContractsPage({
        contract_number, contract_type, financing_type, financing_bank,
        buyer_name_ar, buyer_phone, buyer_id_type, buyer_id_number, buyer_nationality,
        sale_date, price_with_vat_sar, price_before_tax_sar,
-       delivery_status, delivery_date,
+       delivery_status, delivery_date, sale_status,
        unit:dsb_project_units!dsb_unit_sales_unit_id_fkey(id, unit_number, unit_type, area_m2, block_number, zone_number)`,
     )
     .eq('tenant_id', tenantId)
@@ -319,7 +320,7 @@ export default async function ProjectBuyerContractsPage({
                   <Th>رقم العقد</Th>
                   <Th>تاريخ البيع</Th>
                   <Th>السعر</Th>
-                  <Th>التسليم</Th>
+                  <Th>الحالة</Th>
                   {dsbRole === 'owner' && <Th> </Th>}
                 </tr>
               </thead>
@@ -431,10 +432,12 @@ export default async function ProjectBuyerContractsPage({
                         )}
                       </Td>
                       <Td>
-                        <DeliveryToggle
+                        <StatusToggle
                           saleId={s.id}
-                          initialDelivered={s.delivery_status === 'delivered'}
-                          initialDate={s.delivery_date}
+                          initial={
+                            (s.sale_status as 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null)
+                              ?? 'active'
+                          }
                           canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
                         />
                       </Td>
