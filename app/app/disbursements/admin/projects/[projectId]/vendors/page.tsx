@@ -101,16 +101,28 @@ export default async function ProjectVendorsPage({
     notFound()
   }
 
-  // Vendors for this project.
-  const { data: vendorsData } = await svc
-    .from('dsb_vendors')
-    .select(
-      'id, name_ar, service_category, tax_number, commercial_registration, phone, email, iban, references_text, contact_person_name, contact_person_phone, notes',
-    )
-    .eq('tenant_id', tenantId)
-    .eq('project_id', projectId)
-    .order('name_ar', { ascending: true })
-  const vendors = (vendorsData ?? []) as VendorRow[]
+  // Vendors + tenant category list — one round-trip each.
+  const [vendorsRes, categoriesRes] = await Promise.all([
+    svc
+      .from('dsb_vendors')
+      .select(
+        'id, name_ar, service_category, tax_number, commercial_registration, phone, email, iban, references_text, contact_person_name, contact_person_phone, notes',
+      )
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId)
+      .order('name_ar', { ascending: true }),
+    // Tenant-managed category dropdown source (migration 069). Empty
+    // list is fine — the picker falls back to free-text entry.
+    svc
+      .from('dsb_vendor_categories')
+      .select('id, name_ar')
+      .eq('tenant_id', tenantId)
+      .order('sort_order', { ascending: true })
+      .order('name_ar', { ascending: true }),
+  ])
+  const vendors = (vendorsRes.data ?? []) as VendorRow[]
+  const categoryOptions = ((categoriesRes.data ?? []) as Array<{ id: string; name_ar: string }>)
+    .map((c) => c.name_ar)
 
   // Contracts for those vendors (one round-trip, then bucket client-side).
   const vendorIds = vendors.map((v) => v.id)
@@ -163,7 +175,7 @@ export default async function ProjectVendorsPage({
       </header>
 
       {/* Add vendor — collapsible client form. */}
-      {canWrite && <AddVendorForm projectId={projectId} />}
+      {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}
 
       {vendors.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500 shadow-sm">
@@ -194,6 +206,7 @@ export default async function ProjectVendorsPage({
                         <EditVendorRow
                           vendor={v}
                           canEdit={canWrite}
+                          categoryOptions={categoryOptions}
                           renderView={() => (
                             <div className="leading-tight">
                               <div className="font-semibold text-slate-900">{v.name_ar}</div>

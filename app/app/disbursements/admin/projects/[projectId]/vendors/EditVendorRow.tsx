@@ -20,10 +20,13 @@ const inputCls =
 export function EditVendorRow({
   vendor,
   canEdit,
+  categoryOptions,
   renderView,
 }: {
   vendor: VendorRow
   canEdit: boolean
+  // Tenant-managed categories for the فئة الخدمة dropdown. Empty → free-text.
+  categoryOptions: string[]
   renderView: () => React.ReactNode
 }) {
   const router = useRouter()
@@ -103,12 +106,29 @@ export function EditVendorRow({
           />
         </Field>
         <Field label="فئة الخدمة">
-          <input
-            className={inputCls}
-            value={state.service_category}
-            onChange={(e) => setState({ ...state, service_category: e.target.value })}
-            disabled={saving}
-          />
+          {categoryOptions.length > 0 ? (
+            <select
+              className={inputCls}
+              value={state.service_category}
+              onChange={(e) => setState({ ...state, service_category: e.target.value })}
+              disabled={saving}
+            >
+              <option value="">— بدون —</option>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              {state.service_category && !categoryOptions.includes(state.service_category) && (
+                <option value={state.service_category}>{state.service_category} (قديم)</option>
+              )}
+            </select>
+          ) : (
+            <input
+              className={inputCls}
+              value={state.service_category}
+              onChange={(e) => setState({ ...state, service_category: e.target.value })}
+              disabled={saving}
+            />
+          )}
         </Field>
         <Field label="الرقم الضريبي">
           <input

@@ -37,7 +37,15 @@ const emptyForm: FormState = {
   notes: '',
 }
 
-export function AddVendorForm({ projectId }: { projectId: string }) {
+export function AddVendorForm({
+  projectId,
+  categoryOptions,
+}: {
+  projectId: string
+  // Tenant-managed list from /admin/settings/lists. When empty the picker
+  // falls back to free-text entry so we don't block the form.
+  categoryOptions: string[]
+}) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
@@ -121,13 +129,36 @@ export function AddVendorForm({ projectId }: { projectId: string }) {
           />
         </Field>
         <Field label="فئة الخدمة">
-          <input
-            className={inputCls}
-            value={state.service_category}
-            onChange={(e) => setState({ ...state, service_category: e.target.value })}
-            disabled={saving}
-            placeholder="مقاول رئيسي، كهرباء، تسويق…"
-          />
+          {categoryOptions.length > 0 ? (
+            // Dropdown sourced from القوائم والنسب. Include a blank option
+            // so the field stays optional, and if the vendor's current
+            // category isn't in the list (legacy free-text value) we still
+            // render it as an option so it doesn't disappear on save.
+            <select
+              className={inputCls}
+              value={state.service_category}
+              onChange={(e) => setState({ ...state, service_category: e.target.value })}
+              disabled={saving}
+            >
+              <option value="">— بدون —</option>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              {state.service_category && !categoryOptions.includes(state.service_category) && (
+                <option value={state.service_category}>{state.service_category} (قديم)</option>
+              )}
+            </select>
+          ) : (
+            // Fallback when the tenant hasn't added any categories yet —
+            // keeps the form usable and lets legacy free-text stay.
+            <input
+              className={inputCls}
+              value={state.service_category}
+              onChange={(e) => setState({ ...state, service_category: e.target.value })}
+              disabled={saving}
+              placeholder="أضِف تصنيفات من القوائم والنسب لتظهر كقائمة منسدلة"
+            />
+          )}
         </Field>
         <Field label="الرقم الضريبي">
           <input
