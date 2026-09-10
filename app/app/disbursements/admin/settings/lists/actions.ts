@@ -133,6 +133,141 @@ export async function updateLabelOverrides(
 }
 
 // ---------------------------------------------------------------------------
+// Add / delete CUSTOM deposit categories + disbursement types (migration 075).
+//
+// The shipped enum codes (buyer_collection, construction, etc.) can be
+// renamed via updateLabelOverrides above but NEVER deleted. Custom entries
+// are stored in the same JSONB with a `custom_<slug>` code so they're easy
+// to distinguish and the DB constraint recognizes them.
+// ---------------------------------------------------------------------------
+
+// Keep in sync with lib/dsb/category-labels.ts DEFAULTS.
+const DEPOSIT_DEFAULT_CODES = new Set([
+  'buyer_collection', 'wrong_transfer', 'self_financing', 'bank_financing', 'other', 'auto_distribution',
+])
+const DISBURSEMENT_DEFAULT_CODES = new Set([
+  'construction', 'admin_marketing', 'bank_financing', 'moh_incentive',
+  'unit_seriousness_fees', 'vat_project_registry', 'vat_sales_payment', 'other',
+])
+
+/** Slugify Arabic/English label into a short lowercase `custom_<slug>` code. */
+function toCustomCode(label: string, existing: Set<string>): string {
+  const base = label
+    .trim()
+    .toLowerCase()
+    // Keep ascii alphanumerics; drop everything else (Arabic, spaces, etc.).
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 30)
+  // If the label had no ascii chars at all (pure Arabic), fall back to a
+  // short random suffix so we still produce a valid code.
+  const seed = base || Math.random().toString(36).slice(2, 8)
+  let code = `custom_${seed}`
+  let i = 2
+  while (existing.has(code)) {
+    code = `custom_${seed}_${i}`
+    i += 1
+  }
+  return code
+}
+
+export async function createCustomLabel(
+  input: { kind: LabelKind; label_ar: string },
+): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+
+  const label = (input.label_ar ?? '').trim()
+  if (!label) return { ok: false, error: 'الاسم مطلوب.' }
+  if (label.length > 120) return { ok: false, error: 'الاسم طويل جدًا (بحد أقصى 120 حرفًا).' }
+
+  const column =
+    input.kind === 'deposit'      ? 'deposit_category_labels' :
+    input.kind === 'disbursement' ? 'disbursement_type_labels' :
+    null
+  if (!column) return { ok: false, error: 'قائمة غير معروفة.' }
+  const defaults =
+    input.kind === 'deposit' ? DEPOSIT_DEFAULT_CODES : DISBURSEMENT_DEFAULT_CODES
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select(column)
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as Record<string, Record<string, string> | null> | null)?.[column] ?? {}) as Record<string, string>
+  // Reject a duplicate label — case/whitespace-insensitive — regardless of code.
+  const dup = Object.values(current).some((l) => l.trim().toLowerCase() === label.toLowerCase())
+  if (dup) return { ok: false, error: 'هذا الاسم موجود بالفعل.' }
+
+  const taken = new Set([...defaults, ...Object.keys(current)])
+  const code = toCustomCode(label, taken)
+  const next = { ...current, [code]: label }
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ [column]: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true, code }
+}
+
+export async function deleteCustomLabel(
+  input: { kind: LabelKind; code: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+
+  const code = (input.code ?? '').trim()
+  if (!code) return { ok: false, error: 'الرمز مطلوب.' }
+  if (!code.startsWith('custom_')) {
+    return { ok: false, error: 'القوائم الافتراضية لا يمكن حذفها.' }
+  }
+
+  const column =
+    input.kind === 'deposit'      ? 'deposit_category_labels' :
+    input.kind === 'disbursement' ? 'disbursement_type_labels' :
+    null
+  if (!column) return { ok: false, error: 'قائمة غير معروفة.' }
+
+  const svc = createSupabaseService()
+
+  // For deposit categories only: refuse deletion if any payment still uses
+  // this code — otherwise the label vanishes and the row shows a raw slug.
+  if (input.kind === 'deposit') {
+    const { count } = await svc
+      .from('dsb_payments')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', guard.tenantId)
+      .eq('deposit_category', code)
+    if ((count ?? 0) > 0) {
+      return { ok: false, error: `لا يمكن الحذف — التصنيف مستخدم في ${count} دفعة.` }
+    }
+  }
+
+  const { data: t } = await svc
+    .from('tenants')
+    .select(column)
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as Record<string, Record<string, string> | null> | null)?.[column] ?? {}) as Record<string, string>
+  if (!(code in current)) return { ok: true } // already gone
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { [code]: _dropped, ...rest } = current
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ [column]: rest })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Vendor / service-provider categories — CRUD
 // ---------------------------------------------------------------------------
 

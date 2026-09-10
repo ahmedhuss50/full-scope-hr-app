@@ -76,6 +76,19 @@ export default async function ListsAndPercentagesPage() {
     { code: 'bank_financing',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.bank_financing,   description: 'قرض تنموي أو تمويل مؤسسي.',                          toneCls: 'bg-indigo-50 text-indigo-800 ring-indigo-200' },
     { code: 'other',            defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.other,            description: 'أي إيداع لا يندرج تحت التصنيفات أعلاه.',              toneCls: 'bg-slate-50 text-slate-800 ring-slate-200' },
   ]
+  // Append any tenant-added custom deposit categories (migration 075). These
+  // are just keys in the overrides JSONB that start with `custom_`.
+  for (const [code, label] of Object.entries(depositLabelOverrides ?? {})) {
+    if (code.startsWith('custom_')) {
+      depositRows.push({
+        code,
+        defaultLabel: label, // custom rows have no "default" — the label IS the default
+        isCustom: true,
+        toneCls: 'bg-purple-50 text-purple-800 ring-purple-200',
+      })
+    }
+  }
+
   const disbursementRows: LabelRow[] = [
     { code: 'construction',          defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.construction },
     { code: 'admin_marketing',       defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.admin_marketing },
@@ -86,6 +99,11 @@ export default async function ListsAndPercentagesPage() {
     { code: 'vat_sales_payment',     defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.vat_sales_payment },
     { code: 'other',                 defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.other },
   ]
+  for (const [code, label] of Object.entries(disbursementLabelOverrides ?? {})) {
+    if (code.startsWith('custom_')) {
+      disbursementRows.push({ code, defaultLabel: label, isCustom: true })
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto" dir="rtl">
