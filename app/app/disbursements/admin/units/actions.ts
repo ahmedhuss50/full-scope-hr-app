@@ -1990,3 +1990,197 @@ export async function signContractPreviewUrl(
   }
   return { ok: true, url: data.signedUrl }
 }
+
+// ---------------------------------------------------------------------------
+// Unit completion + per-unit PDF attachments (migration 074)
+// ---------------------------------------------------------------------------
+// Surfaces on قائمة الوحدات:
+//   - CompletionToggle       → updateUnitCompletion
+//   - UnitAttachmentButton   → requestUnitDocUploadUrl → attachUnitDoc
+//                              → getUnitDocPreviewUrl (view later)
+// ---------------------------------------------------------------------------
+
+export type UnitDocKind = 'completion' | 'delivery'
+
+const UNIT_DOC_COLUMNS: Record<
+  UnitDocKind,
+  { path: string; filename: string; size: string; label: string }
+> = {
+  completion: {
+    path:     'completion_attachment_storage_path',
+    filename: 'completion_attachment_filename',
+    size:     'completion_attachment_size_bytes',
+    label:    'مرفق الإنجاز',
+  },
+  delivery: {
+    path:     'delivery_attachment_storage_path',
+    filename: 'delivery_attachment_filename',
+    size:     'delivery_attachment_size_bytes',
+    label:    'مرفق التسليم',
+  },
+}
+
+/** Verify caller can act on `unit_id`, returning the unit's project_id. */
+async function resolveUnitForCaller(
+  caller: CallerCtx,
+  unitId: string,
+): Promise<
+  | { ok: true; unit: { id: string; tenant_id: string; project_id: string } }
+  | { ok: false; error: string }
+> {
+  const svc = createSupabaseService()
+  const { data, error } = await svc
+    .from('dsb_project_units')
+    .select('id, tenant_id, project_id')
+    .eq('id', unitId)
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data || (data as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'الوحدة غير موجودة.' }
+  }
+  const guard = await assertCanWriteToProjects(caller, [(data as { project_id: string }).project_id])
+  if (!guard.ok) return guard
+  return { ok: true, unit: data as { id: string; tenant_id: string; project_id: string } }
+}
+
+/**
+ * updateUnitCompletion — inline toggle on the قائمة الوحدات list.
+ *
+ * completed=true  → sets completion_status='completed'; stamps today if the
+ *                    caller didn't pass a date and none exists.
+ * completed=false → clears both status and date.
+ */
+export async function updateUnitCompletion(
+  input: { unit_id: string; completed: boolean; completion_date?: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (!input.unit_id) return { ok: false, error: 'المُعرِّف مطلوب.' }
+
+  const resolved = await resolveUnitForCaller(caller, input.unit_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const { data: existing } = await svc
+    .from('dsb_project_units')
+    .select('completion_date')
+    .eq('id', input.unit_id)
+    .maybeSingle()
+
+  const explicitDate = (input.completion_date ?? '').trim()
+  if (explicitDate && !/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
+    return { ok: false, error: 'تاريخ الإنجاز غير صالح.' }
+  }
+
+  const patch: Record<string, string | null> = input.completed
+    ? {
+        completion_status: 'completed',
+        completion_date:
+          explicitDate ||
+          ((existing as { completion_date: string | null } | null)?.completion_date ?? null) ||
+          new Date().toISOString().slice(0, 10),
+      }
+    : {
+        completion_status: 'not_completed',
+        completion_date: null,
+      }
+
+  const { error } = await svc
+    .from('dsb_project_units')
+    .update(patch)
+    .eq('id', input.unit_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${resolved.unit.project_id}/units`)
+  return { ok: true }
+}
+
+export async function requestUnitDocUploadUrl(
+  input: { unit_id: string; kind: UnitDocKind; filename: string; size: number },
+): Promise<
+  | { ok: true; signed_url: string; storage_path: string }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (!input.unit_id) return { ok: false, error: 'الوحدة مطلوبة.' }
+  if (!UNIT_DOC_COLUMNS[input.kind]) return { ok: false, error: 'نوع المستند غير معروف.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+  if (input.size > MAX_CONTRACT_SIZE) {
+    return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
+  }
+
+  const resolved = await resolveUnitForCaller(caller, input.unit_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const uuid = crypto.randomUUID()
+  const safe = sanitizeFilename(input.filename || `${input.kind}-${uuid}.pdf`)
+  const storagePath = `dsb-unit-docs/${caller.tenantId}/${resolved.unit.project_id}/${resolved.unit.id}/${input.kind}/${uuid}-${safe}`
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath)
+  if (error || !data) return { ok: false, error: 'تعذّر إنشاء رابط الرفع.' }
+  return { ok: true, signed_url: data.signedUrl, storage_path: data.path ?? storagePath }
+}
+
+export async function attachUnitDoc(
+  input: { unit_id: string; kind: UnitDocKind; storage_path: string; filename: string; size: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const cols = UNIT_DOC_COLUMNS[input.kind]
+  if (!cols) return { ok: false, error: 'نوع المستند غير معروف.' }
+  if (!input.unit_id) return { ok: false, error: 'الوحدة مطلوبة.' }
+  if (!input.storage_path) return { ok: false, error: 'مسار الملف مطلوب.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+
+  const resolved = await resolveUnitForCaller(caller, input.unit_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const { error } = await svc
+    .from('dsb_project_units')
+    .update({
+      [cols.path]:     input.storage_path,
+      [cols.filename]: sanitizeFilename(input.filename || `${input.kind}.pdf`),
+      [cols.size]:     input.size,
+    })
+    .eq('id', input.unit_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${resolved.unit.project_id}/units`)
+  return { ok: true }
+}
+
+/** Signed URL for previewing an already-attached unit doc. */
+export async function getUnitDocPreviewUrl(
+  input: { unit_id: string; kind: UnitDocKind },
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const cols = UNIT_DOC_COLUMNS[input.kind]
+  if (!cols) return { ok: false, error: 'نوع المستند غير معروف.' }
+
+  const resolved = await resolveUnitForCaller(caller, input.unit_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const { data: u } = await svc
+    .from('dsb_project_units')
+    .select(cols.path)
+    .eq('id', input.unit_id)
+    .eq('tenant_id', caller.tenantId)
+    .maybeSingle()
+  const path = (u as Record<string, string | null> | null)?.[cols.path]
+  if (!path) return { ok: false, error: `لا يوجد ملف مرفق (${cols.label}).` }
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(path, 3600)
+  if (error || !data?.signedUrl) return { ok: false, error: 'تعذّر إنشاء رابط المعاينة.' }
+  return { ok: true, url: data.signedUrl }
+}

@@ -17,6 +17,8 @@ import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteUnit, deleteAllUnitsForProject } from '../../../units/actions'
 import { DeliveryToggle } from '../buyer-contracts/DeliveryToggle'
+import { CompletionToggle } from './CompletionToggle'
+import { UnitAttachmentButton } from './UnitAttachmentButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +32,12 @@ type UnitRow = {
   district: string | null
   city: string | null
   region: string | null
+  completion_status: string | null
+  completion_date: string | null
+  completion_attachment_storage_path: string | null
+  completion_attachment_filename: string | null
+  delivery_attachment_storage_path: string | null
+  delivery_attachment_filename: string | null
 }
 
 type SaleLite = {
@@ -113,7 +121,12 @@ export default async function ProjectUnitsListPage({
   const q = (searchParams?.q ?? '').trim()
   let unitsQ = svc
     .from('dsb_project_units')
-    .select('id, unit_number, unit_type, area_m2, block_number, zone_number, district, city, region')
+    .select(
+      `id, unit_number, unit_type, area_m2, block_number, zone_number, district, city, region,
+       completion_status, completion_date,
+       completion_attachment_storage_path, completion_attachment_filename,
+       delivery_attachment_storage_path, delivery_attachment_filename`,
+    )
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
     .order('unit_number', { ascending: true })
@@ -248,7 +261,10 @@ export default async function ProjectUnitsListPage({
                   <Th>النوع / المساحة</Th>
                   <Th>الموقع</Th>
                   <Th>المشتري والعقد</Th>
+                  <Th>الإنجاز</Th>
+                  <Th>مرفق الإنجاز</Th>
                   <Th>التسليم</Th>
+                  <Th>مرفق التسليم</Th>
                   {dsbRole === 'owner' && <Th> </Th>}
                 </tr>
               </thead>
@@ -320,6 +336,23 @@ export default async function ProjectUnitsListPage({
                         )}
                       </Td>
                       <Td>
+                        <CompletionToggle
+                          unitId={u.id}
+                          initialCompleted={u.completion_status === 'completed'}
+                          initialDate={u.completion_date}
+                          canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                        />
+                      </Td>
+                      <Td>
+                        <UnitAttachmentButton
+                          unitId={u.id}
+                          kind="completion"
+                          hasFile={!!u.completion_attachment_storage_path}
+                          filename={u.completion_attachment_filename}
+                          canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                        />
+                      </Td>
+                      <Td>
                         {sale ? (
                           <DeliveryToggle
                             saleId={sale.id}
@@ -330,6 +363,15 @@ export default async function ProjectUnitsListPage({
                         ) : (
                           <span className="text-[10px] text-slate-400 italic">—</span>
                         )}
+                      </Td>
+                      <Td>
+                        <UnitAttachmentButton
+                          unitId={u.id}
+                          kind="delivery"
+                          hasFile={!!u.delivery_attachment_storage_path}
+                          filename={u.delivery_attachment_filename}
+                          canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                        />
                       </Td>
                       {dsbRole === 'owner' && (
                         <Td>
