@@ -3,7 +3,13 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Check, X, Loader2, Trash2, Paperclip } from 'lucide-react'
-import { addVendor, requestVendorContractUploadUrl, attachContractPdf } from './actions'
+import {
+  addVendor,
+  requestVendorContractUploadUrl,
+  attachContractPdf,
+  requestVendorDocUploadUrl,
+  attachVendorDoc,
+} from './actions'
 
 /**
  * Inline contract draft — one row in the contracts table inside the
@@ -76,6 +82,10 @@ export function AddVendorForm({
   // we send drafts to a server action). Array is index-aligned with
   // `contracts` — file[i] belongs to contracts[i]. Null when no file picked.
   const [contractFiles, setContractFiles] = useState<Array<File | null>>([null])
+  // Per-vendor document attachments (migration 072). Uploaded via the same
+  // signed-URL flow as contract PDFs after the vendor lands.
+  const [vatCertFile, setVatCertFile] = useState<File | null>(null)
+  const [crFile,      setCrFile]      = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -84,6 +94,8 @@ export function AddVendorForm({
     setState(emptyForm)
     setContracts([{ ...emptyContract }])
     setContractFiles([null])
+    setVatCertFile(null)
+    setCrFile(null)
     setError(null)
     setUploadStatus(null)
   }
@@ -172,6 +184,40 @@ export function AddVendorForm({
         uploadErrors.push(`صف ${i + 1}: خطأ غير متوقع (${(e as Error).message}).`)
       }
     }
+    // Per-vendor doc uploads (VAT cert + Commercial Registration).
+    for (const [kind, file, label] of [
+      ['vat', vatCertFile,   'الشهادة الضريبية'],
+      ['cr',  crFile,         'السجل التجاري'],
+    ] as const) {
+      if (!file) continue
+      setUploadStatus(`جارٍ رفع ${label}…`)
+      try {
+        const urlRes = await requestVendorDocUploadUrl({
+          vendor_id: res.id,
+          kind,
+          filename: file.name,
+          size:     file.size,
+        })
+        if (!urlRes.ok) { uploadErrors.push(`${label}: ${urlRes.error}`); continue }
+        const putRes = await fetch(urlRes.signed_url, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type || 'application/pdf' },
+        })
+        if (!putRes.ok) { uploadErrors.push(`${label}: فشل رفع الملف (${putRes.status}).`); continue }
+        const attachRes = await attachVendorDoc({
+          vendor_id: res.id,
+          kind,
+          storage_path: urlRes.storage_path,
+          filename: file.name,
+          size: file.size,
+        })
+        if (!attachRes.ok) uploadErrors.push(`${label}: ${attachRes.error}`)
+      } catch (e) {
+        uploadErrors.push(`${label}: خطأ غير متوقع (${(e as Error).message}).`)
+      }
+    }
+
     setSaving(false)
     setUploadStatus(null)
     if (uploadErrors.length > 0) {
@@ -270,6 +316,14 @@ export function AddVendorForm({
             dir="ltr"
           />
         </Field>
+        <Field label="إرفاق الشهادة الضريبية (PDF)">
+          <DocFileInput
+            file={vatCertFile}
+            onChange={setVatCertFile}
+            disabled={saving}
+            placeholder="اختر ملف شهادة الضريبة"
+          />
+        </Field>
         <Field label="السجل التجاري">
           <input
             className={inputCls}
@@ -277,6 +331,14 @@ export function AddVendorForm({
             onChange={(e) => setState({ ...state, commercial_registration: e.target.value })}
             disabled={saving}
             dir="ltr"
+          />
+        </Field>
+        <Field label="إرفاق السجل التجاري (PDF)">
+          <DocFileInput
+            file={crFile}
+            onChange={setCrFile}
+            disabled={saving}
+            placeholder="اختر ملف السجل التجاري"
           />
         </Field>
         <Field label="الجوال">
@@ -555,6 +617,50 @@ function Field({
     <div className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
       <label className="text-[11px] font-semibold text-slate-500 mb-1 block">{label}</label>
       {children}
+    </div>
+  )
+}
+
+/**
+ * DocFileInput — small helper for the two per-vendor doc attachments
+ * (VAT cert, commercial registration). Visually matches the other Field
+ * inputs so the row heights line up.
+ */
+function DocFileInput({
+  file,
+  onChange,
+  disabled,
+  placeholder,
+}: {
+  file: File | null
+  onChange: (f: File | null) => void
+  disabled: boolean
+  placeholder: string
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="flex-1 inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 cursor-pointer hover:bg-slate-50 disabled:bg-slate-50 truncate">
+        <Paperclip className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
+        <span className="truncate">{file?.name ?? placeholder}</span>
+        <input
+          type="file"
+          accept=".pdf,application/pdf"
+          className="sr-only"
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          disabled={disabled}
+        />
+      </label>
+      {file && (
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          disabled={disabled}
+          title="إزالة الملف"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-red-600 hover:bg-red-50 shrink-0"
+        >
+          <X className="w-3.5 h-3.5" aria-hidden="true" />
+        </button>
+      )}
     </div>
   )
 }

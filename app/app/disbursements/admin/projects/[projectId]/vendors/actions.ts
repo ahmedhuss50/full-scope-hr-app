@@ -713,3 +713,121 @@ export async function signVendorContractPreviewUrl(
   }
   return { ok: true, url: data.signedUrl }
 }
+
+// ---------------------------------------------------------------------------
+// Per-vendor document uploads (VAT certificate + Commercial Registration).
+// Same signed-URL pattern as contract PDFs. `kind` picks which column set
+// on dsb_vendors gets the metadata (migration 072).
+// ---------------------------------------------------------------------------
+
+export type VendorDocKind = 'vat' | 'cr'
+
+const VENDOR_DOC_COLUMNS: Record<VendorDocKind, { path: string; filename: string; size: string; label: string }> = {
+  vat: {
+    path:     'vat_certificate_storage_path',
+    filename: 'vat_certificate_filename',
+    size:     'vat_certificate_size_bytes',
+    label:    'الشهادة الضريبية',
+  },
+  cr: {
+    path:     'commercial_registration_storage_path',
+    filename: 'commercial_registration_filename',
+    size:     'commercial_registration_size_bytes',
+    label:    'السجل التجاري',
+  },
+}
+
+export async function requestVendorDocUploadUrl(
+  input: { vendor_id: string; kind: VendorDocKind; filename: string; size: number },
+): Promise<
+  | { ok: true; signed_url: string; storage_path: string }
+  | { ok: false; error: string }
+> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (!input.vendor_id) return { ok: false, error: 'المورد مطلوب.' }
+  if (!VENDOR_DOC_COLUMNS[input.kind]) return { ok: false, error: 'نوع المستند غير معروف.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+  if (input.size > MAX_CONTRACT_SIZE) {
+    return { ok: false, error: 'حجم الملف يتجاوز الحد الأقصى (50 ميغابايت).' }
+  }
+
+  const resolved = await resolveVendorForCaller(caller, input.vendor_id)
+  if (!resolved.ok) return resolved
+  const guard = await assertCanWriteToProjects(caller, [resolved.vendor.project_id])
+  if (!guard.ok) return guard
+
+  const svc = createSupabaseService()
+  const uuid = crypto.randomUUID()
+  const safe = sanitizeFilename(input.filename || `${input.kind}-${uuid}.pdf`)
+  const storagePath = `dsb-vendor-docs/${caller.tenantId}/${resolved.vendor.project_id}/${resolved.vendor.id}/${input.kind}/${uuid}-${safe}`
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath)
+  if (error || !data) {
+    return { ok: false, error: 'تعذّر إنشاء رابط الرفع.' }
+  }
+  return { ok: true, signed_url: data.signedUrl, storage_path: data.path ?? storagePath }
+}
+
+export async function attachVendorDoc(
+  input: { vendor_id: string; kind: VendorDocKind; storage_path: string; filename: string; size: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const cols = VENDOR_DOC_COLUMNS[input.kind]
+  if (!cols) return { ok: false, error: 'نوع المستند غير معروف.' }
+  if (!input.vendor_id) return { ok: false, error: 'المورد مطلوب.' }
+  if (!input.storage_path) return { ok: false, error: 'مسار الملف مطلوب.' }
+  if (!input.size || input.size <= 0) return { ok: false, error: 'حجم الملف غير صالح.' }
+
+  const resolved = await resolveVendorForCaller(caller, input.vendor_id)
+  if (!resolved.ok) return resolved
+  const guard = await assertCanWriteToProjects(caller, [resolved.vendor.project_id])
+  if (!guard.ok) return guard
+
+  const svc = createSupabaseService()
+  const { error } = await svc
+    .from('dsb_vendors')
+    .update({
+      [cols.path]:     input.storage_path,
+      [cols.filename]: sanitizeFilename(input.filename || `${input.kind}.pdf`),
+      [cols.size]:     input.size,
+    })
+    .eq('id', input.vendor_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${resolved.vendor.project_id}/vendors`)
+  return { ok: true }
+}
+
+/** Signed URL for previewing an already-attached vendor doc. */
+export async function getVendorDocPreviewUrl(
+  input: { vendor_id: string; kind: VendorDocKind },
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const cols = VENDOR_DOC_COLUMNS[input.kind]
+  if (!cols) return { ok: false, error: 'نوع المستند غير معروف.' }
+
+  const resolved = await resolveVendorForCaller(caller, input.vendor_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const { data: v } = await svc
+    .from('dsb_vendors')
+    .select(cols.path)
+    .eq('id', input.vendor_id)
+    .eq('tenant_id', caller.tenantId)
+    .maybeSingle()
+  const path = (v as Record<string, string | null> | null)?.[cols.path]
+  if (!path) return { ok: false, error: `لا يوجد ملف مرفق (${cols.label}).` }
+
+  const { data, error } = await svc.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(path, 3600)
+  if (error || !data?.signedUrl) return { ok: false, error: 'تعذّر إنشاء رابط المعاينة.' }
+  return { ok: true, url: data.signedUrl }
+}
