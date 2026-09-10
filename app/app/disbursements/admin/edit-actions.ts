@@ -207,6 +207,11 @@ export interface UpdateProjectInput {
   // Which named checklist template this project uses. null = fall back to
   // the client's template, then to the tenant default. undefined = leave alone.
   checklist_template_id?: string | null
+  // Migration 066 — REGA (الهيئة العامة للعقار) fields. All optional; the
+  // delivery-notice generator surfaces «لم يُعبَّأ» for anything missing.
+  rega_license_no?: string | null
+  rega_agreement_date_hijri?: string | null
+  rega_agreement_date_gregorian?: string | null // 'YYYY-MM-DD'
 }
 
 export async function updateProject(
@@ -279,6 +284,10 @@ export async function updateProject(
       bank_iban: (input.bank_iban ?? '').trim().toUpperCase() || null,
       ...(input.status ? { status: input.status } : {}),
       ...templatePatch,
+      // REGA fields — undefined means "don't touch"; explicit null clears.
+      ...(input.rega_license_no                 !== undefined ? { rega_license_no:                 (input.rega_license_no ?? '').trim() || null } : {}),
+      ...(input.rega_agreement_date_hijri       !== undefined ? { rega_agreement_date_hijri:       (input.rega_agreement_date_hijri ?? '').trim() || null } : {}),
+      ...(input.rega_agreement_date_gregorian   !== undefined ? { rega_agreement_date_gregorian:   (input.rega_agreement_date_gregorian ?? '').trim() || null } : {}),
     })
     .eq('id', input.project_id)
     .eq('tenant_id', caller.tenantId)

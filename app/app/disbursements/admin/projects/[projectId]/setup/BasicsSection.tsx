@@ -26,6 +26,12 @@ type Project = {
   bank_iban: string | null
   checklist_template_id: string | null
   assigned_employee_id: string | null
+  // Migration 066 — REGA (الهيئة العامة للعقار) fields. Populated by the
+  // owner during project setup; drive the auto-generated quarterly report
+  // package (delivery notice, accountant workbook, etc.).
+  rega_license_no: string | null
+  rega_agreement_date_hijri: string | null
+  rega_agreement_date_gregorian: string | null
 }
 type ClientOpt = { id: string; company_name_ar: string }
 
@@ -61,6 +67,10 @@ export function BasicsSection({
   const [status, setStatus] = useState<'active' | 'archived' | 'inactive'>(
     (project.status as 'active' | 'archived' | 'inactive') ?? 'active',
   )
+  // REGA fields — drive the auto-generated quarterly report package.
+  const [regaLicense, setRegaLicense] = useState(project.rega_license_no ?? '')
+  const [regaHijri,   setRegaHijri]   = useState(project.rega_agreement_date_hijri ?? '')
+  const [regaGreg,    setRegaGreg]    = useState(project.rega_agreement_date_gregorian ?? '')
 
   function reset() {
     setCode(project.code)
@@ -68,6 +78,9 @@ export function BasicsSection({
     setDeveloperId(project.developer_id)
     setNotes(project.notes ?? '')
     setStatus((project.status as 'active' | 'archived' | 'inactive') ?? 'active')
+    setRegaLicense(project.rega_license_no ?? '')
+    setRegaHijri(project.rega_agreement_date_hijri ?? '')
+    setRegaGreg(project.rega_agreement_date_gregorian ?? '')
     setError(null)
   }
 
@@ -88,6 +101,9 @@ export function BasicsSection({
       bank_account: project.bank_account,
       bank_iban: project.bank_iban,
       checklist_template_id: project.checklist_template_id,
+      rega_license_no: regaLicense.trim() || null,
+      rega_agreement_date_hijri: regaHijri.trim() || null,
+      rega_agreement_date_gregorian: regaGreg.trim() || null,
     })
     setSaving(false)
     if (!res.ok) { setError(res.error); return }
@@ -120,6 +136,18 @@ export function BasicsSection({
               <dt className="text-slate-500 text-xs">الحالة:</dt>
               <dd className="text-slate-800">{statusLabel(project.status)}</dd>
             </div>
+            {project.rega_license_no && (
+              <div className="flex items-baseline gap-2 min-w-0">
+                <dt className="text-slate-500 text-xs">رخصة REGA:</dt>
+                <dd className="font-mono text-slate-800 truncate" dir="ltr">{project.rega_license_no}</dd>
+              </div>
+            )}
+            {project.rega_agreement_date_hijri && (
+              <div className="flex items-baseline gap-2 min-w-0">
+                <dt className="text-slate-500 text-xs">تاريخ الاتفاقية (هـ):</dt>
+                <dd className="text-slate-800 truncate">{project.rega_agreement_date_hijri}</dd>
+              </div>
+            )}
             {project.notes && (
               <div className="sm:col-span-2 flex items-baseline gap-2 min-w-0">
                 <dt className="text-slate-500 text-xs">ملاحظات:</dt>
@@ -166,6 +194,26 @@ export function BasicsSection({
         <div className="sm:col-span-2">
           <label className="text-xs font-semibold text-slate-500 mb-1 block">ملاحظات</label>
           <textarea rows={2} className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
+        </div>
+        {/* REGA identifiers — needed to generate the quarterly delivery
+            notice + accountant workbook. All three optional; missing
+            fields render as «لم يُعبَّأ» in the generated document. */}
+        <div className="sm:col-span-2 pt-2 mt-1 border-t border-slate-100">
+          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+            بيانات REGA (الهيئة العامة للعقار)
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم رخصة المشروع (REGA)</label>
+          <input className={inputCls} value={regaLicense} onChange={(e) => setRegaLicense(e.target.value)} disabled={saving} dir="ltr" placeholder="مثال: أ/208" />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ اتفاقية REGA (هجري)</label>
+          <input className={inputCls} value={regaHijri} onChange={(e) => setRegaHijri(e.target.value)} disabled={saving} placeholder="مثال: 02 /07/1445هـ" />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ اتفاقية REGA (ميلادي)</label>
+          <input type="date" className={inputCls} value={regaGreg} onChange={(e) => setRegaGreg(e.target.value)} disabled={saving} dir="ltr" />
         </div>
       </div>
       {error && (

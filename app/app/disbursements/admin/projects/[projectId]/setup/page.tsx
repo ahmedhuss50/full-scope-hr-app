@@ -17,7 +17,7 @@
  */
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowRight, Settings2 } from 'lucide-react'
+import { ArrowRight, Settings2, FileDown } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { SectionCard } from './SectionCard'
 import { BasicsSection } from './BasicsSection'
@@ -37,6 +37,9 @@ type ProjectRow = {
   bank_account: string | null
   bank_iban: string | null
   checklist_template_id: string | null
+  rega_license_no: string | null
+  rega_agreement_date_hijri: string | null
+  rega_agreement_date_gregorian: string | null
 }
 
 export default async function ProjectSetupPage({
@@ -69,7 +72,7 @@ export default async function ProjectSetupPage({
   // ---- Project + tenant scope ----
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -235,6 +238,9 @@ export default async function ProjectSetupPage({
               bank_iban: project.bank_iban,
               checklist_template_id: project.checklist_template_id,
               assigned_employee_id: project.assigned_employee_id,
+              rega_license_no: project.rega_license_no,
+              rega_agreement_date_hijri: project.rega_agreement_date_hijri,
+              rega_agreement_date_gregorian: project.rega_agreement_date_gregorian,
             }}
             developerName={developerName}
             clients={clients}
@@ -321,7 +327,82 @@ export default async function ProjectSetupPage({
           emptyPrompt="لم تُسجَّل أي دفعات بعد."
         />
       </div>
+
+      {/* REGA quarterly report — generate the delivery notice (اشعار تسليم)
+          docx per project + quarter. First deliverable of the auto-report
+          pipeline. Subsequent slices will add the accountant workbook, the
+          buyers register, the PDF render, and the zip package. */}
+      <RegaReportsCard
+        projectId={project.id}
+        projectName={project.name_ar}
+        currentYear={new Date().getFullYear()}
+        regaReady={Boolean(project.rega_license_no)}
+      />
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// RegaReportsCard — the "generate REGA package" surface. Renders four Q1..Q4
+// download links pointing at /api/dsb-delivery-notice. Deliberately simple
+// for slice 1 (docx only); the same card will grow xlsx/pdf/zip buttons as
+// the generators come online. When the project hasn't been given a REGA
+// license yet, we still render the buttons — the API generates the docx with
+// «لم يُعبَّأ» inline so the owner can see the shape and know which fields to
+// fill in first (no dead 404).
+// ---------------------------------------------------------------------------
+function RegaReportsCard({
+  projectId,
+  projectName,
+  currentYear,
+  regaReady,
+}: {
+  projectId: string
+  projectName: string
+  currentYear: number
+  regaReady: boolean
+}) {
+  const quarters: Array<{ code: 'Q1' | 'Q2' | 'Q3' | 'Q4'; label: string }> = [
+    { code: 'Q1', label: 'الربع الأول' },
+    { code: 'Q2', label: 'الربع الثاني' },
+    { code: 'Q3', label: 'الربع الثالث' },
+    { code: 'Q4', label: 'الربع الرابع' },
+  ]
+  return (
+    <section className="rounded-xl border border-teal-200 bg-teal-50/30 shadow-sm p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <FileDown className="w-5 h-5 text-teal-700" aria-hidden="true" />
+        <h2 className="serif font-bold text-base text-slate-900">
+          تقارير REGA الربعية
+        </h2>
+      </div>
+      <p className="text-xs text-slate-600 leading-relaxed">
+        توليد إشعار تسليم التقرير الربعي («اشعار تسليم تقرير») للهيئة العامة للعقار
+        باستخدام بيانات المشروع الحية.{' '}
+        {!regaReady && (
+          <span className="text-amber-700 font-semibold">
+            أكمِل بيانات REGA في القسم الأول أعلاه ليظهر رقم الرخصة وتاريخ الاتفاقية في المستند.
+          </span>
+        )}
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        {quarters.map((q) => (
+          <a
+            key={q.code}
+            href={`/api/dsb-delivery-notice?project_id=${projectId}&quarter=${q.code}&year=${currentYear}`}
+            download
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-teal-300 text-teal-800 text-sm font-semibold hover:bg-teal-50 transition"
+            title={`تنزيل إشعار تسليم ${q.label} ${currentYear} لمشروع ${projectName}`}
+          >
+            <FileDown className="w-4 h-4" aria-hidden="true" />
+            {q.label} {currentYear}
+          </a>
+        ))}
+      </div>
+      <div className="text-[11px] text-slate-500">
+        الملفات القادمة (قريبًا): تقرير المحاسب القانوني (Excel) · سجل المشترين (Excel) · التقرير الموقّع (PDF) · حزمة التسليم كاملة (ZIP)
+      </div>
+    </section>
   )
 }
 
