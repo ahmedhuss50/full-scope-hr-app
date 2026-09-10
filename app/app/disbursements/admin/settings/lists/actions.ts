@@ -171,6 +171,77 @@ function toCustomCode(label: string, existing: Set<string>): string {
   return code
 }
 
+/**
+ * renameLabel — patch a single entry in the labels JSONB.
+ *
+ * Works for both fixed enum codes (creates/updates an override) and custom
+ * codes (updates the label on the custom entry). Passing an empty label on
+ * a FIXED code removes the override (row reverts to default); on a CUSTOM
+ * code it's rejected (use deleteCustomLabel instead).
+ */
+export async function renameLabel(
+  input: { kind: LabelKind; code: string; label_ar: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+
+  const code  = (input.code ?? '').trim()
+  const label = (input.label_ar ?? '').trim()
+  if (!code) return { ok: false, error: 'الرمز مطلوب.' }
+  if (label.length > 120) return { ok: false, error: 'الاسم طويل جدًا.' }
+
+  const isCustom = code.startsWith('custom_')
+  if (isCustom && !label) {
+    return { ok: false, error: 'لا يمكن مسح اسم تصنيف مضاف. استخدم زر الحذف.' }
+  }
+
+  const column =
+    input.kind === 'deposit'      ? 'deposit_category_labels' :
+    input.kind === 'disbursement' ? 'disbursement_type_labels' :
+    null
+  if (!column) return { ok: false, error: 'قائمة غير معروفة.' }
+  const defaults =
+    input.kind === 'deposit' ? DEPOSIT_DEFAULT_CODES : DISBURSEMENT_DEFAULT_CODES
+  if (!isCustom && !defaults.has(code)) {
+    return { ok: false, error: 'رمز غير معروف.' }
+  }
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select(column)
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as Record<string, Record<string, string> | null> | null)?.[column] ?? {}) as Record<string, string>
+
+  // Duplicate-name guard — comparing against every OTHER entry (including
+  // shipped defaults for the other codes when the label differs from theirs).
+  if (label) {
+    for (const [k, v] of Object.entries(current)) {
+      if (k === code) continue
+      if (v.trim().toLowerCase() === label.toLowerCase()) {
+        return { ok: false, error: 'هذا الاسم مستخدَم من تصنيف آخر.' }
+      }
+    }
+  }
+
+  const next: Record<string, string> = { ...current }
+  if (!label) {
+    delete next[code] // fixed code: revert to shipped default
+  } else {
+    next[code] = label
+  }
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ [column]: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
 export async function createCustomLabel(
   input: { kind: LabelKind; label_ar: string },
 ): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
