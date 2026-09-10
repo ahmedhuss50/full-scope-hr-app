@@ -42,6 +42,7 @@ type FormState = {
   phone: string
   email: string
   iban: string
+  bank_name: string
   references_text: string
   contact_person_name: string
   contact_person_phone: string
@@ -56,6 +57,7 @@ const emptyForm: FormState = {
   phone: '',
   email: '',
   iban: '',
+  bank_name: '',
   references_text: '',
   contact_person_name: '',
   contact_person_phone: '',
@@ -84,8 +86,9 @@ export function AddVendorForm({
   const [contractFiles, setContractFiles] = useState<Array<File | null>>([null])
   // Per-vendor document attachments (migration 072). Uploaded via the same
   // signed-URL flow as contract PDFs after the vendor lands.
-  const [vatCertFile, setVatCertFile] = useState<File | null>(null)
-  const [crFile,      setCrFile]      = useState<File | null>(null)
+  const [vatCertFile,       setVatCertFile]       = useState<File | null>(null)
+  const [crFile,            setCrFile]            = useState<File | null>(null)
+  const [ibanOwnershipFile, setIbanOwnershipFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -96,6 +99,7 @@ export function AddVendorForm({
     setContractFiles([null])
     setVatCertFile(null)
     setCrFile(null)
+    setIbanOwnershipFile(null)
     setError(null)
     setUploadStatus(null)
   }
@@ -126,6 +130,7 @@ export function AddVendorForm({
       phone: state.phone || null,
       email: state.email || null,
       iban: state.iban || null,
+      bank_name: state.bank_name || null,
       references_text: state.references_text || null,
       contact_person_name: state.contact_person_name || null,
       contact_person_phone: state.contact_person_phone || null,
@@ -186,8 +191,9 @@ export function AddVendorForm({
     }
     // Per-vendor doc uploads (VAT cert + Commercial Registration).
     for (const [kind, file, label] of [
-      ['vat', vatCertFile,   'الشهادة الضريبية'],
-      ['cr',  crFile,         'السجل التجاري'],
+      ['vat',            vatCertFile,       'الشهادة الضريبية'],
+      ['cr',             crFile,             'السجل التجاري'],
+      ['iban_ownership', ibanOwnershipFile,  'شهادة ملكية IBAN'],
     ] as const) {
       if (!file) continue
       setUploadStatus(`جارٍ رفع ${label}…`)
@@ -360,6 +366,15 @@ export function AddVendorForm({
             type="email"
           />
         </Field>
+        <Field label="اسم البنك">
+          <input
+            className={inputCls}
+            value={state.bank_name}
+            onChange={(e) => setState({ ...state, bank_name: e.target.value })}
+            disabled={saving}
+            placeholder="مثلاً: بنك الرياض"
+          />
+        </Field>
         <Field label="IBAN">
           <input
             className={inputCls}
@@ -368,6 +383,14 @@ export function AddVendorForm({
             disabled={saving}
             dir="ltr"
             placeholder="SA__ ____ ____ ____ ____ ____"
+          />
+        </Field>
+        <Field label="إرفاق شهادة ملكية IBAN (PDF)">
+          <DocFileInput
+            file={ibanOwnershipFile}
+            onChange={setIbanOwnershipFile}
+            disabled={saving}
+            placeholder="اختر ملف شهادة ملكية IBAN"
           />
         </Field>
         <Field label="اسم مسؤول التواصل">

@@ -138,6 +138,7 @@ export interface AddVendorInput {
   phone?: string | null
   email?: string | null
   iban?: string | null
+  bank_name?: string | null            // Migration 073
   references_text?: string | null
   contact_person_name?: string | null
   contact_person_phone?: string | null
@@ -186,6 +187,7 @@ export async function addVendor(
       phone: (input.phone ?? '').trim() || null,
       email: (input.email ?? '').trim().toLowerCase() || null,
       iban: (input.iban ?? '').trim().toUpperCase() || null,
+      bank_name: (input.bank_name ?? '').trim() || null,
       references_text: (input.references_text ?? '').trim() || null,
       contact_person_name: (input.contact_person_name ?? '').trim() || null,
       contact_person_phone: (input.contact_person_phone ?? '').trim() || null,
@@ -720,7 +722,7 @@ export async function signVendorContractPreviewUrl(
 // on dsb_vendors gets the metadata (migration 072).
 // ---------------------------------------------------------------------------
 
-export type VendorDocKind = 'vat' | 'cr'
+export type VendorDocKind = 'vat' | 'cr' | 'iban_ownership'
 
 const VENDOR_DOC_COLUMNS: Record<VendorDocKind, { path: string; filename: string; size: string; label: string }> = {
   vat: {
@@ -734,6 +736,12 @@ const VENDOR_DOC_COLUMNS: Record<VendorDocKind, { path: string; filename: string
     filename: 'commercial_registration_filename',
     size:     'commercial_registration_size_bytes',
     label:    'السجل التجاري',
+  },
+  iban_ownership: {
+    path:     'iban_ownership_storage_path',
+    filename: 'iban_ownership_filename',
+    size:     'iban_ownership_size_bytes',
+    label:    'شهادة ملكية IBAN',
   },
 }
 
