@@ -137,8 +137,8 @@ const DSB_GROUPS: DsbNavGroup[] = [
     title: 'الإدارة',
     ownerOnly: true,
     items: [
-      { href: '/app/disbursements/admin', label: 'المستخدمون والصلاحيات', icon: Users },
-      { href: '#', label: 'تهيئة النظام',    icon: Sliders,     soon: true },
+      { href: '/app/disbursements/admin',           label: 'المستخدمون والصلاحيات', icon: Users },
+      { href: '/app/disbursements/admin/settings',  label: 'تهيئة النظام',          icon: Sliders },
       { href: '#', label: 'القوائم والنسب',  icon: ListChecks,  soon: true },
       { href: '#', label: 'سجل التدقيق',     icon: History,     soon: true },
     ],
