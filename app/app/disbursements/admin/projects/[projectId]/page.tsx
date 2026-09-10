@@ -5,6 +5,7 @@ import { FolderKanban, FileText, Plus, Users, Scale, Upload, Briefcase, Settings
 import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
+import { RegaReportsCard } from './RegaReportsCard'
 import { ProjectQuickUpload } from './ProjectQuickUpload'
 import { ContractPdfUpload } from './ContractPdfUpload'
 import {
@@ -28,6 +29,9 @@ type ProjectRow = {
   bank_account: string | null
   bank_iban: string | null
   checklist_template_id: string | null
+  // Migration 066 — surface for the REGA reports card's "ready to generate"
+  // hint (see RegaReportsCard below).
+  rega_license_no: string | null
 }
 
 type DeveloperLite = {
@@ -123,7 +127,7 @@ export default async function ProjectDetailPage({
   // Fetch the project + tenant-scope.
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -465,6 +469,17 @@ export default async function ProjectDetailPage({
           </div>
         </div>
       </header>
+
+      {/* REGA quarterly reports — owner-only. Sits right under the header
+          so it's the first thing the owner sees when opening a project. */}
+      {dsbRole === 'owner' && (
+        <RegaReportsCard
+          projectId={project.id}
+          projectName={project.name_ar}
+          currentYear={new Date().getFullYear()}
+          regaReady={Boolean(project.rega_license_no)}
+        />
+      )}
 
       {/* Info card */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
