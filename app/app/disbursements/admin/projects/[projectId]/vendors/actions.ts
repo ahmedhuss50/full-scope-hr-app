@@ -148,7 +148,10 @@ export interface AddVendorInput {
 
 export async function addVendor(
   input: AddVendorInput,
-): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; id: string; contract_ids: Array<string | null> }
+  | { ok: false; error: string }
+> {
   const caller = await resolveCaller()
   if ('error' in caller) return { ok: false, error: caller.error }
 
@@ -202,19 +205,24 @@ export async function addVendor(
   // the count that succeeded, and the owner can add the missing contract
   // from the vendor's own contracts UI. Prevents a partial-success from
   // becoming an unrecoverable state.
-  const drafts = (input.contracts ?? []).filter((c) => {
-    // Drop rows where every field is blank/null.
-    return (
+  // Drop entirely-blank rows AND keep track of original indices so the
+  // client can match inserted contract IDs back to its file-upload state.
+  const allDrafts = input.contracts ?? []
+  const contract_ids: Array<string | null> = allDrafts.map(() => null)
+  const kept: Array<{ idx: number; draft: AddVendorContractDraft }> = []
+  allDrafts.forEach((c, idx) => {
+    const nonEmpty =
       (c.contract_number     && c.contract_number.trim())     ||
       (c.disbursement_nature && c.disbursement_nature.trim()) ||
       c.amount_before_tax_sar != null ||
       c.vat_sar               != null ||
       (c.start_date && c.start_date.trim()) ||
       (c.end_date   && c.end_date.trim())
-    )
+    if (nonEmpty) kept.push({ idx, draft: c })
   })
-  if (drafts.length > 0) {
-    const rows = drafts.map((c) => {
+
+  if (kept.length > 0) {
+    const rows = kept.map(({ draft: c }) => {
       const amtBefore = c.amount_before_tax_sar
       const vat       = c.vat_sar
       const total     = (amtBefore != null && vat != null)
@@ -235,11 +243,19 @@ export async function addVendor(
         created_by_user_id:     caller.userId,
       }
     })
-    await svc.from('dsb_vendor_contracts').insert(rows)
+    const { data: inserted } = await svc
+      .from('dsb_vendor_contracts')
+      .insert(rows)
+      .select('id')
+    const insertedIds = ((inserted ?? []) as Array<{ id: string }>).map((r) => r.id)
+    // Map insertion order back to original client-side indices.
+    kept.forEach(({ idx }, i) => {
+      contract_ids[idx] = insertedIds[i] ?? null
+    })
   }
 
   revalidatePath(`/app/disbursements/admin/projects/${projectId}/vendors`)
-  return { ok: true, id: vendorId }
+  return { ok: true, id: vendorId, contract_ids }
 }
 
 // ---------------------------------------------------------------------------

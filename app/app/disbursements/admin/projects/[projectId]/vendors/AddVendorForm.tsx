@@ -2,8 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Check, X, Loader2, Trash2 } from 'lucide-react'
-import { addVendor } from './actions'
+import { Plus, Check, X, Loader2, Trash2, Paperclip } from 'lucide-react'
+import { addVendor, requestVendorContractUploadUrl, attachContractPdf } from './actions'
 
 /**
  * Inline contract draft — one row in the contracts table inside the
@@ -72,22 +72,34 @@ export function AddVendorForm({
   // Inline contracts — start with a single empty row so the table renders
   // ready to fill. Owners can add more or delete unused rows.
   const [contracts, setContracts] = useState<ContractDraft[]>([{ ...emptyContract }])
+  // Files kept separately from ContractDraft (File isn't serializable and
+  // we send drafts to a server action). Array is index-aligned with
+  // `contracts` — file[i] belongs to contracts[i]. Null when no file picked.
+  const [contractFiles, setContractFiles] = useState<Array<File | null>>([null])
   const [saving, setSaving] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   function reset() {
     setState(emptyForm)
     setContracts([{ ...emptyContract }])
+    setContractFiles([null])
     setError(null)
+    setUploadStatus(null)
   }
   function updateContract(idx: number, patch: Partial<ContractDraft>) {
     setContracts((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)))
   }
   function addContractRow() {
     setContracts((prev) => [...prev, { ...emptyContract }])
+    setContractFiles((prev) => [...prev, null])
   }
   function removeContractRow(idx: number) {
     setContracts((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== idx)))
+    setContractFiles((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== idx)))
+  }
+  function setContractFile(idx: number, file: File | null) {
+    setContractFiles((prev) => prev.map((f, i) => (i === idx ? file : f)))
   }
 
   async function submit(closeAfter: boolean) {
@@ -118,9 +130,55 @@ export function AddVendorForm({
         end_date:   c.end_date   || null,
       })),
     })
-    setSaving(false)
     if (!res.ok) {
+      setSaving(false)
       setError(res.error)
+      return
+    }
+
+    // Upload any attached contract PDFs. Loop is sequential — a handful of
+    // contracts per vendor is normal, and failed uploads shouldn't block
+    // successful ones. Errors are collected and shown but don't undo the
+    // vendor create.
+    const uploadErrors: string[] = []
+    const filesToUpload = contractFiles
+      .map((file, i) => ({ file, contractId: res.contract_ids[i] ?? null, i }))
+      .filter((x) => x.file && x.contractId)
+    for (let n = 0; n < filesToUpload.length; n++) {
+      const { file, contractId, i } = filesToUpload[n]!
+      if (!file || !contractId) continue
+      setUploadStatus(`جارٍ رفع ملف العقد ${n + 1} من ${filesToUpload.length}…`)
+      try {
+        const urlRes = await requestVendorContractUploadUrl({
+          vendor_id: res.id,
+          filename: file.name,
+          size: file.size,
+        })
+        if (!urlRes.ok) { uploadErrors.push(`صف ${i + 1}: ${urlRes.error}`); continue }
+        const putRes = await fetch(urlRes.signed_url, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type || 'application/pdf' },
+        })
+        if (!putRes.ok) { uploadErrors.push(`صف ${i + 1}: فشل رفع الملف (${putRes.status}).`); continue }
+        const attachRes = await attachContractPdf({
+          contract_id: contractId,
+          storage_path: urlRes.storage_path,
+          filename: file.name,
+          size: file.size,
+        })
+        if (!attachRes.ok) uploadErrors.push(`صف ${i + 1}: ${attachRes.error}`)
+      } catch (e) {
+        uploadErrors.push(`صف ${i + 1}: خطأ غير متوقع (${(e as Error).message}).`)
+      }
+    }
+    setSaving(false)
+    setUploadStatus(null)
+    if (uploadErrors.length > 0) {
+      // Vendor + contract rows landed; only the file uploads had issues.
+      // Surface the details but don't wipe the form so the owner can retry.
+      setError(`تم إنشاء المورد لكن هناك مشاكل في رفع الملفات:\n${uploadErrors.join('\n')}`)
+      startTransition(() => router.refresh())
       return
     }
     reset()
@@ -314,6 +372,7 @@ export function AddVendorForm({
                 <th className="px-2 py-2 font-semibold text-slate-500">الضريبة</th>
                 <th className="px-2 py-2 font-semibold text-slate-500">تاريخ البداية</th>
                 <th className="px-2 py-2 font-semibold text-slate-500">تاريخ الانتهاء</th>
+                <th className="px-2 py-2 font-semibold text-slate-500">إرفاق العقد</th>
                 <th className="px-2 py-2 w-8"></th>
               </tr>
             </thead>
@@ -382,6 +441,35 @@ export function AddVendorForm({
                       dir="ltr"
                     />
                   </td>
+                  <td className="p-1">
+                    {/* Contract PDF attach — uploaded to storage AFTER the
+                        vendor + contracts land, using the existing
+                        signed-URL flow scoped to the new vendor. */}
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-700 hover:text-teal-700">
+                      <Paperclip className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span className="truncate max-w-[8rem]">
+                        {contractFiles[i]?.name ?? 'اختر ملفًا'}
+                      </span>
+                      <input
+                        type="file"
+                        accept=".pdf,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => setContractFile(i, e.target.files?.[0] ?? null)}
+                        disabled={saving}
+                      />
+                    </label>
+                    {contractFiles[i] && (
+                      <button
+                        type="button"
+                        onClick={() => setContractFile(i, null)}
+                        disabled={saving}
+                        title="إزالة الملف"
+                        className="ms-1 text-red-600 hover:text-red-800 text-[11px]"
+                      >
+                        <X className="w-3 h-3 inline" aria-hidden="true" />
+                      </button>
+                    )}
+                  </td>
                   <td className="p-1 text-center">
                     <button
                       type="button"
@@ -403,8 +491,14 @@ export function AddVendorForm({
         </p>
       </div>
 
+      {uploadStatus && (
+        <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 inline-flex items-center gap-2">
+          <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+          {uploadStatus}
+        </div>
+      )}
       {error && (
-        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 whitespace-pre-line">
           {error}
         </div>
       )}
