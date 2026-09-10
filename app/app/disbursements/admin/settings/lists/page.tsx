@@ -11,6 +11,7 @@ import { redirect } from 'next/navigation'
 import { ArrowRight, ListChecks } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { SharesEditor } from './SharesEditor'
+import { VendorCategoriesEditor, type VendorCategory } from './VendorCategoriesEditor'
 import type { DistributionShares } from './actions'
 
 export const dynamic = 'force-dynamic'
@@ -54,18 +55,27 @@ export default async function ListsAndPercentagesPage() {
     redirect('/app/disbursements/admin')
   }
 
-  const { data: tenantRow } = await svc
-    .from('tenants')
-    .select('deposit_distribution_shares')
-    .eq('id', profile.tenant_id as string)
-    .maybeSingle()
+  const [tenantRes, vendorCatsRes] = await Promise.all([
+    svc
+      .from('tenants')
+      .select('deposit_distribution_shares')
+      .eq('id', profile.tenant_id as string)
+      .maybeSingle(),
+    svc
+      .from('dsb_vendor_categories')
+      .select('id, name_ar')
+      .eq('tenant_id', profile.tenant_id as string)
+      .order('sort_order', { ascending: true })
+      .order('name_ar',    { ascending: true }),
+  ])
 
-  const rawShares = tenantRow?.deposit_distribution_shares as Partial<DistributionShares> | null | undefined
+  const rawShares = tenantRes.data?.deposit_distribution_shares as Partial<DistributionShares> | null | undefined
   const shares: DistributionShares = {
     construction:    rawShares?.construction    ?? 0.76,
     admin_marketing: rawShares?.admin_marketing ?? 0.20,
     escrow:          rawShares?.escrow          ?? 0.04,
   }
+  const vendorCategories = ((vendorCatsRes.data ?? []) as VendorCategory[])
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto" dir="rtl">
@@ -100,6 +110,18 @@ export default async function ListsAndPercentagesPage() {
           </p>
         </div>
         <SharesEditor initial={shares} />
+      </section>
+
+      {/* Vendor / service-provider categories — CRUD */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
+        <div>
+          <h2 className="serif font-bold text-base text-slate-900">تصنيفات الموردين ومقدمي الخدمات</h2>
+          <p className="text-xs text-slate-500 mt-1">
+            أضِف وعدِّل التصنيفات التي تُستخدم لتنظيم الموردين ومقدمي الخدمات على مستوى كل المشاريع.
+            التصنيف الذي يُستخدَم من قِبل أي مورد لا يمكن حذفه حتى يُغيَّر تصنيف ذاك المورد.
+          </p>
+        </div>
+        <VendorCategoriesEditor initial={vendorCategories} />
       </section>
 
       {/* Deposit categories — read-only */}
