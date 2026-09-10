@@ -118,6 +118,17 @@ async function resolveVendorForCaller(
 // addVendor — write roles + project scope
 // ---------------------------------------------------------------------------
 
+/** Inline contract row the AddVendorForm sends alongside the vendor. All
+ *  fields optional per row — completely empty rows are dropped server-side. */
+export interface AddVendorContractDraft {
+  contract_number:        string | null
+  disbursement_nature:    string | null
+  amount_before_tax_sar:  number | null
+  vat_sar:                number | null
+  start_date:             string | null   // 'YYYY-MM-DD'
+  end_date:               string | null   // 'YYYY-MM-DD'
+}
+
 export interface AddVendorInput {
   project_id: string
   name_ar: string
@@ -131,6 +142,8 @@ export interface AddVendorInput {
   contact_person_name?: string | null
   contact_person_phone?: string | null
   notes?: string | null
+  // Migration 071 — inline contracts entered in the same form.
+  contracts?: AddVendorContractDraft[]
 }
 
 export async function addVendor(
@@ -182,8 +195,51 @@ export async function addVendor(
     return { ok: false, error: error?.message ?? 'تعذّر إضافة المورد.' }
   }
 
+  const vendorId = data.id as string
+
+  // Insert inline contracts if any. We deliberately don't fail the vendor
+  // creation when a contract insert bombs — the vendor is created, we log
+  // the count that succeeded, and the owner can add the missing contract
+  // from the vendor's own contracts UI. Prevents a partial-success from
+  // becoming an unrecoverable state.
+  const drafts = (input.contracts ?? []).filter((c) => {
+    // Drop rows where every field is blank/null.
+    return (
+      (c.contract_number     && c.contract_number.trim())     ||
+      (c.disbursement_nature && c.disbursement_nature.trim()) ||
+      c.amount_before_tax_sar != null ||
+      c.vat_sar               != null ||
+      (c.start_date && c.start_date.trim()) ||
+      (c.end_date   && c.end_date.trim())
+    )
+  })
+  if (drafts.length > 0) {
+    const rows = drafts.map((c) => {
+      const amtBefore = c.amount_before_tax_sar
+      const vat       = c.vat_sar
+      const total     = (amtBefore != null && vat != null)
+        ? Number(amtBefore) + Number(vat)
+        : (amtBefore ?? null)
+      return {
+        tenant_id:              caller.tenantId,
+        vendor_id:              vendorId,
+        contract_number:        (c.contract_number ?? '').trim() || null,
+        work_type:              (c.disbursement_nature ?? '').trim() || null,
+        disbursement_nature:    (c.disbursement_nature ?? '').trim() || null,
+        amount_before_tax_sar:  amtBefore != null && Number.isFinite(amtBefore) ? amtBefore : null,
+        vat_sar:                vat       != null && Number.isFinite(vat)       ? vat       : null,
+        total_amount_sar:       total,
+        start_date:             (c.start_date ?? '').trim() || null,
+        end_date:               (c.end_date   ?? '').trim() || null,
+        status:                 'active',
+        created_by_user_id:     caller.userId,
+      }
+    })
+    await svc.from('dsb_vendor_contracts').insert(rows)
+  }
+
   revalidatePath(`/app/disbursements/admin/projects/${projectId}/vendors`)
-  return { ok: true, id: data.id as string }
+  return { ok: true, id: vendorId }
 }
 
 // ---------------------------------------------------------------------------
