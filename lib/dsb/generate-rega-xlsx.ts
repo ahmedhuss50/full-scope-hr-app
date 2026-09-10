@@ -93,55 +93,80 @@ async function fetchAllChunked<T>(
 // ---------------------------------------------------------------------------
 // Buyers register (سجل المشترين)
 // ---------------------------------------------------------------------------
-// Header row 7 of «سجل المشترين وحدات قائمة». Data starts row 8. Column map:
-//   1  م
-//   2  اسم العميل
-//   3  نوع الـ ID
-//   4  رقم الهوية
-//   5  الجنسية
-//   6  رقم الجوال
-//   7  اسم المشروع
-//   8  المنطقة
-//   9  المدينة
-//  10  الحي
-//  11  المساحة
-//  12  نوع الوحدة
-//  13  رقم المنطقة (ZONE)
-//  14  رقم الوحدة
-//  15  عدد مرات بيع الوحدة
-//  16  رقم البلوك
-//  17  رقم العقد
-//  18  نوع العقد
-//  19  نوع التمويل
-//  20  اسم الجهة التمويلية
-//  21  تاريخ بيع الوحدة
-//  22  سعر الوحدة قبل ضريبة التصرفات العقارية
-//  23  حالة التسليم
-//  24  تاريخ التسليم
-//  25  (5%) ضريبة التصرفات العقارية
-//  26  قيمة الوحدة شاملة ضريبة التصرفات العقارية
-//  27  النسبة المستقطعة              — LEFT BLANK (not stored)
-//  28  2017-12-31 collection total
-//  29  2018-12-31
-//  30  2019-12-31
-//  31  2020-12-31
-//  32  2021-12-31
-//  33  2022-12-31
-//  34  2023-12-31
-//  35  2024-12-31
-//  36  2025-12-31
-//  37  2026-06-30 (current-year YTD)
-//  38  الاشراف والمتابعة اليومية — LEFT BLANK
-//  39  الاشراف والمتابعة السنوية   — LEFT BLANK
-//  40  إجمالي المحصل بدون ضريبة    — SUM of yearly (approx before-VAT)
-//  41  إجمالي المحصل شامل الضريبة — SUM of yearly (approx incl-VAT)
-//  42  المتبقي من قيمة الوحدة
-//  43  عدد الدفعات (رقم الدفعة)
-//  44  نسبة التحصيل
-//  45  سعر المتر
+// Header row 7 of «سجل المشترين وحدات قائمة». Data starts row 8. Column map
+// (1-indexed as they appear in Excel; 0-indexed in code as noted):
+//
+//   COL#   XL    HEADER                                     SOURCE
+//     1    A     م                                          literal (serial)
+//     2    B     اسم العميل                                 literal
+//     3    C     نوع الـ ID                                 literal
+//     4    D     رقم الهوية                                 literal
+//     5    E     الجنسية                                    literal
+//     6    F     رقم الجوال                                 literal
+//     7    G     اسم المشروع                                literal
+//     8    H     المنطقة                                    literal
+//     9    I     المدينة                                    literal
+//    10    J     الحي                                       literal
+//    11    K     المساحة                                    literal (feeds AS)
+//    12    L     نوع الوحدة                                 literal
+//    13    M     رقم المنطقة (ZONE)                         literal
+//    14    N     رقم الوحدة                                 literal
+//    15    O     عدد مرات بيع الوحدة                        literal
+//    16    P     رقم البلوك                                 literal
+//    17    Q     رقم العقد                                  literal
+//    18    R     نوع العقد                                  literal
+//    19    S     نوع التمويل                                literal
+//    20    T     اسم الجهة التمويلية                        literal
+//    21    U     تاريخ بيع الوحدة                           literal (feeds AB..AK)
+//    22    V     سعر الوحدة قبل ضريبة                       literal (feeds Y,Z,AA,AL,AS)
+//    23    W     حالة التسليم                               literal
+//    24    X     تاريخ التسليم                              literal
+//    25    Y     (5%) ضريبة التصرفات العقارية                FORMULA =V*5/100
+//    26    Z     قيمة الوحدة شاملة الضريبة                  FORMULA =V+Y
+//    27    AA    النسبة المستقطعة                           FORMULA (IF ladder on V)
+//    28-37 AB-AK Yearly cutoffs (days-elapsed calc)          FORMULA
+//    38    AL    الاشراف والمتابعة اليومية                  FORMULA =IF(AK>0,V*AA/365,0)
+//    39    AM    الاشراف والمتابعة السنوية                  FORMULA =AL*AK
+//    40    AN    إجمالي المحصل شامل الضريبة                FORMULA =AV+AU
+//    41    AO    إجمالي المحصل بدون ضريبة                   template blank / occasionally set
+//    42    AP    المتبقي من قيمة الوحدة                     FORMULA =Z-AN
+//    43    AQ    عدد الدفعات                                literal
+//    44    AR    نسبة التحصيل                               FORMULA =AN/Z
+//    45    AS    سعر المتر                                  FORMULA =V/K
+//    46    AT    (spare)                                    ignored
+//    47    AU    Q1 collected (incl VAT)                    literal
+//    48    AV    Q2 collected (incl VAT)                    literal (also Q3/Q4 in later quarters)
+//
+// Formulas are PRESERVED from the template — we snapshot row-8 formulas once
+// and copy them into every populated data row, adjusting relative row refs.
 
 const BUYERS_HEADER_ROW = 7
 const BUYERS_DATA_START_ROW = 8
+const BUYERS_TEMPLATE_LAST_DATA_ROW = 462
+const BUYERS_TOTALS_ROW = 465
+
+// 0-indexed columns whose row-8 cell in the template holds a formula that
+// should be replicated to every populated row.
+const BUYERS_FORMULA_COLS_0IDX = [
+  24,                                     // Y   =V*5/100
+  25,                                     // Z   =V+Y
+  26,                                     // AA  =IF ladder on V
+  27, 28, 29, 30, 31, 32, 33, 34, 35, 36, // AB..AK yearly days-elapsed
+  37,                                     // AL  =IF(AK>0,V*AA/365,0)
+  38,                                     // AM  =AL*AK
+  39,                                     // AN  =AV+AU (total collected incl VAT)
+  41,                                     // AP  =Z-AN (remaining)
+  43,                                     // AR  =AN/Z (collection %)
+  44,                                     // AS  =V/K  (price per m²)
+]
+
+// Rewrite every `<colLetters>8` (relative row-8 reference) to point at the
+// given target row. Absolute refs like `$AB$7` are untouched because we only
+// match the literal `8`. We use a negative-lookahead for another digit so
+// column letters followed by 800 or similar remain intact.
+function retargetRow8Refs(formula: string, targetRow: number): string {
+  return formula.replace(/(\$?[A-Z]+\$?)8(?![0-9])/g, `$1${targetRow}`)
+}
 
 export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buffer> {
   const svc = createSupabaseService()
@@ -251,15 +276,34 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   const ws = wb.Sheets[sheetName]
   if (!ws) throw new Error(`template missing sheet: ${sheetName}`)
 
-  // Clear the sample data rows below the header (they contain 455 Ayal
-  // Alasala rows we must not ship to other tenants).
-  clearCellsRange(ws, BUYERS_DATA_START_ROW, 500, 1, 49)
-
-  // Year columns: 2017..2025 as year-end, 2026-06-30 as YTD cutoff.
-  const YEAR_COL: Record<number, number> = {
-    2017: 28, 2018: 29, 2019: 30, 2020: 31, 2021: 32, 2022: 33, 2023: 34, 2024: 35, 2025: 36, 2026: 37,
+  // -----------------------------------------------------------------------
+  // STEP 1 — Snapshot template formulas from row 8 BEFORE clearing.
+  // These are the per-row calculations (VAT, price-with-VAT, days-elapsed,
+  // supervision fee, remaining, collection %, price/m²) that the accountant
+  // relies on. We copy them into every populated data row further down.
+  // -----------------------------------------------------------------------
+  const templateFormulas = new Map<number, string>()
+  for (const col of BUYERS_FORMULA_COLS_0IDX) {
+    const addr = XLSX.utils.encode_cell({ r: BUYERS_DATA_START_ROW - 1, c: col })
+    const cell = ws[addr] as XLSX.CellObject | undefined
+    if (cell && typeof cell.f === 'string' && cell.f.length > 0) {
+      templateFormulas.set(col, cell.f)
+    }
   }
 
+  // -----------------------------------------------------------------------
+  // STEP 2 — Clear the sample data rows below the header (455 Ayal Alasala
+  // rows we must not ship to other tenants). Row 465 (totals) and rows past
+  // it (bank reconciliation notes) are LEFT INTACT — their formulas
+  // reference V8:V464 etc. and we retarget those ranges in step 4.
+  // -----------------------------------------------------------------------
+  clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TEMPLATE_LAST_DATA_ROW, 1, 49)
+
+  // -----------------------------------------------------------------------
+  // STEP 3 — Populate one row per unit. Literals go into the raw-data
+  // columns; the cached formulas are copied in with row references
+  // retargeted to the current row.
+  // -----------------------------------------------------------------------
   let idx = 0
   for (const u of units) {
     const s = saleByUnit.get(u.id)
@@ -293,49 +337,58 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 18 }), s?.financing_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 19 }), s?.financing_bank ?? '', 's')
     if (s?.sale_date) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 20 }), s.sale_date, 's')
-    // Price + delivery + VAT
+    // Price + delivery — Y (VAT) / Z (price-with-VAT) come from formulas
     if (s?.price_before_tax_sar != null) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 21 }), Number(s.price_before_tax_sar), 'n')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 22 }), s?.delivery_status === 'delivered' ? 'مُسلَّمة' : 'لم يتم', 's')
     if (s?.delivery_date) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 23 }), s.delivery_date, 's')
-    if (s?.vat_sar != null) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 24 }), Number(s.vat_sar), 'n')
-    if (s?.price_with_vat_sar != null) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 25 }), Number(s.price_with_vat_sar), 'n')
-    // النسبة المستقطعة — c=26 left blank
-    // Yearly buckets
+
+    // Total collected (across all years) for THIS sale. AN's formula is
+    // =AV+AU, so we drop the running total into AU (col 46, 0-idx). If we
+    // grow quarterly buckets later they can split across AU/AV.
+    let saleTotalCollected = 0
     if (s?.id) {
       const perYear = yearlyBySale.get(s.id)
-      let total = 0
-      if (perYear) {
-        for (const [year, amount] of perYear) {
-          const col = YEAR_COL[year]
-          if (col != null && amount > 0) {
-            setCell(ws, XLSX.utils.encode_cell({ r: r0, c: col - 1 }), amount, 'n')
-            total += amount
-          }
-        }
-      }
-      // إجمالي المحصل بدون ضريبة (approx: total / 1.05 if VAT present)
-      const withVat = total
-      const priceNoTax = s.price_before_tax_sar
-      const priceWith = s.price_with_vat_sar
-      const noTax = priceWith && priceNoTax ? (total / priceWith) * priceNoTax : total
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 39 }), noTax,   'n')
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 40 }), withVat, 'n')
-      // Remaining
-      if (priceWith != null) {
-        setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 41 }), Math.max(0, Number(priceWith) - total), 'n')
-      }
-      // Payment count
+      if (perYear) for (const amount of perYear.values()) saleTotalCollected += amount
+    }
+    if (saleTotalCollected > 0) {
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 46 }), saleTotalCollected, 'n')
+    }
+    // Payment count (col 42 = AQ)
+    if (s?.id) {
       const cnt = countBySale.get(s.id) ?? 0
       setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 42 }), cnt, 'n')
-      // Collection ratio
-      if (priceWith && priceWith > 0) {
-        setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 43 }), total / Number(priceWith), 'n')
-      }
     }
-    // سعر المتر
-    if (s?.price_before_tax_sar != null && u.area_m2 != null && Number(u.area_m2) > 0) {
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 44 }), Number(s.price_before_tax_sar) / Number(u.area_m2), 'n')
+
+    // Copy the row-8 formulas into this row with row refs retargeted.
+    for (const [col, tmpl] of templateFormulas) {
+      const adjusted = retargetRow8Refs(tmpl, rowXlsx)
+      const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+      // Preserve any styling the template row had for this cell.
+      const existing = ws[addr] as XLSX.CellObject | undefined
+      ws[addr] = existing
+        ? { ...existing, f: adjusted, v: undefined, w: undefined, t: 'n' }
+        : { t: 'n', f: adjusted }
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // STEP 4 — Retarget row-465 total-row SUM ranges to match our actual data
+  // row count, so the totals reflect the populated rows (not empty rows
+  // through 464). Range like V8:V464 → V8:V{lastDataRow}.
+  // -----------------------------------------------------------------------
+  const lastDataRow = idx > 0 ? BUYERS_DATA_START_ROW + idx - 1 : BUYERS_DATA_START_ROW
+  for (const addr of Object.keys(ws)) {
+    if (addr.startsWith('!')) continue
+    const rowMatch = /[A-Z]+(\d+)/.exec(addr)
+    if (!rowMatch) continue
+    const rowNum = Number(rowMatch[1])
+    if (rowNum < BUYERS_TOTALS_ROW) continue
+    const cell = ws[addr] as XLSX.CellObject | undefined
+    if (!cell || typeof cell.f !== 'string') continue
+    // Replace any :XYZnn (where nn falls in 460..464) inside SUM ranges.
+    cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)46[0-4]\b/g, `$1${lastDataRow}`)
+    cell.v = undefined
+    cell.w = undefined
   }
 
   return workbookToBuffer(wb)
