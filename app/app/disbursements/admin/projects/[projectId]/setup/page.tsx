@@ -40,6 +40,21 @@ type ProjectRow = {
   rega_license_no: string | null
   rega_agreement_date_hijri: string | null
   rega_agreement_date_gregorian: string | null
+  land_price_sar: number | null
+  estimated_construction_sar: number | null
+  estimated_admin_marketing_sar: number | null
+  project_start_date: string | null
+  rega_license_expiry_date: string | null
+  engineer_consultant_name: string | null
+  engineer_consultant_contract_sar: number | null
+  contractor_1_name: string | null
+  contractor_1_contract_sar: number | null
+  contractor_2_name: string | null
+  contractor_2_contract_sar: number | null
+  contractor_3_name: string | null
+  contractor_3_contract_sar: number | null
+  contractor_4_name: string | null
+  contractor_4_contract_sar: number | null
 }
 
 export default async function ProjectSetupPage({
@@ -72,7 +87,7 @@ export default async function ProjectSetupPage({
   // ---- Project + tenant scope ----
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -241,6 +256,21 @@ export default async function ProjectSetupPage({
               rega_license_no: project.rega_license_no,
               rega_agreement_date_hijri: project.rega_agreement_date_hijri,
               rega_agreement_date_gregorian: project.rega_agreement_date_gregorian,
+              land_price_sar: project.land_price_sar,
+              estimated_construction_sar: project.estimated_construction_sar,
+              estimated_admin_marketing_sar: project.estimated_admin_marketing_sar,
+              project_start_date: project.project_start_date,
+              rega_license_expiry_date: project.rega_license_expiry_date,
+              engineer_consultant_name: project.engineer_consultant_name,
+              engineer_consultant_contract_sar: project.engineer_consultant_contract_sar,
+              contractor_1_name: project.contractor_1_name,
+              contractor_1_contract_sar: project.contractor_1_contract_sar,
+              contractor_2_name: project.contractor_2_name,
+              contractor_2_contract_sar: project.contractor_2_contract_sar,
+              contractor_3_name: project.contractor_3_name,
+              contractor_3_contract_sar: project.contractor_3_contract_sar,
+              contractor_4_name: project.contractor_4_name,
+              contractor_4_contract_sar: project.contractor_4_contract_sar,
             }}
             developerName={developerName}
             clients={clients}
@@ -385,22 +415,65 @@ function RegaReportsCard({
           </span>
         )}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-        {quarters.map((q) => (
-          <a
-            key={q.code}
-            href={`/api/dsb-delivery-notice?project_id=${projectId}&quarter=${q.code}&year=${currentYear}`}
-            download
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-teal-300 text-teal-800 text-sm font-semibold hover:bg-teal-50 transition"
-            title={`تنزيل إشعار تسليم ${q.label} ${currentYear} لمشروع ${projectName}`}
-          >
-            <FileDown className="w-4 h-4" aria-hidden="true" />
-            {q.label} {currentYear}
-          </a>
-        ))}
+      {/* 1) Delivery notice (docx) — one per quarter */}
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+          إشعار التسليم (Word)
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {quarters.map((q) => (
+            <a
+              key={q.code}
+              href={`/api/dsb-delivery-notice?project_id=${projectId}&quarter=${q.code}&year=${currentYear}`}
+              download
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-teal-300 text-teal-800 text-sm font-semibold hover:bg-teal-50 transition"
+              title={`تنزيل إشعار تسليم ${q.label} ${currentYear} لمشروع ${projectName}`}
+            >
+              <FileDown className="w-4 h-4" aria-hidden="true" />
+              {q.label} {currentYear}
+            </a>
+          ))}
+        </div>
       </div>
+
+      {/* 2) Buyers register (xlsx) — snapshot, project-wide (no quarter split) */}
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+          سجل المشترين (Excel)
+        </div>
+        <a
+          href={`/api/dsb-buyers-register-xlsx?project_id=${projectId}`}
+          download
+          className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-teal-300 text-teal-800 text-sm font-semibold hover:bg-teal-50 transition"
+        >
+          <FileDown className="w-4 h-4" aria-hidden="true" />
+          تنزيل سجل المشترين
+        </a>
+      </div>
+
+      {/* 3) Accountant workbook (xlsx) — one per quarter */}
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+          نموذج المحاسب القانوني (Excel)
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {quarters.map((q) => (
+            <a
+              key={`acc-${q.code}`}
+              href={`/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${q.code}&year=${currentYear}`}
+              download
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-teal-300 text-teal-800 text-sm font-semibold hover:bg-teal-50 transition"
+              title={`تنزيل نموذج المحاسب القانوني ${q.label} ${currentYear} لمشروع ${projectName}`}
+            >
+              <FileDown className="w-4 h-4" aria-hidden="true" />
+              {q.label} {currentYear}
+            </a>
+          ))}
+        </div>
+      </div>
+
       <div className="text-[11px] text-slate-500">
-        الملفات القادمة (قريبًا): تقرير المحاسب القانوني (Excel) · سجل المشترين (Excel) · التقرير الموقّع (PDF) · حزمة التسليم كاملة (ZIP)
+        الملفات القادمة (قريبًا): التقرير الموقّع (PDF) · حزمة التسليم كاملة (ZIP)
       </div>
     </section>
   )

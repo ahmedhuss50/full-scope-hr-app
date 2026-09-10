@@ -19,6 +19,7 @@ export type TenantSettings = {
   accountant_signer_name:        string | null
   accountant_signer_title:       string | null
   accountant_signer_email:       string | null
+  accountant_signer_phone:       string | null
   rega_default_recipient_emails: string[] | null
 }
 
@@ -34,6 +35,7 @@ export function TenantSettingsForm({ initial }: { initial: TenantSettings }) {
   const [signerName,    setSignerName]    = useState(initial.accountant_signer_name    ?? '')
   const [signerTitle,   setSignerTitle]   = useState(initial.accountant_signer_title   ?? '')
   const [signerEmail,   setSignerEmail]   = useState(initial.accountant_signer_email   ?? '')
+  const [signerPhone,   setSignerPhone]   = useState(initial.accountant_signer_phone   ?? '')
   const [recipientsRaw, setRecipientsRaw] = useState(
     (initial.rega_default_recipient_emails ?? []).join('\n'),
   )
@@ -47,6 +49,7 @@ export function TenantSettingsForm({ initial }: { initial: TenantSettings }) {
       accountant_signer_name:      signerName.trim() || null,
       accountant_signer_title:     signerTitle.trim() || null,
       accountant_signer_email:     signerEmail.trim() || null,
+      accountant_signer_phone:     signerPhone.trim() || null,
       rega_default_recipients_raw: recipientsRaw,
     })
     setSaving(false)
@@ -102,6 +105,18 @@ export function TenantSettingsForm({ initial }: { initial: TenantSettings }) {
             dir="ltr"
             type="email"
             placeholder="mahdi@example.com"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">رقم جوال المُوقِّع</label>
+          <input
+            className={inputCls}
+            value={signerPhone}
+            onChange={(e) => setSignerPhone(e.target.value)}
+            disabled={saving}
+            dir="ltr"
+            type="tel"
+            placeholder="+9665XXXXXXXX"
           />
         </div>
         <div>
@@ -174,6 +189,7 @@ export function TenantSettingsForm({ initial }: { initial: TenantSettings }) {
             setSignerName(initial.accountant_signer_name ?? '')
             setSignerTitle(initial.accountant_signer_title ?? '')
             setSignerEmail(initial.accountant_signer_email ?? '')
+            setSignerPhone(initial.accountant_signer_phone ?? '')
             setRecipientsRaw((initial.rega_default_recipient_emails ?? []).join('\n'))
             setError(null)
           }}

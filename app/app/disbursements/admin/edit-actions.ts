@@ -212,6 +212,22 @@ export interface UpdateProjectInput {
   rega_license_no?: string | null
   rega_agreement_date_hijri?: string | null
   rega_agreement_date_gregorian?: string | null // 'YYYY-MM-DD'
+  // Migration 068 — extended REGA accountant-workbook Sheet 1 fields.
+  land_price_sar?: number | null
+  estimated_construction_sar?: number | null
+  estimated_admin_marketing_sar?: number | null
+  project_start_date?: string | null           // 'YYYY-MM-DD'
+  rega_license_expiry_date?: string | null     // 'YYYY-MM-DD'
+  engineer_consultant_name?: string | null
+  engineer_consultant_contract_sar?: number | null
+  contractor_1_name?: string | null
+  contractor_1_contract_sar?: number | null
+  contractor_2_name?: string | null
+  contractor_2_contract_sar?: number | null
+  contractor_3_name?: string | null
+  contractor_3_contract_sar?: number | null
+  contractor_4_name?: string | null
+  contractor_4_contract_sar?: number | null
 }
 
 export async function updateProject(
@@ -288,6 +304,23 @@ export async function updateProject(
       ...(input.rega_license_no                 !== undefined ? { rega_license_no:                 (input.rega_license_no ?? '').trim() || null } : {}),
       ...(input.rega_agreement_date_hijri       !== undefined ? { rega_agreement_date_hijri:       (input.rega_agreement_date_hijri ?? '').trim() || null } : {}),
       ...(input.rega_agreement_date_gregorian   !== undefined ? { rega_agreement_date_gregorian:   (input.rega_agreement_date_gregorian ?? '').trim() || null } : {}),
+      // Migration 068 — accountant workbook Sheet 1 extensions. Number
+      // fields go through Number() and get nulled when empty or NaN.
+      ...(input.land_price_sar                  !== undefined ? { land_price_sar:                  numOrNull(input.land_price_sar) } : {}),
+      ...(input.estimated_construction_sar      !== undefined ? { estimated_construction_sar:      numOrNull(input.estimated_construction_sar) } : {}),
+      ...(input.estimated_admin_marketing_sar   !== undefined ? { estimated_admin_marketing_sar:   numOrNull(input.estimated_admin_marketing_sar) } : {}),
+      ...(input.project_start_date              !== undefined ? { project_start_date:              (input.project_start_date ?? '').trim() || null } : {}),
+      ...(input.rega_license_expiry_date        !== undefined ? { rega_license_expiry_date:        (input.rega_license_expiry_date ?? '').trim() || null } : {}),
+      ...(input.engineer_consultant_name        !== undefined ? { engineer_consultant_name:        (input.engineer_consultant_name ?? '').trim() || null } : {}),
+      ...(input.engineer_consultant_contract_sar !== undefined ? { engineer_consultant_contract_sar: numOrNull(input.engineer_consultant_contract_sar) } : {}),
+      ...(input.contractor_1_name               !== undefined ? { contractor_1_name:               (input.contractor_1_name ?? '').trim() || null } : {}),
+      ...(input.contractor_1_contract_sar       !== undefined ? { contractor_1_contract_sar:       numOrNull(input.contractor_1_contract_sar) } : {}),
+      ...(input.contractor_2_name               !== undefined ? { contractor_2_name:               (input.contractor_2_name ?? '').trim() || null } : {}),
+      ...(input.contractor_2_contract_sar       !== undefined ? { contractor_2_contract_sar:       numOrNull(input.contractor_2_contract_sar) } : {}),
+      ...(input.contractor_3_name               !== undefined ? { contractor_3_name:               (input.contractor_3_name ?? '').trim() || null } : {}),
+      ...(input.contractor_3_contract_sar       !== undefined ? { contractor_3_contract_sar:       numOrNull(input.contractor_3_contract_sar) } : {}),
+      ...(input.contractor_4_name               !== undefined ? { contractor_4_name:               (input.contractor_4_name ?? '').trim() || null } : {}),
+      ...(input.contractor_4_contract_sar       !== undefined ? { contractor_4_contract_sar:       numOrNull(input.contractor_4_contract_sar) } : {}),
     })
     .eq('id', input.project_id)
     .eq('tenant_id', caller.tenantId)
@@ -296,6 +329,13 @@ export async function updateProject(
   revalidatePath(`/app/disbursements/admin/projects/${input.project_id}`)
   revalidatePath('/app/disbursements/admin')
   return { ok: true }
+}
+
+/** Coerce a form input value to a number, or null when blank / NaN. */
+function numOrNull(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = typeof v === 'number' ? v : Number(String(v).trim())
+  return Number.isFinite(n) ? n : null
 }
 
 // ---------------------------------------------------------------------------

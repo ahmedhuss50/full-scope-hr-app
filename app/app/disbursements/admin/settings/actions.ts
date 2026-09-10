@@ -18,6 +18,7 @@ export interface TenantSettingsInput {
   accountant_signer_name:        string | null
   accountant_signer_title:       string | null
   accountant_signer_email:       string | null
+  accountant_signer_phone:       string | null
   // Multiple recipient emails. Stored as text[] on tenants. UI sends them
   // as a newline / comma-separated string; we parse here.
   rega_default_recipients_raw:   string | null
@@ -60,6 +61,7 @@ export async function updateTenantSettings(
       accountant_signer_name:        (input.accountant_signer_name    ?? '').trim() || null,
       accountant_signer_title:       (input.accountant_signer_title   ?? '').trim() || null,
       accountant_signer_email:       (input.accountant_signer_email   ?? '').trim() || null,
+      accountant_signer_phone:       (input.accountant_signer_phone   ?? '').trim() || null,
       rega_default_recipient_emails: recipients.length > 0 ? recipients : null,
     })
     .eq('id', tenantId)

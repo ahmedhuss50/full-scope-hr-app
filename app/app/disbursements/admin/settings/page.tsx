@@ -33,7 +33,7 @@ export default async function TenantSettingsPage() {
   const tenantId = profile.tenant_id as string
   const { data: tenantRow } = await svc
     .from('tenants')
-    .select('id, name, accountant_office_name, accountant_office_license, accountant_signer_name, accountant_signer_title, accountant_signer_email, rega_default_recipient_emails')
+    .select('id, name, accountant_office_name, accountant_office_license, accountant_signer_name, accountant_signer_title, accountant_signer_email, accountant_signer_phone, rega_default_recipient_emails')
     .eq('id', tenantId)
     .maybeSingle()
 
@@ -43,6 +43,7 @@ export default async function TenantSettingsPage() {
     accountant_signer_name:        (tenantRow?.accountant_signer_name    as string | null) ?? null,
     accountant_signer_title:       (tenantRow?.accountant_signer_title   as string | null) ?? null,
     accountant_signer_email:       (tenantRow?.accountant_signer_email   as string | null) ?? null,
+    accountant_signer_phone:       (tenantRow?.accountant_signer_phone   as string | null) ?? null,
     rega_default_recipient_emails: (tenantRow?.rega_default_recipient_emails as string[] | null) ?? null,
   }
 
