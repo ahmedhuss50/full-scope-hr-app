@@ -148,6 +148,11 @@ export default async function ProjectUnitsListPage({
   // "current buyer/contract" summary without hammering the DB per unit.
   const unitIds = units.map((u) => u.id)
   const saleByUnit = new Map<string, SaleLite>()
+  // Count of ALL sales per unit so we can derive the unit-level status
+  //   >=2 sales → the unit was resold at some point (معاد بيعها)
+  //    1 sale, cancelled → ملغية
+  //    1 sale, active   → قائمة
+  const salesCountByUnit = new Map<string, number>()
   if (unitIds.length > 0) {
     const { data: salesData } = await svc
       .from('dsb_unit_sales')
@@ -162,6 +167,7 @@ export default async function ProjectUnitsListPage({
     const sales = (salesData ?? []) as SaleLite[]
     // Active sale wins; ties broken by newest created_at (already sorted DESC).
     for (const s of sales) {
+      salesCountByUnit.set(s.unit_id, (salesCountByUnit.get(s.unit_id) ?? 0) + 1)
       const prev = saleByUnit.get(s.unit_id)
       if (!prev) {
         saleByUnit.set(s.unit_id, s)
@@ -169,6 +175,29 @@ export default async function ProjectUnitsListPage({
         saleByUnit.set(s.unit_id, s)
       }
     }
+  }
+
+  // Derive the unit-level status the operator wants displayed. Three states,
+  // matching the labels on the buyers-register note:
+  //
+  //   • مباعة والغير منجزة              — sold, still standing (default active)
+  //   • المعاد بيعها                    — the unit was sold more than once
+  //   • ملغية ولم يتم إعادة بيعها       — cancelled, no follow-up sale
+  //
+  // Derivation:
+  //   count >= 2  OR  any sale marked `cancelled_resold`   → معاد بيعها
+  //   otherwise, only-sale is cancelled with no re-sale    → ملغية
+  //   otherwise (active sale present)                      → مباعة
+  function unitStatus(unitId: string, sale: SaleLite | undefined): { cls: string; label: string } | null {
+    if (!sale) return null // "لم تُبَع" rendered separately
+    const count = salesCountByUnit.get(unitId) ?? 0
+    if (count >= 2 || sale.sale_status === 'cancelled_resold') {
+      return { cls: 'bg-amber-50 text-amber-800 ring-amber-200', label: 'معاد بيعها' }
+    }
+    if (sale.sale_status === 'cancelled') {
+      return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'ملغية ولم يتم إعادة بيعها' }
+    }
+    return { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', label: 'مباعة والغير منجزة' }
   }
 
   return (
@@ -307,16 +336,8 @@ export default async function ProjectUnitsListPage({
                                 <span className="text-slate-400 italic text-xs">— بدون اسم مشتري —</span>
                               )}
                               {(() => {
-                                // Mirror the sale_status set on عقود المشترين
-                                // so the unit row reflects the contract state.
-                                const s = sale.sale_status ?? 'active'
-                                const map: Record<string, { cls: string; label: string }> = {
-                                  active:           { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', label: 'ساري' },
-                                  cancelled:        { cls: 'bg-red-50 text-red-700 ring-red-200',              label: 'ملغي' },
-                                  cancelled_resold: { cls: 'bg-amber-50 text-amber-800 ring-amber-200',        label: 'مباع' },
-                                  completed:        { cls: 'bg-blue-50 text-blue-700 ring-blue-200',           label: 'منجز' },
-                                }
-                                const badge = map[s] ?? { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: s }
+                                const badge = unitStatus(u.id, sale)
+                                if (!badge) return null
                                 return (
                                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
                                     {badge.label}
