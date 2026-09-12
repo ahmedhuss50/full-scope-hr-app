@@ -300,11 +300,30 @@ export default async function ProjectUnitsListPage({
                       <Td>
                         {sale ? (
                           <div className="leading-tight">
-                            {sale.buyer_name_ar ? (
-                              <div className="text-slate-900 font-semibold">{sale.buyer_name_ar}</div>
-                            ) : (
-                              <div className="text-slate-400 italic text-xs">— بدون اسم مشتري —</div>
-                            )}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {sale.buyer_name_ar ? (
+                                <span className="text-slate-900 font-semibold">{sale.buyer_name_ar}</span>
+                              ) : (
+                                <span className="text-slate-400 italic text-xs">— بدون اسم مشتري —</span>
+                              )}
+                              {(() => {
+                                // Mirror the sale_status set on عقود المشترين
+                                // so the unit row reflects the contract state.
+                                const s = sale.sale_status ?? 'active'
+                                const map: Record<string, { cls: string; label: string }> = {
+                                  active:           { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', label: 'ساري' },
+                                  cancelled:        { cls: 'bg-red-50 text-red-700 ring-red-200',              label: 'ملغي' },
+                                  cancelled_resold: { cls: 'bg-amber-50 text-amber-800 ring-amber-200',        label: 'مباع' },
+                                  completed:        { cls: 'bg-blue-50 text-blue-700 ring-blue-200',           label: 'منجز' },
+                                }
+                                const badge = map[s] ?? { cls: 'bg-slate-100 text-slate-700 ring-slate-200', label: s }
+                                return (
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
+                                    {badge.label}
+                                  </span>
+                                )
+                              })()}
+                            </div>
                             <div className="text-[11px] text-slate-600 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
                               {sale.contract_number && (
                                 <span>
