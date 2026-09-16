@@ -4,6 +4,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { LayoutDashboard, LayoutGrid, List, ArrowUp, ArrowDown } from 'lucide-react'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
+import { DraggableBoard } from './DraggableBoard'
 
 export const dynamic = 'force-dynamic'
 
@@ -431,83 +432,33 @@ export default async function DisbursementsBoardPage({
         </section>
       )}
 
-      {/* Pipeline (kanban) — default view. */}
+      {/* Pipeline (kanban) — default view. Drag-and-drop supported for
+          any write role. Cards flatten to a plain shape so the client
+          component doesn't have to know about the nested project /
+          developer / extracted_fields structure. */}
       {view === 'board' && (
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="p-4 sm:p-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {PIPELINE_COLUMNS.map((col) => {
-              const items = byStatus.get(col.key) ?? []
-              return (
-                <div
-                  key={col.key}
-                  className="flex flex-col bg-slate-50/60 border border-slate-200 rounded-xl overflow-hidden min-h-[160px]"
-                >
-                  <div
-                    className={`flex items-center justify-between gap-2 px-3 py-2 border-b ${col.headCls}`}
-                  >
-                    <div className="text-xs font-bold truncate">{col.title}</div>
-                    <span className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full bg-white/70 text-[11px] font-bold font-mono">
-                      {items.length}
-                    </span>
-                  </div>
-                  <div className="p-2 space-y-2 flex-1">
-                    {items.length === 0 ? (
-                      <div className="text-center text-xs text-slate-400 py-6">—</div>
-                    ) : (
-                      items.map((c) => {
-                        const proj = single(c.project)
-                        const dev = single(c.developer)
-                        return (
-                          <Link
-                            key={c.id}
-                            href={`/app/disbursements/${c.id}`}
-                            className="block bg-white rounded-lg border border-slate-200 p-2.5 hover:border-teal-300 hover:shadow-sm transition"
-                          >
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="font-mono text-[11px] text-slate-500 truncate">
-                                {c.case_number}
-                              </span>
-                            </div>
-                            {proj && (
-                              <div className="text-[11px] text-slate-500 truncate">
-                                <span className="font-mono">{proj.code}</span>
-                                <span className="text-slate-400"> · </span>
-                                <span>{proj.name_ar}</span>
-                              </div>
-                            )}
-                            {dev && (
-                              <div className="text-[11px] text-slate-400 truncate">
-                                {dev.company_name_ar}
-                              </div>
-                            )}
-                            {c.voucher_number_text && (
-                              <div className="text-xs text-slate-600 truncate mt-0.5">
-                                سند {c.voucher_number_text}
-                              </div>
-                            )}
-                            {c.extracted_fields?.beneficiary_name_ar && (
-                              <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                                المستفيد: {c.extracted_fields.beneficiary_name_ar}
-                              </div>
-                            )}
-                            <div className="text-sm font-bold text-slate-900 mt-1">
-                              {fmtSar(c.amount_sar)}
-                            </div>
-                            <div className="text-[11px] text-slate-400 mt-0.5">
-                              {fmtDate(c.submitted_at ?? c.created_at)}
-                            </div>
-                          </Link>
-                        )
-                      })
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      </section>
+        <DraggableBoard
+          canDrag={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+          columns={PIPELINE_COLUMNS.map((c) => ({ key: c.key, title: c.title, headCls: c.headCls }))}
+          cards={cases.map((c) => {
+            const proj = single(c.project)
+            const dev  = single(c.developer)
+            return {
+              id: c.id,
+              status: c.status as 'with_employee' | 'with_supervisor' | 'with_owner' | 'signed' | 'sent_back_to_developer',
+              case_number: c.case_number,
+              voucher_number_text: c.voucher_number_text,
+              amount_sar: c.amount_sar,
+              submitted_at: c.submitted_at,
+              created_at: c.created_at,
+              project_code: proj?.code ?? null,
+              project_name: proj?.name_ar ?? null,
+              developer_name: dev?.company_name_ar ?? null,
+              beneficiary_name:
+                (c.extracted_fields as { beneficiary_name_ar?: string } | null)?.beneficiary_name_ar ?? null,
+            }
+          })}
+        />
       )}
     </div>
   )

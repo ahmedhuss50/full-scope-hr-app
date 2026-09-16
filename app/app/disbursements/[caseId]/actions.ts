@@ -721,6 +721,73 @@ export interface MoveCaseToStageInput {
   notes?: string
 }
 
+/**
+ * dragMoveCase — permissive move used by the kanban drag-and-drop UI.
+ *
+ * Unlike moveCaseToStage, this action deliberately SKIPS:
+ *   • role-based allowed-target restrictions
+ *   • the required-fields gate on the with_supervisor promotion
+ *   • the "notes required" rule on sent_back_to_developer
+ *
+ * Rationale (owner ask): "everyone can drag, no restrictions, confirm and
+ * stamp date". The drop dialog on the client is the confirmation.
+ *
+ * Always writes to dsb_audit_log with event='drag_move' so we retain a
+ * trail of every transition. Timestamps we stamp:
+ *   → signed       : signed_at + signed_by_user_id
+ * All other targets get the audit-log entry (with occurred_at = now) but
+ * no extra column write.
+ */
+export async function dragMoveCase(
+  input: { case_id: string; target_status: MoveTargetStatus },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if (!caller) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  const role = caller.dsbRole
+  if (!role || !['employee', 'supervisor', 'owner'].includes(role)) {
+    return { ok: false, error: 'دورك لا يسمح بهذه النقلة.' }
+  }
+  if (!MOVE_TARGET_STATUSES.includes(input.target_status)) {
+    return { ok: false, error: 'مرحلة غير صالحة.' }
+  }
+
+  const svc = createSupabaseService()
+  const kase = await loadCase(caller.tenantId, input.case_id)
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  const fromStatus = kase.status
+
+  // No-op if the card was dropped in the lane it already sits in.
+  if (fromStatus === input.target_status) return { ok: true }
+
+  const updatePayload: Record<string, unknown> = { status: input.target_status }
+  if (input.target_status === 'signed') {
+    updatePayload.signed_at = new Date().toISOString()
+    updatePayload.signed_by_user_id = caller.userId
+  }
+
+  const { error: updErr } = await svc
+    .from('dsb_cases')
+    .update(updatePayload)
+    .eq('id', input.case_id)
+    .eq('tenant_id', caller.tenantId)
+  if (updErr) return { ok: false, error: updErr.message }
+
+  await svc.from('dsb_audit_log').insert({
+    tenant_id: caller.tenantId,
+    case_id: input.case_id,
+    event: 'drag_move',
+    from_status: fromStatus,
+    to_status: input.target_status,
+    notes: `Moved via kanban drag by ${caller.dsbRole}`,
+    actor_user_id: caller.userId,
+  })
+
+  revalidatePath('/app/disbursements/board')
+  revalidatePath('/app/disbursements')
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  return { ok: true }
+}
+
 export async function moveCaseToStage(
   input: MoveCaseToStageInput,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
