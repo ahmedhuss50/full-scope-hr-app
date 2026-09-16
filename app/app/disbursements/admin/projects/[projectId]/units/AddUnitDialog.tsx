@@ -105,7 +105,7 @@ export function AddUnitDialog({ projectId }: { projectId: string }) {
           <div><label className={labelCls}>ملاحظات</label><textarea className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={busy} rows={2} /></div>
           {error && (<div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>)}
           <div className="flex items-center gap-2 pt-2">
-            <button type="submit" disabled={busy || !unitNumber.trim()} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50">
+            <button type="submit" disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50">
               {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {busy ? 'جارٍ الحفظ…' : 'حفظ الوحدة'}
             </button>
