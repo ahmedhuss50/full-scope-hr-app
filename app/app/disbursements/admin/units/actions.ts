@@ -2184,3 +2184,159 @@ export async function getUnitDocPreviewUrl(
   if (error || !data?.signedUrl) return { ok: false, error: 'تعذّر إنشاء رابط المعاينة.' }
   return { ok: true, url: data.signedUrl }
 }
+
+// ---------------------------------------------------------------------------
+// createSingleUnit — one-off unit add from the units page.
+// Rejects duplicate (project_id, unit_number). Any write role assigned to
+// the project may add.
+// ---------------------------------------------------------------------------
+export interface CreateSingleUnitInput {
+  project_id: string
+  unit_number: string
+  zone_number?: string | null
+  block_number?: string | null
+  unit_type?: string | null
+  area_m2?: number | null
+  district?: string | null
+  city?: string | null
+  region?: string | null
+  notes?: string | null
+}
+export async function createSingleUnit(
+  input: CreateSingleUnitInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const projectId  = (input.project_id ?? '').trim()
+  const unitNumber = (input.unit_number ?? '').trim()
+  if (!projectId)  return { ok: false, error: 'المشروع مطلوب.' }
+  if (!unitNumber) return { ok: false, error: 'رقم الوحدة مطلوب.' }
+  const guard = await assertCanWriteToProjects(caller, [projectId])
+  if (!guard.ok) return guard
+
+  const svc = createSupabaseService()
+  // Tenant / project ownership check.
+  const { data: proj } = await svc
+    .from('dsb_projects').select('id, tenant_id').eq('id', projectId).maybeSingle()
+  if (!proj || (proj as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+  // Duplicate check on (project_id, unit_number).
+  const { data: dup } = await svc
+    .from('dsb_project_units').select('id')
+    .eq('project_id', projectId).eq('unit_number', unitNumber).maybeSingle()
+  if (dup) return { ok: false, error: 'وحدة بهذا الرقم موجودة بالفعل في هذا المشروع.' }
+
+  const row: Record<string, unknown> = {
+    tenant_id:    caller.tenantId,
+    project_id:   projectId,
+    unit_number:  unitNumber,
+    zone_number:  input.zone_number ?? null,
+    block_number: input.block_number ?? null,
+    unit_type:    input.unit_type ?? null,
+    area_m2:      input.area_m2 ?? null,
+    district:     input.district ?? null,
+    city:         input.city ?? null,
+    region:       input.region ?? null,
+    notes:        input.notes ?? null,
+  }
+  const { data, error } = await svc
+    .from('dsb_project_units').insert(row).select('id').single()
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/units`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  return { ok: true, id: (data as { id: string }).id }
+}
+
+// ---------------------------------------------------------------------------
+// createSingleSale — one-off contract/sale add from the buyer-contracts page.
+// unit_id is optional (post-058 sales may float unlinked; the AI linker
+// matches them later). Sale_status defaults to 'active' — the operator can
+// change it from the الحالة dropdown after creation.
+// ---------------------------------------------------------------------------
+export interface CreateSingleSaleInput {
+  project_id: string
+  unit_id?: string | null
+  unit_number_raw?: string | null  // captured for the AI linker if unit_id is null
+  sale_status?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
+  buyer_name_ar?: string | null
+  buyer_id_type?: 'national' | 'residency' | 'passport' | null
+  buyer_id_number?: string | null
+  buyer_nationality?: string | null
+  buyer_phone?: string | null
+  contract_number?: string | null
+  contract_type?: string | null
+  financing_type?: string | null
+  financing_bank?: string | null
+  sale_date?: string | null
+  price_before_tax_sar?: number | null
+  vat_sar?: number | null
+  price_with_vat_sar?: number | null
+  delivery_status?: string | null
+  delivery_date?: string | null
+}
+export async function createSingleSale(
+  input: CreateSingleSaleInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const projectId = (input.project_id ?? '').trim()
+  if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
+  const guard = await assertCanWriteToProjects(caller, [projectId])
+  if (!guard.ok) return guard
+
+  const svc = createSupabaseService()
+  const { data: proj } = await svc
+    .from('dsb_projects').select('id, tenant_id').eq('id', projectId).maybeSingle()
+  if (!proj || (proj as { tenant_id: string }).tenant_id !== caller.tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  // If unit_id is provided, verify it belongs to the same project + tenant.
+  let unitId: string | null = null
+  let unitNumberRaw: string | null = (input.unit_number_raw ?? '').trim() || null
+  if (input.unit_id) {
+    const { data: u } = await svc
+      .from('dsb_project_units')
+      .select('id, project_id, unit_number, tenant_id')
+      .eq('id', input.unit_id).maybeSingle()
+    if (!u || (u as { tenant_id: string }).tenant_id !== caller.tenantId ||
+        (u as { project_id: string }).project_id !== projectId) {
+      return { ok: false, error: 'الوحدة المختارة لا تنتمي لهذا المشروع.' }
+    }
+    unitId = (u as { id: string }).id
+    unitNumberRaw = unitNumberRaw ?? (u as { unit_number: string }).unit_number
+  }
+
+  const row: Record<string, unknown> = {
+    tenant_id:            caller.tenantId,
+    project_id:           projectId,
+    unit_id:              unitId,
+    unit_number_raw:      unitNumberRaw,
+    sale_status:          input.sale_status ?? 'active',
+    buyer_name_ar:        input.buyer_name_ar ?? null,
+    buyer_id_type:        input.buyer_id_type ?? null,
+    buyer_id_number:      input.buyer_id_number ?? null,
+    buyer_nationality:    input.buyer_nationality ?? null,
+    buyer_phone:          input.buyer_phone ?? null,
+    contract_number:      input.contract_number ?? null,
+    contract_type:        input.contract_type ?? null,
+    financing_type:       input.financing_type ?? null,
+    financing_bank:       input.financing_bank ?? null,
+    sale_date:            input.sale_date ?? null,
+    price_before_tax_sar: input.price_before_tax_sar ?? null,
+    vat_sar:              input.vat_sar ?? null,
+    price_with_vat_sar:   input.price_with_vat_sar ?? null,
+    delivery_status:      input.delivery_status ?? null,
+    delivery_date:        input.delivery_date ?? null,
+  }
+  const { data, error } = await svc
+    .from('dsb_unit_sales').insert(row).select('id').single()
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/buyer-contracts`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}/units`)
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  return { ok: true, id: (data as { id: string }).id }
+}

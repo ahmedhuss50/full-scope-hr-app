@@ -19,6 +19,7 @@ import { deleteUnit, deleteAllUnitsForProject } from '../../../units/actions'
 import { DeliveryToggle } from '../buyer-contracts/DeliveryToggle'
 import { CompletionToggle } from './CompletionToggle'
 import { UnitAttachmentButton } from './UnitAttachmentButton'
+import { AddUnitDialog } from './AddUnitDialog'
 
 export const dynamic = 'force-dynamic'
 
@@ -258,6 +259,7 @@ export default async function ProjectUnitsListPage({
             </Link>
           )}
           <div className="flex-1" />
+          <AddUnitDialog projectId={projectId} />
           <Link
             href={`/app/disbursements/admin/imports/units?project=${projectId}`}
             className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 text-xs font-bold"
