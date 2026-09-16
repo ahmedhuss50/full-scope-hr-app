@@ -48,7 +48,12 @@ export function AddUnitDialog({ projectId }: { projectId: string }) {
       notes: notes.trim() || null,
     })
     setBusy(false)
-    if (!res.ok) { setError(res.error); return }
+    if (!res.ok) {
+      setError(res.error)
+      alert('فشل: ' + res.error)
+      return
+    }
+    alert('تمت الإضافة بنجاح — id: ' + res.id)
     reset(); setOpen(false)
     startTransition(() => router.refresh())
   }

@@ -60,7 +60,12 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
       price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
     })
     setBusy(false)
-    if (!res.ok) { setError(res.error); return }
+    if (!res.ok) {
+      setError(res.error)
+      alert('فشل: ' + res.error)
+      return
+    }
+    alert('تمت الإضافة بنجاح — id: ' + res.id)
     reset(); setOpen(false)
     startTransition(() => router.refresh())
   }
