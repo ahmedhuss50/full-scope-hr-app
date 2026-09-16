@@ -3,14 +3,12 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, Loader2 } from 'lucide-react'
-import { createSingleSale } from '../../../units/actions'
 
 type SaleStatus = 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
 
 /**
- * Minimal inline "add a contract" form. unit_number_raw is optional —
- * matches the AI linker's flow: create the sale first, link to a unit
- * later (either manually via the linker or on the units page).
+ * Minimal inline "add a contract" form. Posts to /api/dsb-add-sale — a
+ * plain JSON endpoint that wraps the createSingleSale server action.
  */
 export function AddSaleDialog({ projectId }: { projectId: string }) {
   const router = useRouter()
@@ -40,38 +38,37 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
     setSaleStatus('active'); setError(null)
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    alert('[1] onSubmit fired — projectId=' + projectId + ', buyer=' + buyerName)
+  async function onSave() {
     setError(null); setBusy(true)
     try {
-      const res = await createSingleSale({
-        project_id: projectId,
-        unit_number_raw: unitNumber.trim() || null,
-        sale_status: saleStatus,
-        buyer_name_ar: buyerName.trim() || null,
-        buyer_id_type: buyerIdType || null,
-        buyer_id_number: buyerIdNumber.trim() || null,
-        buyer_nationality: buyerNationality.trim() || null,
-        buyer_phone: buyerPhone.trim() || null,
-        contract_number: contractNumber.trim() || null,
-        contract_type: contractType.trim() || null,
-        financing_type: financingType.trim() || null,
-        financing_bank: financingBank.trim() || null,
-        sale_date: saleDate || null,
-        price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
+      const resp = await fetch('/api/dsb-add-sale', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          unit_number_raw: unitNumber.trim() || null,
+          sale_status: saleStatus,
+          buyer_name_ar: buyerName.trim() || null,
+          buyer_id_type: buyerIdType || null,
+          buyer_id_number: buyerIdNumber.trim() || null,
+          buyer_nationality: buyerNationality.trim() || null,
+          buyer_phone: buyerPhone.trim() || null,
+          contract_number: contractNumber.trim() || null,
+          contract_type: contractType.trim() || null,
+          financing_type: financingType.trim() || null,
+          financing_bank: financingBank.trim() || null,
+          sale_date: saleDate || null,
+          price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
+        }),
       })
+      const data = await resp.json().catch(() => ({ ok: false, error: 'استجابة غير صالحة من الخادم.' }))
       setBusy(false)
-      alert('[2] server returned: ' + JSON.stringify(res))
-      if (!res.ok) {
-        setError(res.error)
-        return
-      }
+      if (!resp.ok || !data.ok) { setError(data.error ?? `خطأ ${resp.status}`); return }
       reset(); setOpen(false)
       startTransition(() => router.refresh())
     } catch (err) {
       setBusy(false)
-      alert('[X] EXCEPTION: ' + String(err))
+      setError('خطأ في الشبكة: ' + String(err))
     }
   }
 
@@ -100,7 +97,7 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <form onSubmit={onSubmit} className="p-4 space-y-3">
+        <div className="p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>حالة العقد</label>
@@ -138,9 +135,9 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
             <div><label className={labelCls}>السعر قبل الضريبة</label><input className={inputCls} value={priceBeforeTax} onChange={(e) => setPriceBeforeTax(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
           </div>
 
-          {error && (<div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>)}
+          {error && (<div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-semibold">{error}</div>)}
           <div className="flex items-center gap-2 pt-2">
-            <button type="submit" disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50">
+            <button type="button" onClick={onSave} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50">
               {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {busy ? 'جارٍ الحفظ…' : 'حفظ العقد'}
             </button>
@@ -148,7 +145,7 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
               إلغاء
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   )

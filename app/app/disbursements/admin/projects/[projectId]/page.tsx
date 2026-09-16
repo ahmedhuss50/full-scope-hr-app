@@ -101,8 +101,10 @@ const PIPELINE_COLUMNS: {
 
 export default async function ProjectDetailPage({
   params,
+  searchParams,
 }: {
   params: { projectId: string }
+  searchParams?: { layout?: string }
 }) {
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
@@ -167,6 +169,28 @@ export default async function ProjectDetailPage({
         company_name_ar: devRow.company_name_ar as string,
       }
     }
+  }
+
+  // ---- v2 layout branch (feature flag via ?layout=new) ------------------
+  // The new layout lives in _v2/. If the operator adds `?layout=new` we
+  // hand off to that component and skip the rest of the (much bigger)
+  // legacy render. To revert to the old view, drop the query param — the
+  // legacy code below is untouched.
+  if (searchParams?.layout === 'new') {
+    const { ProjectOverviewV2 } = await import('./_v2/ProjectOverviewV2')
+    return (
+      <ProjectOverviewV2
+        projectId={projectId}
+        tenantId={tenantId}
+        dsbRole={dsbRole}
+        project={{
+          id: project.id,
+          name_ar: project.name_ar,
+          code: project.code,
+          developer_name: developer?.company_name_ar ?? null,
+        }}
+      />
+    )
   }
 
   // Load the current set of assigned employees from the junction. The
@@ -400,9 +424,20 @@ export default async function ProjectDetailPage({
 
       {/* Header */}
       <header className="space-y-3">
-        <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
-          <FolderKanban className="w-4 h-4" aria-hidden="true" />
-          مشروع
+        <div className="flex items-center justify-between gap-2">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+            <FolderKanban className="w-4 h-4" aria-hidden="true" />
+            مشروع
+          </div>
+          {/* Feature-flag: try the reorganized layout. Drop the ?layout=new
+              param (or click "العرض القديم" up there) to come back here. */}
+          <Link
+            href={`/app/disbursements/admin/projects/${projectId}?layout=new`}
+            className="text-[11px] text-slate-400 hover:text-teal-700 font-semibold"
+            title="جرّب النسخة المرتّبة الجديدة"
+          >
+            جرّب النسخة الجديدة ↗
+          </Link>
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0 flex-1 space-y-1">
