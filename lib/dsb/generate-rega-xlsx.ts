@@ -372,12 +372,19 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TEMPLATE_LAST_DATA_ROW, 1, 49)
 
   // -----------------------------------------------------------------------
-  // STEP 3 — Populate one row per unit ROUTED to sheet 1. Only in_progress
-  // units belong here (وحدات قائمة). Cancelled / sold / resold units go to
-  // their own tabs. Units with NO contract at all are skipped entirely —
-  // سجل المشترين is a buyers register, an unsold unit isn't part of it.
+  // STEP 3 — Populate one row per unit ROUTED to sheet 1. Two kinds of
+  // units belong here (وحدات قائمة):
+  //   • in_progress    — active contract in progress
+  //   • cancelled_only — the (only) contract was cancelled; the unit is
+  //                       back on the market, so it also belongs in the
+  //                       standing tab (per the owner's spec). It ALSO
+  //                       still shows up in the dedicated "الملغية" tab.
+  // Sold + resold + no-contract units are excluded from sheet 1.
   // -----------------------------------------------------------------------
-  const sheet1Units = units.filter((u) => deriveUnitStatus(u.id) === 'in_progress')
+  const sheet1Units = units.filter((u) => {
+    const st = deriveUnitStatus(u.id)
+    return st === 'in_progress' || st === 'cancelled_only'
+  })
   let idx = 0
   for (const u of sheet1Units) {
     const s = saleByUnit.get(u.id)
