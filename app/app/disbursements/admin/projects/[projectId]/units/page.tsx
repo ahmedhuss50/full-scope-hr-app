@@ -148,11 +148,11 @@ export default async function ProjectUnitsListPage({
   // "current buyer/contract" summary without hammering the DB per unit.
   const unitIds = units.map((u) => u.id)
   const saleByUnit = new Map<string, SaleLite>()
-  // Count of ALL sales per unit so we can derive the unit-level status
-  //   >=2 sales → the unit was resold at some point (معاد بيعها)
-  //    1 sale, cancelled → ملغية
-  //    1 sale, active   → قائمة
-  const salesCountByUnit = new Map<string, number>()
+  // Per-unit sale-status counters so we can derive the unit's status from
+  // the FULL sales history — not just from one "current" sale row.
+  const activeByUnit    = new Map<string, number>()
+  const completedByUnit = new Map<string, number>()
+  const cancelledByUnit = new Map<string, number>()
   if (unitIds.length > 0) {
     const { data: salesData } = await svc
       .from('dsb_unit_sales')
@@ -165,39 +165,43 @@ export default async function ProjectUnitsListPage({
       .in('unit_id', unitIds)
       .order('created_at', { ascending: false })
     const sales = (salesData ?? []) as SaleLite[]
-    // Active sale wins; ties broken by newest created_at (already sorted DESC).
+    // Pick the sale to feature in the "buyer/contract" cell: prefer
+    // active > completed > cancelled; ties broken by newest created_at
+    // (already sorted DESC by the query).
     for (const s of sales) {
-      salesCountByUnit.set(s.unit_id, (salesCountByUnit.get(s.unit_id) ?? 0) + 1)
+      const status = s.sale_status ?? ''
+      if (status === 'active')                                       activeByUnit.set(s.unit_id, (activeByUnit.get(s.unit_id) ?? 0) + 1)
+      else if (status === 'completed')                               completedByUnit.set(s.unit_id, (completedByUnit.get(s.unit_id) ?? 0) + 1)
+      else if (status === 'cancelled' || status === 'cancelled_resold') cancelledByUnit.set(s.unit_id, (cancelledByUnit.get(s.unit_id) ?? 0) + 1)
       const prev = saleByUnit.get(s.unit_id)
-      if (!prev) {
-        saleByUnit.set(s.unit_id, s)
-      } else if (prev.sale_status !== 'active' && s.sale_status === 'active') {
+      const rank = (st: string | null | undefined) => (st === 'active' ? 3 : st === 'completed' ? 2 : st === 'cancelled_resold' ? 1 : st === 'cancelled' ? 0 : -1)
+      if (!prev || rank(s.sale_status) > rank(prev.sale_status)) {
         saleByUnit.set(s.unit_id, s)
       }
     }
   }
 
-  // Derive the unit-level status the operator wants displayed. Three states,
-  // matching the labels on the buyers-register note:
+  // Derive the unit-level status the operator wants displayed. Four states,
+  // matching the finalized state chart:
   //
-  //   • مباعة والغير منجزة              — sold, still standing (default active)
-  //   • المعاد بيعها                    — the unit was sold more than once
-  //   • ملغية ولم يتم إعادة بيعها       — cancelled, no follow-up sale
+  //   • متاحة        — no contract, or every contract cancelled
+  //   • قيد البيع    — a live/active contract in progress
+  //   • مباعة        — one completed contract, no cancellation history
+  //   • أعيد بيعها   — a completed contract AFTER a prior cancellation
   //
-  // Derivation:
-  //   count >= 2  OR  any sale marked `cancelled_resold`   → معاد بيعها
-  //   otherwise, only-sale is cancelled with no re-sale    → ملغية
-  //   otherwise (active sale present)                      → مباعة
-  function unitStatus(unitId: string, sale: SaleLite | undefined): { cls: string; label: string } | null {
-    if (!sale) return null // "لم تُبَع" rendered separately
-    const count = salesCountByUnit.get(unitId) ?? 0
-    if (count >= 2 || sale.sale_status === 'cancelled_resold') {
-      return { cls: 'bg-amber-50 text-amber-800 ring-amber-200', label: 'معاد بيعها' }
-    }
-    if (sale.sale_status === 'cancelled') {
-      return { cls: 'bg-red-50 text-red-700 ring-red-200', label: 'ملغية ولم يتم إعادة بيعها' }
-    }
-    return { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', label: 'مباعة والغير منجزة' }
+  // Derivation (priority top-to-bottom):
+  //   any active                     → قيد البيع
+  //   completed  AND  cancelled ≥ 1  → أعيد بيعها
+  //   completed  (no cancelled)      → مباعة
+  //   otherwise (nothing OR only cancelled) → متاحة
+  function unitStatus(unitId: string): { cls: string; label: string } {
+    const a = activeByUnit.get(unitId) ?? 0
+    const c = completedByUnit.get(unitId) ?? 0
+    const x = cancelledByUnit.get(unitId) ?? 0
+    if (a > 0)  return { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', label: 'قيد البيع' }
+    if (c > 0 && x > 0) return { cls: 'bg-purple-50 text-purple-700 ring-purple-200', label: 'أعيد بيعها' }
+    if (c > 0)  return { cls: 'bg-blue-50 text-blue-700 ring-blue-200', label: 'مباعة' }
+    return { cls: 'bg-slate-100 text-slate-600 ring-slate-200', label: 'متاحة' }
   }
 
   return (
@@ -336,8 +340,7 @@ export default async function ProjectUnitsListPage({
                                 <span className="text-slate-400 italic text-xs">— بدون اسم مشتري —</span>
                               )}
                               {(() => {
-                                const badge = unitStatus(u.id, sale)
-                                if (!badge) return null
+                                const badge = unitStatus(u.id)
                                 return (
                                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
                                     {badge.label}
@@ -370,9 +373,14 @@ export default async function ProjectUnitsListPage({
                             </div>
                           </div>
                         ) : (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200">
-                            لم تُبَع
-                          </span>
+                          (() => {
+                            const badge = unitStatus(u.id)
+                            return (
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
+                                {badge.label}
+                              </span>
+                            )
+                          })()
                         )}
                       </Td>
                       <Td>

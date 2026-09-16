@@ -8,13 +8,16 @@ import { updateSale } from '../../../units/actions'
 type SaleStatus = 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
 
 /**
- * Inline sale-status editor for a contract row: dropdown auto-saves on
- * change (no separate save button). Options match the owner's naming:
- *   ساري         → active
- *   ملغي         → cancelled
- *   مباع         → cancelled_resold  (cancelled and resold)
- * `completed` is kept in the type so rows already carrying that value
- * render correctly, but it's not a picker option.
+ * Inline sale-status editor for a contract row. Three options that drive
+ * the four-state unit derivation on قائمة الوحدات:
+ *   ساري  → active     (in progress → unit shows "قيد البيع")
+ *   منجز  → completed  (sale went through → unit shows "مباعة" or "أعيد بيعها")
+ *   ملغي  → cancelled  (unit reverts to "متاحة" unless a completed sale exists)
+ *
+ * The legacy `cancelled_resold` value still renders correctly if any row
+ * carries it from the pre-migration data, but it's not offered as a
+ * picker option — the unit-level derivation now handles "resold" from
+ * the presence of a completed sale after a cancellation.
  */
 export function StatusToggle({
   saleId,
@@ -49,9 +52,10 @@ export function StatusToggle({
 
   const cls =
     status === 'active'           ? 'bg-emerald-50 text-emerald-800 ring-emerald-200 focus:ring-emerald-500' :
+    status === 'completed'        ? 'bg-blue-50 text-blue-800 ring-blue-200 focus:ring-blue-500' :
     status === 'cancelled'        ? 'bg-red-50 text-red-800 ring-red-200 focus:ring-red-500' :
     status === 'cancelled_resold' ? 'bg-amber-50 text-amber-800 ring-amber-200 focus:ring-amber-500' :
-                                    'bg-blue-50 text-blue-800 ring-blue-200 focus:ring-blue-500'
+                                    'bg-slate-50 text-slate-800 ring-slate-200 focus:ring-slate-500'
 
   return (
     <div className="flex items-center gap-1 min-w-[6rem]">
@@ -62,9 +66,9 @@ export function StatusToggle({
         className={`rounded-md text-[11px] font-bold px-1.5 py-0.5 ring-1 ring-inset focus:outline-none focus:ring-2 disabled:cursor-not-allowed ${cls}`}
       >
         <option value="active">ساري</option>
+        <option value="completed">منجز</option>
         <option value="cancelled">ملغي</option>
-        <option value="cancelled_resold">مباع</option>
-        {status === 'completed' && <option value="completed">منجز</option>}
+        {status === 'cancelled_resold' && <option value="cancelled_resold">مباع (قديم)</option>}
       </select>
       {busy && <Loader2 className="w-3 h-3 animate-spin text-teal-600" aria-hidden="true" />}
       {!busy && savedTick > 0 && <Check className="w-3 h-3 text-emerald-600" aria-hidden="true" />}
