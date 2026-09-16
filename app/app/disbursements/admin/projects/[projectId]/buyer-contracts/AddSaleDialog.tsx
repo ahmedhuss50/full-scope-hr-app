@@ -42,32 +42,37 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
+    alert('[1] onSubmit fired — projectId=' + projectId + ', buyer=' + buyerName)
     setError(null); setBusy(true)
-    const res = await createSingleSale({
-      project_id: projectId,
-      unit_number_raw: unitNumber.trim() || null,
-      sale_status: saleStatus,
-      buyer_name_ar: buyerName.trim() || null,
-      buyer_id_type: buyerIdType || null,
-      buyer_id_number: buyerIdNumber.trim() || null,
-      buyer_nationality: buyerNationality.trim() || null,
-      buyer_phone: buyerPhone.trim() || null,
-      contract_number: contractNumber.trim() || null,
-      contract_type: contractType.trim() || null,
-      financing_type: financingType.trim() || null,
-      financing_bank: financingBank.trim() || null,
-      sale_date: saleDate || null,
-      price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
-    })
-    setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      alert('فشل: ' + res.error)
-      return
+    try {
+      const res = await createSingleSale({
+        project_id: projectId,
+        unit_number_raw: unitNumber.trim() || null,
+        sale_status: saleStatus,
+        buyer_name_ar: buyerName.trim() || null,
+        buyer_id_type: buyerIdType || null,
+        buyer_id_number: buyerIdNumber.trim() || null,
+        buyer_nationality: buyerNationality.trim() || null,
+        buyer_phone: buyerPhone.trim() || null,
+        contract_number: contractNumber.trim() || null,
+        contract_type: contractType.trim() || null,
+        financing_type: financingType.trim() || null,
+        financing_bank: financingBank.trim() || null,
+        sale_date: saleDate || null,
+        price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
+      })
+      setBusy(false)
+      alert('[2] server returned: ' + JSON.stringify(res))
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      reset(); setOpen(false)
+      startTransition(() => router.refresh())
+    } catch (err) {
+      setBusy(false)
+      alert('[X] EXCEPTION: ' + String(err))
     }
-    alert('تمت الإضافة بنجاح — id: ' + res.id)
-    reset(); setOpen(false)
-    startTransition(() => router.refresh())
   }
 
   if (!open) {

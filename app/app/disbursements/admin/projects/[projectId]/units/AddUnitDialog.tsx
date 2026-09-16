@@ -34,28 +34,33 @@ export function AddUnitDialog({ projectId }: { projectId: string }) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
+    alert('[1] onSubmit fired — projectId=' + projectId + ', unitNumber=' + unitNumber)
     setError(null); setBusy(true)
-    const res = await createSingleUnit({
-      project_id: projectId,
-      unit_number: unitNumber.trim(),
-      unit_type: unitType.trim() || null,
-      area_m2: areaM2 ? Number(areaM2) : null,
-      block_number: block.trim() || null,
-      zone_number: zone.trim() || null,
-      district: district.trim() || null,
-      city: city.trim() || null,
-      region: region.trim() || null,
-      notes: notes.trim() || null,
-    })
-    setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      alert('فشل: ' + res.error)
-      return
+    try {
+      const res = await createSingleUnit({
+        project_id: projectId,
+        unit_number: unitNumber.trim(),
+        unit_type: unitType.trim() || null,
+        area_m2: areaM2 ? Number(areaM2) : null,
+        block_number: block.trim() || null,
+        zone_number: zone.trim() || null,
+        district: district.trim() || null,
+        city: city.trim() || null,
+        region: region.trim() || null,
+        notes: notes.trim() || null,
+      })
+      setBusy(false)
+      alert('[2] server returned: ' + JSON.stringify(res))
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      reset(); setOpen(false)
+      startTransition(() => router.refresh())
+    } catch (err) {
+      setBusy(false)
+      alert('[X] EXCEPTION: ' + String(err))
     }
-    alert('تمت الإضافة بنجاح — id: ' + res.id)
-    reset(); setOpen(false)
-    startTransition(() => router.refresh())
   }
 
   if (!open) {
