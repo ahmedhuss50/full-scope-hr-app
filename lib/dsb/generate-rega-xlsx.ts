@@ -258,13 +258,47 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
       sales.push(...((data ?? []) as SaleLite[]))
     }
   }
+  // Per-unit sale bucketing: we route each unit to a target tab based on
+  // its derived status (matches قائمة الوحدات's 4-state model):
+  //   any active                     → قيد البيع   → sheet 1 (وحدات قائمة)
+  //   completed AND cancelled ≥ 1    → أعيد بيعها → sheet 2 (الملغية والمعاد بيعها)
+  //   only cancelled                 → متاحة/ملغية → sheet 3 (الملغية)
+  //   only completed                 → مباعة        → sheet 4 (المنجزة)
+  //   no contracts                   → skip (empty units aren't part of the buyers report)
+  const activeByUnit    = new Map<string, SaleLite[]>()
+  const completedByUnit = new Map<string, SaleLite[]>()
+  const cancelledByUnit = new Map<string, SaleLite[]>()
+  for (const s of sales) {
+    const list = (s.sale_status === 'active') ? activeByUnit
+      : (s.sale_status === 'completed') ? completedByUnit
+      : (s.sale_status === 'cancelled' || s.sale_status === 'cancelled_resold') ? cancelledByUnit
+      : null
+    if (!list) continue
+    const arr = list.get(s.unit_id) ?? []
+    arr.push(s)
+    list.set(s.unit_id, arr)
+  }
+  // The "current" sale we display for each unit — priority active > completed > cancelled.
   const saleByUnit = new Map<string, SaleLite>()
   for (const s of sales) {
     const prev = saleByUnit.get(s.unit_id)
     if (!prev) { saleByUnit.set(s.unit_id, s); continue }
-    if (prev.sale_status !== 'active' && s.sale_status === 'active') saleByUnit.set(s.unit_id, s)
+    const rank = (st: string | null) => (st === 'active' ? 3 : st === 'completed' ? 2 : st === 'cancelled_resold' ? 1 : st === 'cancelled' ? 0 : -1)
+    if (rank(s.sale_status) > rank(prev.sale_status)) saleByUnit.set(s.unit_id, s)
   }
   const saleIds = Array.from(saleByUnit.values()).map((s) => s.id)
+
+  type UnitStatus = 'in_progress' | 'resold' | 'sold' | 'cancelled_only' | 'no_contract'
+  function deriveUnitStatus(unitId: string): UnitStatus {
+    const a = (activeByUnit.get(unitId)    ?? []).length
+    const c = (completedByUnit.get(unitId) ?? []).length
+    const x = (cancelledByUnit.get(unitId) ?? []).length
+    if (a > 0)          return 'in_progress'
+    if (c > 0 && x > 0) return 'resold'
+    if (c > 0)          return 'sold'
+    if (x > 0)          return 'cancelled_only'
+    return 'no_contract'
+  }
 
   // Buyer-collection payments per sale, bucketed by year
   type PayRow = { sale_id: string | null; amount_sar: number | null; payment_date: string }
@@ -338,12 +372,16 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TEMPLATE_LAST_DATA_ROW, 1, 49)
 
   // -----------------------------------------------------------------------
-  // STEP 3 — Populate one row per unit. Literals go into the raw-data
-  // columns; the cached formulas are copied in with row references
-  // retargeted to the current row.
+  // STEP 3 — Populate one row per unit ROUTED to sheet 1. Only in_progress
+  // and no_contract units belong here (وحدات قائمة). Cancelled / sold /
+  // resold units go to their own tabs handled below.
   // -----------------------------------------------------------------------
+  const sheet1Units = units.filter((u) => {
+    const st = deriveUnitStatus(u.id)
+    return st === 'in_progress' || st === 'no_contract'
+  })
   let idx = 0
-  for (const u of units) {
+  for (const u of sheet1Units) {
     const s = saleByUnit.get(u.id)
     const rowXlsx = BUYERS_DATA_START_ROW + idx // 1-indexed excel row
     const r0 = rowXlsx - 1 // 0-indexed for xlsx.utils.encode_cell
@@ -444,6 +482,195 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     cell.v = undefined
     cell.w = undefined
   }
+
+  // -----------------------------------------------------------------------
+  // STEP 5 — Populate tabs 2 (الوحدات الملغية والمعاد بيعها),
+  //          3 (الوحدات الملغية), and 4 (الوحدات المنجزة).
+  //
+  // Tabs 2/3 share the same 26-column schema; tab 4 has a different
+  // 31-column schema. Both are simpler than sheet 1 (no yearly buckets,
+  // no supervision-fee columns).
+  // -----------------------------------------------------------------------
+  function totalCollectedForSale(saleId: string): number {
+    const perYear = yearlyBySale.get(saleId)
+    if (!perYear) return 0
+    let total = 0
+    for (const amt of perYear.values()) total += amt
+    return total
+  }
+
+  // Shared writer for the "cancelled" + "cancelled_and_resold" tabs
+  // (identical 26-col schema). `label` is what goes into column C
+  // (نوع المشتري): "الغاء" or "إعادة بيع".
+  function populateShortSheet(sheet: XLSX.WorkSheet, rows: Array<{ u: typeof units[number]; s: SaleLite; label: string }>) {
+    // Snapshot row 2 for formula/style replication then clear rows 2..200.
+    const templateRow2 = new Map<number, TemplateCellSnapshot>()
+    for (let c = 0; c < 26; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 1, c })
+      const cell = sheet[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+      if (!cell) continue
+      const snap: TemplateCellSnapshot = {}
+      if (typeof cell.f === 'string' && cell.f.length > 0) snap.f = cell.f
+      if (cell.z != null) snap.z = cell.z
+      if (cell.s != null) snap.s = cell.s
+      templateRow2.set(c, snap)
+    }
+    clearCellsRange(sheet, 2, 200, 1, 26)
+
+    let idx = 0
+    for (const { u, s, label } of rows) {
+      const rowXlsx = 2 + idx
+      const r0 = rowXlsx - 1
+      idx += 1
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 0 }), idx, 'n')                                        // A
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 1 }), s.buyer_name_ar ?? '', 's')                      // B
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 2 }), label, 's')                                      // C — الغاء / إعادة بيع
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 3 }), s.buyer_id_number ?? '', 's')                    // D
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 4 }), s.buyer_nationality ?? '', 's')                  // E
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 5 }), s.buyer_id_type ?? '', 's')                      // F — نوع الإقامة
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 6 }), s.buyer_phone ?? '', 's')                        // G
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 7 }), project.name_ar, 's')                            // H
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 8 }), u.district ?? '', 's')                           // I — الحي
+      if (u.area_m2 != null) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 9 }), Number(u.area_m2), 'n')   // J
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 10 }), u.unit_type ?? '', 's')                         // K
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 11 }), u.zone_number ?? '', 's')                       // L
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 12 }), u.unit_number, 's')                             // M
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 13 }), u.block_number ?? '', 's')                      // N
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 14 }), s.contract_number ?? '', 's')                   // O
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 15 }), s.contract_type ?? '', 's')                     // P
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 16 }), s.financing_type ?? '', 's')                    // Q
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 17 }), s.financing_bank ?? '', 's')                    // R
+      const sd = parseSupabaseDate(s.sale_date)
+      if (sd) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 18 }), sd, 'd')                                // S — تاريخ البيع
+      if (s.price_before_tax_sar != null) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 19 }), Number(s.price_before_tax_sar), 'n') // T
+      // U + V are formulas (VAT + total-with-VAT); we replicate them below.
+      const collected = totalCollectedForSale(s.id)
+      if (collected > 0) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 22 }), collected, 'n')              // W — المحصل
+      // X, Y, Z are formulas. Copy row-2 formulas with retargeted refs.
+      for (const [col, snap] of templateRow2) {
+        if (!snap.f) continue
+        const adjusted = snap.f.replace(/(\$?[A-Z]+\$?)2(?![0-9])/g, `$1${rowXlsx}`)
+        const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+        const existing = sheet[addr] as XLSX.CellObject | undefined
+        sheet[addr] = existing
+          ? { ...existing, f: adjusted, v: undefined, w: undefined, t: 'n' }
+          : { t: 'n', f: adjusted }
+      }
+      // Apply template styling to every populated cell.
+      for (const [col, snap] of templateRow2) {
+        const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+        const cell = sheet[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+        if (!cell) continue
+        if (snap.z != null && cell.z == null) cell.z = snap.z
+        if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
+      }
+    }
+  }
+
+  // Sheet 4 (المنجزة) — 31 columns, distinct layout.
+  function populateCompletedSheet(sheet: XLSX.WorkSheet, rows: Array<{ u: typeof units[number]; s: SaleLite }>) {
+    const templateRow2 = new Map<number, TemplateCellSnapshot>()
+    for (let c = 0; c < 31; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 1, c })
+      const cell = sheet[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+      if (!cell) continue
+      const snap: TemplateCellSnapshot = {}
+      if (typeof cell.f === 'string' && cell.f.length > 0) snap.f = cell.f
+      if (cell.z != null) snap.z = cell.z
+      if (cell.s != null) snap.s = cell.s
+      templateRow2.set(c, snap)
+    }
+    clearCellsRange(sheet, 2, 200, 1, 31)
+
+    let idx = 0
+    for (const { u, s } of rows) {
+      const rowXlsx = 2 + idx
+      const r0 = rowXlsx - 1
+      idx += 1
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 0 }), idx, 'n')                                        // A
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 1 }), s.buyer_name_ar ?? '', 's')                      // B
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 2 }), 'منجز', 's')                                     // C — نوع المشتري
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 3 }), s.buyer_id_number ?? '', 's')                    // D
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 4 }), s.buyer_nationality ?? '', 's')                  // E
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 5 }), s.buyer_id_type ?? '', 's')                      // F
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 6 }), s.buyer_phone ?? '', 's')                        // G
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 7 }), project.name_ar, 's')                            // H
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 8 }), u.region ?? '', 's')                             // I — المنطقة
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 9 }), u.city ?? '', 's')                               // J — المدينة
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 10 }), u.district ?? '', 's')                          // K — الحي
+      if (u.area_m2 != null) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 11 }), Number(u.area_m2), 'n') // L
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 12 }), u.unit_type ?? '', 's')                         // M
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 13 }), u.zone_number ?? '', 's')                       // N
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 14 }), u.unit_number, 's')                             // O
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 15 }), u.block_number ?? '', 's')                      // P
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 16 }), s.contract_number ?? '', 's')                   // Q
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 17 }), s.contract_type ?? '', 's')                     // R
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 18 }), s.financing_type ?? '', 's')                    // S
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 19 }), s.financing_bank ?? '', 's')                    // T
+      const sd = parseSupabaseDate(s.sale_date)
+      if (sd) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 20 }), sd, 'd')                                // U
+      if (s.price_before_tax_sar != null) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 21 }), Number(s.price_before_tax_sar), 'n') // V
+      setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 22 }), s.delivery_status === 'delivered' ? 'مُسلَّمة' : 'لم يتم', 's') // W
+      const dd = parseSupabaseDate(s.delivery_date)
+      if (dd) setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 23 }), dd, 'd')                                // X
+      // Y = 5% VAT (formula), Z = price+VAT (formula) — replicated below
+      const collected = totalCollectedForSale(s.id)
+      if (collected > 0) {
+        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 26 }), collected, 'n')  // AA — بدون ضريبة
+        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 27 }), collected, 'n')  // AB — شامل الضريبة
+      }
+      // AC / AD / AE are formulas — replicate below.
+      for (const [col, snap] of templateRow2) {
+        if (!snap.f) continue
+        const adjusted = snap.f.replace(/(\$?[A-Z]+\$?)2(?![0-9])/g, `$1${rowXlsx}`)
+        const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+        const existing = sheet[addr] as XLSX.CellObject | undefined
+        sheet[addr] = existing
+          ? { ...existing, f: adjusted, v: undefined, w: undefined, t: 'n' }
+          : { t: 'n', f: adjusted }
+      }
+      for (const [col, snap] of templateRow2) {
+        const addr = XLSX.utils.encode_cell({ r: r0, c: col })
+        const cell = sheet[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
+        if (!cell) continue
+        if (snap.z != null && cell.z == null) cell.z = snap.z
+        if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
+      }
+    }
+  }
+
+  // Bucket units for the three secondary sheets.
+  const cancelledOnlyRows: Array<{ u: typeof units[number]; s: SaleLite; label: string }> = []
+  const resoldRows: Array<{ u: typeof units[number]; s: SaleLite; label: string }> = []
+  const completedRows: Array<{ u: typeof units[number]; s: SaleLite }> = []
+  for (const u of units) {
+    const st = deriveUnitStatus(u.id)
+    if (st === 'cancelled_only') {
+      // Show every cancelled sale for this unit.
+      for (const s of (cancelledByUnit.get(u.id) ?? [])) {
+        cancelledOnlyRows.push({ u, s, label: 'الغاء' })
+      }
+    } else if (st === 'resold') {
+      // Show BOTH the cancelled and the completed sale (one row each).
+      for (const s of (cancelledByUnit.get(u.id) ?? [])) {
+        resoldRows.push({ u, s, label: 'الغاء' })
+      }
+      for (const s of (completedByUnit.get(u.id) ?? [])) {
+        resoldRows.push({ u, s, label: 'إعادة بيع' })
+      }
+    } else if (st === 'sold') {
+      for (const s of (completedByUnit.get(u.id) ?? [])) {
+        completedRows.push({ u, s })
+      }
+    }
+  }
+
+  const wsResold    = wb.Sheets['الوحدات الملغية والمعاد بيعها']
+  const wsCancelled = wb.Sheets['الوحدات الملغية']
+  const wsCompleted = wb.Sheets['الوحدات المنجزة']
+  if (wsResold)    populateShortSheet(wsResold,    resoldRows)
+  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows)
+  if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
   return workbookToBuffer(wb)
 }
