@@ -298,9 +298,19 @@ export default async function DisbursementsBoardPage({
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0 flex-1 space-y-1">
-            <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
-              لوحة الصرفيات
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
+                لوحة الصرفيات
+              </h1>
+              {['employee', 'supervisor', 'owner'].includes(dsbRole ?? '') && (
+                <Link
+                  href="/app/disbursements/new"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 text-xs font-bold shadow-sm"
+                >
+                  إضافة صرف
+                </Link>
+              )}
+            </div>
             <p className="text-sm text-slate-600">
               كل سندات الصرف في كل المشاريع، مرتبة حسب المرحلة.
             </p>

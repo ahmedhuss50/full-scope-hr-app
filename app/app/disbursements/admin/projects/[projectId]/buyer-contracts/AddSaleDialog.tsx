@@ -128,9 +128,49 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div><label className={labelCls}>رقم العقد</label><input className={inputCls} value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} disabled={busy} /></div>
-            <div><label className={labelCls}>نوع العقد</label><input className={inputCls} value={contractType} onChange={(e) => setContractType(e.target.value)} disabled={busy} /></div>
-            <div><label className={labelCls}>نوع التمويل</label><input className={inputCls} value={financingType} onChange={(e) => setFinancingType(e.target.value)} disabled={busy} placeholder="بيع / تمويل" /></div>
-            <div><label className={labelCls}>الجهة التمويلية</label><input className={inputCls} value={financingBank} onChange={(e) => setFinancingBank(e.target.value)} disabled={busy} /></div>
+            <div>
+              <label className={labelCls}>نوع العقد</label>
+              <select className={inputCls} value={contractType} onChange={(e) => setContractType(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="EAS1">EAS1</option>
+                <option value="EAS2">EAS2</option>
+                <option value="EAS3">EAS3</option>
+                <option value="بيع خارطة">بيع على الخارطة</option>
+                <option value="بيع مباشر">بيع مباشر</option>
+                <option value="بيع آجل">بيع آجل</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>نوع التمويل</label>
+              <select className={inputCls} value={financingType} onChange={(e) => setFinancingType(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="بيع">بيع (كاش)</option>
+                <option value="تمويل بنكي">تمويل بنكي</option>
+                <option value="تمويل ذاتي">تمويل ذاتي</option>
+                <option value="تمويل تنموي">تمويل تنموي</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>الجهة التمويلية</label>
+              <select className={inputCls} value={financingBank} onChange={(e) => setFinancingBank(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="بنك الراجحي">بنك الراجحي</option>
+                <option value="بنك الأهلي">بنك الأهلي (SNB)</option>
+                <option value="بنك الرياض">بنك الرياض</option>
+                <option value="البنك السعودي الفرنسي">البنك السعودي الفرنسي</option>
+                <option value="البنك السعودي البريطاني (ساب)">البنك السعودي البريطاني (SAB)</option>
+                <option value="البنك العربي الوطني">البنك العربي الوطني (ANB)</option>
+                <option value="بنك البلاد">بنك البلاد</option>
+                <option value="بنك الجزيرة">بنك الجزيرة</option>
+                <option value="بنك الإنماء">بنك الإنماء</option>
+                <option value="بنك التنمية الاجتماعية">بنك التنمية الاجتماعية</option>
+                <option value="صندوق التنمية العقاري">صندوق التنمية العقاري</option>
+                <option value="مصرف الراجحي للتمويل">مصرف الراجحي للتمويل</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
             <div><label className={labelCls}>تاريخ البيع</label><input className={inputCls} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} disabled={busy} type="date" dir="ltr" /></div>
             <div><label className={labelCls}>السعر قبل الضريبة</label><input className={inputCls} value={priceBeforeTax} onChange={(e) => setPriceBeforeTax(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
           </div>

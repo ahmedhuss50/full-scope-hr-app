@@ -2309,11 +2309,26 @@ export async function createSingleSale(
     unitNumberRaw = unitNumberRaw ?? (u as { unit_number: string }).unit_number
   }
 
+  // sale_count = number of PREVIOUS sales on the same unit + 1. Counts
+  // every prior sale regardless of status (cancelled, completed, active)
+  // so re-selling a cancelled unit correctly shows as "2" per the owner's
+  // spec. Falls back to 1 when the sale isn't linked to a unit yet.
+  let saleCount = 1
+  if (unitId) {
+    const { count } = await svc
+      .from('dsb_unit_sales')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', caller.tenantId)
+      .eq('unit_id', unitId)
+    saleCount = (count ?? 0) + 1
+  }
+
   const row: Record<string, unknown> = {
     tenant_id:            caller.tenantId,
     project_id:           projectId,
     unit_id:              unitId,
     unit_number_raw:      unitNumberRaw,
+    sale_count:           saleCount,
     sale_status:          input.sale_status ?? 'active',
     buyer_name_ar:        input.buyer_name_ar ?? null,
     buyer_id_type:        input.buyer_id_type ?? null,
