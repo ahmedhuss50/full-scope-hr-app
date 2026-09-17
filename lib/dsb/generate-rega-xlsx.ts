@@ -278,15 +278,18 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     arr.push(s)
     list.set(s.unit_id, arr)
   }
-  // The "current" sale we display for each unit — priority active > completed > cancelled.
+  // The sale we DISPLAY for each unit on sheet 1 — always the LATEST
+  // (most recent by sale_date, then created_at). The query already sorts
+  // sales DESC by created_at, so first-seen wins for tiebreaks.
   const saleByUnit = new Map<string, SaleLite>()
+  const parseD = (d: string | null) => (d ? Date.parse(d.slice(0, 10)) : 0)
   for (const s of sales) {
     const prev = saleByUnit.get(s.unit_id)
     if (!prev) { saleByUnit.set(s.unit_id, s); continue }
-    const rank = (st: string | null) => (st === 'active' ? 3 : st === 'completed' ? 2 : st === 'cancelled_resold' ? 1 : st === 'cancelled' ? 0 : -1)
-    if (rank(s.sale_status) > rank(prev.sale_status)) saleByUnit.set(s.unit_id, s)
+    const cur  = parseD(s.sale_date)    || Date.parse(s.created_at)    || 0
+    const p    = parseD(prev.sale_date) || Date.parse(prev.created_at) || 0
+    if (cur > p) saleByUnit.set(s.unit_id, s)
   }
-  const saleIds = Array.from(saleByUnit.values()).map((s) => s.id)
 
   type UnitStatus = 'in_progress' | 'resold' | 'sold' | 'cancelled_only' | 'no_contract'
   // Priority (top-to-bottom):
@@ -321,9 +324,12 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   // Map<saleId, Map<year, total>>
   const yearlyBySale = new Map<string, Map<number, number>>()
   const countBySale  = new Map<string, number>()
+  // Bucket every payment by its own sale_id — including payments linked
+  // to cancelled sales. The old "only chosen sale wins" filter dropped
+  // collections for the cancelled row in the resold tab, so المحصل came
+  // out as 0. All sales this tenant/project owns are eligible.
   for (const p of payments) {
     if (!p.sale_id) continue
-    if (!saleIds.includes(p.sale_id)) continue
     const year = Number(p.payment_date.slice(0, 4))
     if (!Number.isFinite(year)) continue
     const perYear = yearlyBySale.get(p.sale_id) ?? new Map<number, number>()
@@ -379,10 +385,11 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
 
   // -----------------------------------------------------------------------
   // STEP 3 — Populate one row per unit ROUTED to sheet 1 (وحدات قائمة).
-  // Only in-progress units belong here — a unit with an active contract
-  // in progress. Cancelled / sold / resold units each go to their own tab.
+  // ANY unit that has at least one contract belongs here, showing the
+  // LATEST contract per unit. The other tabs (ملغية / معاد بيعها / منجزة)
+  // are additional views of the same underlying data.
   // -----------------------------------------------------------------------
-  const sheet1Units = units.filter((u) => deriveUnitStatus(u.id) === 'in_progress')
+  const sheet1Units = units.filter((u) => deriveUnitStatus(u.id) !== 'no_contract')
   let idx = 0
   for (const u of sheet1Units) {
     const s = saleByUnit.get(u.id)

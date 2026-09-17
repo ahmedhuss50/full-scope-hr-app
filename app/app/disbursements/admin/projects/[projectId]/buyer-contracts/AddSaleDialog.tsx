@@ -10,14 +10,21 @@ type SaleStatus = 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
  * Minimal inline "add a contract" form. Posts to /api/dsb-add-sale — a
  * plain JSON endpoint that wraps the createSingleSale server action.
  */
-export function AddSaleDialog({ projectId }: { projectId: string }) {
+export function AddSaleDialog({
+  projectId,
+  units,
+}: {
+  projectId: string
+  units: Array<{ id: string; unit_number: string }>
+}) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [unitNumber, setUnitNumber]         = useState('')
+  // Selected unit_id from the dropdown ("" = no link, sale floats).
+  const [unitId, setUnitId] = useState<string>('')
   const [buyerName, setBuyerName]           = useState('')
   const [buyerIdType, setBuyerIdType]       = useState<'national' | 'residency' | 'passport' | ''>('')
   const [buyerIdNumber, setBuyerIdNumber]   = useState('')
@@ -32,7 +39,7 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
   const [saleStatus, setSaleStatus]         = useState<SaleStatus>('active')
 
   function reset() {
-    setUnitNumber(''); setBuyerName(''); setBuyerIdType(''); setBuyerIdNumber('')
+    setUnitId(''); setBuyerName(''); setBuyerIdType(''); setBuyerIdNumber('')
     setBuyerNat(''); setBuyerPhone(''); setContractNumber(''); setContractType('')
     setFinancingType(''); setFinancingBank(''); setSaleDate(''); setPriceBeforeTax('')
     setSaleStatus('active'); setError(null)
@@ -46,7 +53,7 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           project_id: projectId,
-          unit_number_raw: unitNumber.trim() || null,
+          unit_id: unitId || null,
           sale_status: saleStatus,
           buyer_name_ar: buyerName.trim() || null,
           buyer_id_type: buyerIdType || null,
@@ -107,7 +114,15 @@ export function AddSaleDialog({ projectId }: { projectId: string }) {
                 <option value="cancelled">ملغي</option>
               </select>
             </div>
-            <div><label className={labelCls}>رقم الوحدة (ربط لاحق إن ترك فارغ)</label><input className={inputCls} value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} disabled={busy} /></div>
+            <div>
+              <label className={labelCls}>الوحدة</label>
+              <select className={inputCls} value={unitId} onChange={(e) => setUnitId(e.target.value)} disabled={busy}>
+                <option value="">— بدون ربط (يُربط لاحقًا)</option>
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>{u.unit_number}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div><label className={labelCls}>اسم المشتري</label><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} disabled={busy} autoFocus /></div>

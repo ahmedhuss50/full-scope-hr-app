@@ -1428,6 +1428,27 @@ export async function updateSale(
   }
   if (Object.keys(patch).length === 0) return { ok: true }
 
+  // Guard: if flipping this sale to 'active', reject if another sale on
+  // the same unit is already active. Mirrors the check in createSingleSale.
+  if (patch.sale_status === 'active') {
+    const uId = (sale as { unit_id: string | null }).unit_id
+    if (uId) {
+      const { count: activeOthers } = await svc
+        .from('dsb_unit_sales')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', caller.tenantId)
+        .eq('unit_id', uId)
+        .eq('sale_status', 'active')
+        .neq('id', input.id)
+      if ((activeOthers ?? 0) > 0) {
+        return {
+          ok: false,
+          error: 'لا يمكن تفعيل هذا العقد: يوجد عقد ساري آخر على نفس الوحدة.',
+        }
+      }
+    }
+  }
+
   const { error } = await svc
     .from('dsb_unit_sales')
     .update(patch)
@@ -2307,6 +2328,24 @@ export async function createSingleSale(
     }
     unitId = (u as { id: string }).id
     unitNumberRaw = unitNumberRaw ?? (u as { unit_number: string }).unit_number
+  }
+
+  // Guard: a unit cannot have TWO active contracts. If the caller is
+  // trying to insert an 'active' sale on a unit that already has an
+  // active sale, reject.
+  if (unitId && (input.sale_status ?? 'active') === 'active') {
+    const { count: activeExisting } = await svc
+      .from('dsb_unit_sales')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', caller.tenantId)
+      .eq('unit_id', unitId)
+      .eq('sale_status', 'active')
+    if ((activeExisting ?? 0) > 0) {
+      return {
+        ok: false,
+        error: 'لا يمكن إضافة عقد ساري: يوجد عقد ساري آخر على هذه الوحدة. غيّر حالة العقد السابق أولاً.',
+      }
+    }
   }
 
   // sale_count = number of PREVIOUS sales on the same unit + 1. Counts

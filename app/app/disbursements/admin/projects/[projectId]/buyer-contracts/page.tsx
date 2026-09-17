@@ -177,6 +177,18 @@ export default async function ProjectBuyerContractsPage({
     .eq('project_id', projectId)
     .is('unit_id', null)
 
+  // Units for the "إضافة عقد" dropdown — one row per unit, sorted by
+  // unit_number. Small payload (id + number only) so we can safely
+  // include even for large projects.
+  const { data: allUnitsForPicker } = await svc
+    .from('dsb_project_units')
+    .select('id, unit_number')
+    .eq('tenant_id', tenantId)
+    .eq('project_id', projectId)
+    .order('unit_number', { ascending: true })
+    .limit(2000)
+  const unitPickerOptions = ((allUnitsForPicker ?? []) as Array<{ id: string; unit_number: string }>)
+
   const baseHref = `/app/disbursements/admin/projects/${projectId}/buyer-contracts`
   const filterHref = (v: 'all' | 'yes' | 'no') => {
     const params = new URLSearchParams()
@@ -264,7 +276,7 @@ export default async function ProjectBuyerContractsPage({
             </Link>
           )}
           <div className="flex-1" />
-          <AddSaleDialog projectId={projectId} />
+          <AddSaleDialog projectId={projectId} units={unitPickerOptions} />
           <Link
             href={`/app/disbursements/admin/imports/contracts?project=${projectId}`}
             className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 text-xs font-bold"
