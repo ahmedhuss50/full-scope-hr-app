@@ -410,7 +410,19 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 11 }), u.unit_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 12 }), u.zone_number ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 13 }), u.unit_number, 's')
-    if (s?.sale_count != null) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 14 }), s.sale_count, 'n')
+    // عدد مرات بيع الوحدة — always derived from the actual count of sales
+    // on this unit (active + completed + cancelled). Overrides whatever
+    // stored sale_count the row carries so historical rows show the right
+    // total even if their DB value wasn't updated when the unit was resold.
+    {
+      const totalSales =
+        (activeByUnit.get(u.id)?.length ?? 0) +
+        (completedByUnit.get(u.id)?.length ?? 0) +
+        (cancelledByUnit.get(u.id)?.length ?? 0)
+      if (totalSales > 0) {
+        setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 14 }), totalSales, 'n')
+      }
+    }
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 15 }), u.block_number ?? '', 's')
     // Contract + financing
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 16 }), s?.contract_number ?? '', 's')
