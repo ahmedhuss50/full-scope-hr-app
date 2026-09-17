@@ -289,14 +289,20 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   const saleIds = Array.from(saleByUnit.values()).map((s) => s.id)
 
   type UnitStatus = 'in_progress' | 'resold' | 'sold' | 'cancelled_only' | 'no_contract'
+  // Priority (top-to-bottom):
+  //   cancelled + (active OR completed) → resold          → tab 2
+  //   only active                       → in_progress    → tab 1
+  //   only completed                    → sold            → tab 4
+  //   only cancelled                    → cancelled_only → tab 3
+  //   nothing                           → no_contract    → (skipped)
   function deriveUnitStatus(unitId: string): UnitStatus {
     const a = (activeByUnit.get(unitId)    ?? []).length
     const c = (completedByUnit.get(unitId) ?? []).length
     const x = (cancelledByUnit.get(unitId) ?? []).length
-    if (a > 0)          return 'in_progress'
-    if (c > 0 && x > 0) return 'resold'
-    if (c > 0)          return 'sold'
-    if (x > 0)          return 'cancelled_only'
+    if (x > 0 && (a > 0 || c > 0)) return 'resold'
+    if (a > 0)                     return 'in_progress'
+    if (c > 0)                     return 'sold'
+    if (x > 0)                     return 'cancelled_only'
     return 'no_contract'
   }
 
@@ -372,19 +378,11 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TEMPLATE_LAST_DATA_ROW, 1, 49)
 
   // -----------------------------------------------------------------------
-  // STEP 3 — Populate one row per unit ROUTED to sheet 1. Two kinds of
-  // units belong here (وحدات قائمة):
-  //   • in_progress    — active contract in progress
-  //   • cancelled_only — the (only) contract was cancelled; the unit is
-  //                       back on the market, so it also belongs in the
-  //                       standing tab (per the owner's spec). It ALSO
-  //                       still shows up in the dedicated "الملغية" tab.
-  // Sold + resold + no-contract units are excluded from sheet 1.
+  // STEP 3 — Populate one row per unit ROUTED to sheet 1 (وحدات قائمة).
+  // Only in-progress units belong here — a unit with an active contract
+  // in progress. Cancelled / sold / resold units each go to their own tab.
   // -----------------------------------------------------------------------
-  const sheet1Units = units.filter((u) => {
-    const st = deriveUnitStatus(u.id)
-    return st === 'in_progress' || st === 'cancelled_only'
-  })
+  const sheet1Units = units.filter((u) => deriveUnitStatus(u.id) === 'in_progress')
   let idx = 0
   for (const u of sheet1Units) {
     const s = saleByUnit.get(u.id)
@@ -668,11 +666,17 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
         cancelledOnlyRows.push({ u, s, label: 'الغاء' })
       }
     } else if (st === 'resold') {
-      // Show BOTH the cancelled and the completed sale (one row each).
+      // One row per sale on this unit. Cancelled rows labelled "الغاء";
+      // every subsequent sale (completed OR still active) counts as
+      // "إعادة بيع" — the unit was resold regardless of whether the new
+      // contract has finalised.
       for (const s of (cancelledByUnit.get(u.id) ?? [])) {
         resoldRows.push({ u, s, label: 'الغاء' })
       }
       for (const s of (completedByUnit.get(u.id) ?? [])) {
+        resoldRows.push({ u, s, label: 'إعادة بيع' })
+      }
+      for (const s of (activeByUnit.get(u.id) ?? [])) {
         resoldRows.push({ u, s, label: 'إعادة بيع' })
       }
     } else if (st === 'sold') {
