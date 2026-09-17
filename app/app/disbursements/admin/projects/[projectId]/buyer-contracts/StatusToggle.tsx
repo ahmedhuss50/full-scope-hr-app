@@ -66,7 +66,6 @@ export function StatusToggle({
         className={`rounded-md text-[11px] font-bold px-1.5 py-0.5 ring-1 ring-inset focus:outline-none focus:ring-2 disabled:cursor-not-allowed ${cls}`}
       >
         <option value="active">ساري</option>
-        <option value="completed">منجز</option>
         <option value="cancelled">ملغي</option>
         {status === 'cancelled_resold' && <option value="cancelled_resold">مباع (قديم)</option>}
       </select>

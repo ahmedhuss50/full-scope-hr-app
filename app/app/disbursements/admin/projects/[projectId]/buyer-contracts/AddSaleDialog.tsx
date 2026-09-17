@@ -110,7 +110,6 @@ export function AddSaleDialog({
               <label className={labelCls}>حالة العقد</label>
               <select className={inputCls} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value as SaleStatus)} disabled={busy}>
                 <option value="active">ساري</option>
-                <option value="completed">منجز</option>
                 <option value="cancelled">ملغي</option>
               </select>
             </div>
