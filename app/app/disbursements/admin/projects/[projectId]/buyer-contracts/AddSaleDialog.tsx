@@ -35,14 +35,15 @@ export function AddSaleDialog({
   const [financingType, setFinancingType]   = useState('')
   const [financingBank, setFinancingBank]   = useState('')
   const [saleDate, setSaleDate]             = useState('')
+  const [deliveryDate, setDeliveryDate]     = useState('')
   const [priceBeforeTax, setPriceBeforeTax] = useState('')
   const [saleStatus, setSaleStatus]         = useState<SaleStatus>('active')
 
   function reset() {
     setUnitId(''); setBuyerName(''); setBuyerIdType(''); setBuyerIdNumber('')
     setBuyerNat(''); setBuyerPhone(''); setContractNumber(''); setContractType('')
-    setFinancingType(''); setFinancingBank(''); setSaleDate(''); setPriceBeforeTax('')
-    setSaleStatus('active'); setError(null)
+    setFinancingType(''); setFinancingBank(''); setSaleDate(''); setDeliveryDate('')
+    setPriceBeforeTax(''); setSaleStatus('active'); setError(null)
   }
 
   async function onSave() {
@@ -65,6 +66,9 @@ export function AddSaleDialog({
           financing_type: financingType.trim() || null,
           financing_bank: financingBank.trim() || null,
           sale_date: saleDate || null,
+          // Entering a delivery date implicitly marks it as delivered.
+          delivery_date: deliveryDate || null,
+          delivery_status: deliveryDate ? 'delivered' : null,
           price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
         }),
       })
@@ -186,7 +190,8 @@ export function AddSaleDialog({
               </select>
             </div>
             <div><label className={labelCls}>تاريخ البيع</label><input className={inputCls} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} disabled={busy} type="date" dir="ltr" /></div>
-            <div><label className={labelCls}>السعر قبل الضريبة</label><input className={inputCls} value={priceBeforeTax} onChange={(e) => setPriceBeforeTax(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
+            <div><label className={labelCls}>تاريخ التسليم</label><input className={inputCls} value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} disabled={busy} type="date" dir="ltr" /></div>
+            <div className="col-span-2"><label className={labelCls}>السعر قبل الضريبة</label><input className={inputCls} value={priceBeforeTax} onChange={(e) => setPriceBeforeTax(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
           </div>
 
           {error && (<div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-semibold">{error}</div>)}
