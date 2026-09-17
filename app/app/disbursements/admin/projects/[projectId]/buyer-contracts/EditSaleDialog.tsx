@@ -1,0 +1,210 @@
+'use client'
+
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { Pencil, X, Loader2 } from 'lucide-react'
+
+type SaleStatus = 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
+
+type ExistingSale = {
+  id: string
+  unit_id: string | null
+  buyer_name_ar: string | null
+  buyer_id_type: string | null
+  buyer_id_number: string | null
+  buyer_nationality: string | null
+  buyer_phone: string | null
+  contract_number: string | null
+  contract_type: string | null
+  financing_type: string | null
+  financing_bank: string | null
+  sale_date: string | null
+  delivery_date: string | null
+  price_before_tax_sar: number | null
+}
+
+/**
+ * Row-level edit dialog for a buyer contract. Pencil icon opens the dialog
+ * pre-filled with the current sale's fields; save calls /api/dsb-update-sale
+ * which delegates to the existing updateSale server action.
+ */
+export function EditSaleDialog({
+  sale,
+  units,
+}: {
+  sale: ExistingSale
+  units: Array<{ id: string; unit_number: string }>
+}) {
+  const router = useRouter()
+  const [, startTransition] = useTransition()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [unitId, setUnitId]                 = useState<string>(sale.unit_id ?? '')
+  const [buyerName, setBuyerName]           = useState(sale.buyer_name_ar ?? '')
+  const [buyerIdType, setBuyerIdType]       = useState<'national' | 'residency' | 'passport' | ''>((sale.buyer_id_type as 'national' | 'residency' | 'passport') ?? '')
+  const [buyerIdNumber, setBuyerIdNumber]   = useState(sale.buyer_id_number ?? '')
+  const [buyerNationality, setBuyerNat]     = useState(sale.buyer_nationality ?? '')
+  const [buyerPhone, setBuyerPhone]         = useState(sale.buyer_phone ?? '')
+  const [contractNumber, setContractNumber] = useState(sale.contract_number ?? '')
+  const [contractType, setContractType]     = useState(sale.contract_type ?? '')
+  const [financingType, setFinancingType]   = useState(sale.financing_type ?? '')
+  const [financingBank, setFinancingBank]   = useState(sale.financing_bank ?? '')
+  const [saleDate, setSaleDate]             = useState(sale.sale_date?.slice(0, 10) ?? '')
+  const [deliveryDate, setDeliveryDate]     = useState(sale.delivery_date?.slice(0, 10) ?? '')
+  const [priceBeforeTax, setPriceBeforeTax] = useState(sale.price_before_tax_sar != null ? String(sale.price_before_tax_sar) : '')
+
+  async function onSave() {
+    setError(null); setBusy(true)
+    try {
+      const resp = await fetch('/api/dsb-update-sale', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: sale.id,
+          patch: {
+            buyer_name_ar: buyerName.trim() || null,
+            buyer_id_type: buyerIdType || null,
+            buyer_id_number: buyerIdNumber.trim() || null,
+            buyer_nationality: buyerNationality.trim() || null,
+            buyer_phone: buyerPhone.trim() || null,
+            contract_number: contractNumber.trim() || null,
+            contract_type: contractType.trim() || null,
+            financing_type: financingType.trim() || null,
+            financing_bank: financingBank.trim() || null,
+            sale_date: saleDate || null,
+            delivery_date: deliveryDate || null,
+            delivery_status: deliveryDate ? 'delivered' : null,
+            price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
+          },
+        }),
+      })
+      const data = await resp.json().catch(() => ({ ok: false, error: 'استجابة غير صالحة من الخادم.' }))
+      setBusy(false)
+      if (!resp.ok || !data.ok) { setError(data.error ?? `خطأ ${resp.status}`); return }
+      setOpen(false)
+      startTransition(() => router.refresh())
+    } catch (err) {
+      setBusy(false)
+      setError('خطأ في الشبكة: ' + String(err))
+    }
+  }
+
+  const inputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50'
+  const labelCls = 'text-xs font-semibold text-slate-600 mb-1 block'
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="تعديل"
+        className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:text-teal-700 hover:bg-slate-100"
+      >
+        <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+      </button>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 py-8 px-4" dir="rtl">
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl border border-slate-200">
+        <div className="flex items-center justify-between p-4 border-b border-slate-200">
+          <h3 className="serif font-bold text-lg text-slate-900">تعديل العقد</h3>
+          <button type="button" onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className={labelCls}>الوحدة</label>
+            <select className={inputCls} value={unitId} onChange={(e) => setUnitId(e.target.value)} disabled title="تعديل الربط من زر الربط أعلى الصفحة">
+              <option value="">— بدون ربط —</option>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>{u.unit_number}</option>
+              ))}
+            </select>
+          </div>
+
+          <div><label className={labelCls}>اسم المشتري</label><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} disabled={busy} autoFocus /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>نوع الهوية</label>
+              <select className={inputCls} value={buyerIdType} onChange={(e) => setBuyerIdType(e.target.value as typeof buyerIdType)} disabled={busy}>
+                <option value="">—</option>
+                <option value="national">أحوال وطنية</option>
+                <option value="residency">إقامة</option>
+                <option value="passport">جواز</option>
+              </select>
+            </div>
+            <div><label className={labelCls}>رقم الهوية</label><input className={inputCls} value={buyerIdNumber} onChange={(e) => setBuyerIdNumber(e.target.value)} disabled={busy} /></div>
+            <div><label className={labelCls}>الجنسية</label><input className={inputCls} value={buyerNationality} onChange={(e) => setBuyerNat(e.target.value)} disabled={busy} /></div>
+            <div><label className={labelCls}>رقم الجوال</label><input className={inputCls} value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} disabled={busy} dir="ltr" /></div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={labelCls}>رقم العقد</label><input className={inputCls} value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} disabled={busy} /></div>
+            <div>
+              <label className={labelCls}>نوع العقد</label>
+              <select className={inputCls} value={contractType} onChange={(e) => setContractType(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="EAS1">EAS1</option>
+                <option value="EAS2">EAS2</option>
+                <option value="EAS3">EAS3</option>
+                <option value="بيع خارطة">بيع على الخارطة</option>
+                <option value="بيع مباشر">بيع مباشر</option>
+                <option value="بيع آجل">بيع آجل</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>نوع التمويل</label>
+              <select className={inputCls} value={financingType} onChange={(e) => setFinancingType(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="بيع">بيع (كاش)</option>
+                <option value="تمويل بنكي">تمويل بنكي</option>
+                <option value="تمويل ذاتي">تمويل ذاتي</option>
+                <option value="تمويل تنموي">تمويل تنموي</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>الجهة التمويلية</label>
+              <select className={inputCls} value={financingBank} onChange={(e) => setFinancingBank(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                <option value="بنك الراجحي">بنك الراجحي</option>
+                <option value="بنك الأهلي">بنك الأهلي (SNB)</option>
+                <option value="بنك الرياض">بنك الرياض</option>
+                <option value="البنك السعودي الفرنسي">البنك السعودي الفرنسي</option>
+                <option value="البنك السعودي البريطاني (ساب)">البنك السعودي البريطاني (SAB)</option>
+                <option value="البنك العربي الوطني">البنك العربي الوطني (ANB)</option>
+                <option value="بنك البلاد">بنك البلاد</option>
+                <option value="بنك الجزيرة">بنك الجزيرة</option>
+                <option value="بنك الإنماء">بنك الإنماء</option>
+                <option value="بنك التنمية الاجتماعية">بنك التنمية الاجتماعية</option>
+                <option value="صندوق التنمية العقاري">صندوق التنمية العقاري</option>
+                <option value="مصرف الراجحي للتمويل">مصرف الراجحي للتمويل</option>
+                <option value="أخرى">أخرى</option>
+              </select>
+            </div>
+            <div><label className={labelCls}>تاريخ البيع</label><input className={inputCls} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} disabled={busy} type="date" dir="ltr" /></div>
+            <div><label className={labelCls}>تاريخ التسليم</label><input className={inputCls} value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} disabled={busy} type="date" dir="ltr" /></div>
+            <div className="col-span-2"><label className={labelCls}>السعر قبل الضريبة</label><input className={inputCls} value={priceBeforeTax} onChange={(e) => setPriceBeforeTax(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
+          </div>
+
+          {error && (<div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 font-semibold">{error}</div>)}
+          <div className="flex items-center gap-2 pt-2">
+            <button type="button" onClick={onSave} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50">
+              {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {busy ? 'جارٍ الحفظ…' : 'حفظ التغييرات'}
+            </button>
+            <button type="button" onClick={() => setOpen(false)} disabled={busy} className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              إلغاء
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -205,7 +205,7 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   // Units for this project
   const { data: unitRows } = await svc
     .from('dsb_project_units')
-    .select('id, unit_number, unit_type, area_m2, block_number, zone_number, city, district, region')
+    .select('id, unit_number, unit_type, area_m2, block_number, zone_number, city, district, region, completion_status')
     .eq('tenant_id', project.tenant_id)
     .eq('project_id', projectId)
     .order('unit_number', { ascending: true })
@@ -219,8 +219,14 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     city: string | null
     district: string | null
     region: string | null
+    completion_status: string | null
   }>)
   const unitIds = units.map((u) => u.id)
+  // Fast lookup: is this unit marked منجزة on قائمة الوحدات?
+  const completionByUnit = new Map<string, boolean>()
+  for (const u of units) {
+    completionByUnit.set(u.id, u.completion_status === 'completed')
+  }
 
   // Sales (latest per unit)
   type SaleLite = {
@@ -293,15 +299,20 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
 
   type UnitStatus = 'in_progress' | 'resold' | 'sold' | 'cancelled_only' | 'no_contract'
   // Priority (top-to-bottom):
-  //   cancelled + (active OR completed) → resold          → tab 2
-  //   only active                       → in_progress    → tab 1
-  //   only completed                    → sold            → tab 4
-  //   only cancelled                    → cancelled_only → tab 3
-  //   nothing                           → no_contract    → (skipped)
+  //   unit.completion_status='completed' + any contract → sold  → tab 4
+  //      (المنجزة overrides everything else — a delivered unit is delivered)
+  //   cancelled + (active OR completed)                 → resold        → tab 2
+  //   only active                                       → in_progress   → tab 1
+  //   only completed contract                           → sold          → tab 4
+  //   only cancelled                                    → cancelled_only→ tab 3
+  //   nothing                                           → no_contract   → skipped
   function deriveUnitStatus(unitId: string): UnitStatus {
     const a = (activeByUnit.get(unitId)    ?? []).length
     const c = (completedByUnit.get(unitId) ?? []).length
     const x = (cancelledByUnit.get(unitId) ?? []).length
+    const isDelivered = completionByUnit.get(unitId) === true
+    const hasAny = a + c + x > 0
+    if (isDelivered && hasAny)     return 'sold'
     if (x > 0 && (a > 0 || c > 0)) return 'resold'
     if (a > 0)                     return 'in_progress'
     if (c > 0)                     return 'sold'
@@ -687,8 +698,19 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
         resoldRows.push({ u, s, label: 'إعادة بيع' })
       }
     } else if (st === 'sold') {
-      for (const s of (completedByUnit.get(u.id) ?? [])) {
-        completedRows.push({ u, s })
+      // "sold" now covers TWO cases:
+      //   (1) contract.sale_status = 'completed'
+      //   (2) unit.completion_status = 'completed' — even if all its
+      //       contracts are active/cancelled. In this case we show the
+      //       latest sale per unit as the delivered contract.
+      const completed = completedByUnit.get(u.id) ?? []
+      if (completed.length > 0) {
+        for (const s of completed) completedRows.push({ u, s })
+      } else {
+        // Unit is منجزة but no contract carries 'completed' — use the
+        // latest sale (already computed in saleByUnit).
+        const latest = saleByUnit.get(u.id)
+        if (latest) completedRows.push({ u, s: latest })
       }
     }
   }

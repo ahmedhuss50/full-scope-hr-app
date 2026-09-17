@@ -13,6 +13,7 @@ import { ArrowRight, ScrollText, Upload } from 'lucide-react'
 import { AutoLinkButton } from './AutoLinkButton'
 import { StatusToggle } from './StatusToggle'
 import { AddSaleDialog } from './AddSaleDialog'
+import { EditSaleDialog } from './EditSaleDialog'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteSale, deleteAllSalesForProject } from '../../../units/actions'
@@ -335,7 +336,7 @@ export default async function ProjectBuyerContractsPage({
                   <Th>تاريخ البيع</Th>
                   <Th>السعر</Th>
                   <Th>الحالة</Th>
-                  {dsbRole === 'owner' && <Th> </Th>}
+                  {['employee', 'supervisor', 'owner'].includes(dsbRole ?? '') && <Th> </Th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -455,13 +456,36 @@ export default async function ProjectBuyerContractsPage({
                           canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
                         />
                       </Td>
-                      {dsbRole === 'owner' && (
+                      {['employee', 'supervisor', 'owner'].includes(dsbRole ?? '') && (
                         <Td>
-                          <DeleteRowButton
-                            id={s.id}
-                            itemLabel={s.buyer_name_ar ?? s.contract_number ?? 'عقد'}
-                            action={deleteSale}
-                          />
+                          <div className="flex items-center gap-1">
+                            <EditSaleDialog
+                              sale={{
+                                id: s.id,
+                                unit_id: s.unit_id,
+                                buyer_name_ar: s.buyer_name_ar,
+                                buyer_id_type: s.buyer_id_type,
+                                buyer_id_number: s.buyer_id_number,
+                                buyer_nationality: s.buyer_nationality,
+                                buyer_phone: s.buyer_phone,
+                                contract_number: s.contract_number,
+                                contract_type: s.contract_type,
+                                financing_type: s.financing_type,
+                                financing_bank: s.financing_bank,
+                                sale_date: s.sale_date,
+                                delivery_date: s.delivery_date,
+                                price_before_tax_sar: s.price_before_tax_sar,
+                              }}
+                              units={unitPickerOptions}
+                            />
+                            {dsbRole === 'owner' && (
+                              <DeleteRowButton
+                                id={s.id}
+                                itemLabel={s.buyer_name_ar ?? s.contract_number ?? 'عقد'}
+                                action={deleteSale}
+                              />
+                            )}
+                          </div>
                         </Td>
                       )}
                     </tr>
