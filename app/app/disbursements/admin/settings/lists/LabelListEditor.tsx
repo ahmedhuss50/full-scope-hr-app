@@ -90,9 +90,11 @@ export function LabelListEditor({
     startTransition(() => router.refresh())
   }
 
-  async function onDelete(code: string) {
-    if (!code.startsWith('custom_')) return
-    if (!confirm('حذف هذا التصنيف؟ لا يمكن التراجع.')) return
+  async function onDelete(code: string, isCustom: boolean) {
+    const promptText = isCustom
+      ? 'حذف هذا التصنيف؟ لا يمكن التراجع.'
+      : 'إخفاء هذا التصنيف؟ يمكن استرجاعه لاحقًا من قائمة المخفية.'
+    if (!confirm(promptText)) return
     setErr(null); setBusy(true)
     const res = await deleteCustomLabel({ kind, code })
     setBusy(false)
@@ -225,19 +227,14 @@ export function LabelListEditor({
                   >
                     <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
-                  {r.isCustom ? (
-                    <button
-                      type="button"
-                      onClick={() => onDelete(r.code)}
-                      title="حذف"
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    // Reserve the space so rows align visually.
-                    <span className="w-8 h-8 inline-block" aria-hidden="true" />
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => onDelete(r.code, r.isCustom ?? false)}
+                    title={r.isCustom ? 'حذف' : 'إخفاء'}
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-md text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
                 </>
               )}
             </li>

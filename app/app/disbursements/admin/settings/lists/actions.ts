@@ -285,6 +285,33 @@ export async function createCustomLabel(
   return { ok: true, code }
 }
 
+/**
+ * Count how many rows in the source table currently use this code.
+ * Used to block deletion of a category that still has data attached.
+ */
+async function countUsage(
+  svc: ReturnType<typeof createSupabaseService>,
+  tenantId: string,
+  kind: LabelKind,
+  code: string,
+): Promise<number> {
+  if (kind === 'deposit') {
+    const { count } = await svc
+      .from('dsb_payments')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('deposit_category', code)
+    return count ?? 0
+  }
+  // Disbursement type lives inside dsb_cases.extracted_fields JSONB.
+  const { count } = await svc
+    .from('dsb_cases')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .filter('extracted_fields->>disbursement_type_code', 'eq', code)
+  return count ?? 0
+}
+
 export async function deleteCustomLabel(
   input: { kind: LabelKind; code: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -293,9 +320,6 @@ export async function deleteCustomLabel(
 
   const code = (input.code ?? '').trim()
   if (!code) return { ok: false, error: 'الرمز مطلوب.' }
-  if (!code.startsWith('custom_')) {
-    return { ok: false, error: 'القوائم الافتراضية لا يمكن حذفها.' }
-  }
 
   const column =
     input.kind === 'deposit'      ? 'deposit_category_labels' :
@@ -304,33 +328,86 @@ export async function deleteCustomLabel(
   if (!column) return { ok: false, error: 'قائمة غير معروفة.' }
 
   const svc = createSupabaseService()
-
-  // For deposit categories only: refuse deletion if any payment still uses
-  // this code — otherwise the label vanishes and the row shows a raw slug.
-  if (input.kind === 'deposit') {
-    const { count } = await svc
-      .from('dsb_payments')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', guard.tenantId)
-      .eq('deposit_category', code)
-    if ((count ?? 0) > 0) {
-      return { ok: false, error: `لا يمكن الحذف — التصنيف مستخدم في ${count} دفعة.` }
-    }
+  const usage = await countUsage(svc, guard.tenantId, input.kind, code)
+  if (usage > 0) {
+    const noun = input.kind === 'deposit' ? 'دفعة' : 'سند صرف'
+    return { ok: false, error: `لا يمكن الحذف — التصنيف مستخدم في ${usage} ${noun}.` }
   }
 
+  // Custom code → drop from the labels JSONB (the source of its existence).
+  if (code.startsWith('custom_')) {
+    const { data: t } = await svc
+      .from('tenants')
+      .select(column)
+      .eq('id', guard.tenantId)
+      .maybeSingle()
+    const current = ((t as Record<string, Record<string, string> | null> | null)?.[column] ?? {}) as Record<string, string>
+    if (!(code in current)) return { ok: true }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [code]: _dropped, ...rest } = current
+
+    const { error } = await svc
+      .from('tenants')
+      .update({ [column]: rest })
+      .eq('id', guard.tenantId)
+    if (error) return { ok: false, error: error.message }
+  } else {
+    // Built-in code → we can't truly remove it (baked into DB CHECK + app),
+    // so we add it to the hidden-codes array. Consumers filter it out at
+    // read time. Restore path lives in restoreDefaultLabel below.
+    const hiddenColumn =
+      input.kind === 'deposit'      ? 'deposit_category_hidden' :
+      input.kind === 'disbursement' ? 'disbursement_type_hidden' :
+      null
+    if (!hiddenColumn) return { ok: false, error: 'قائمة غير معروفة.' }
+
+    const { data: t } = await svc
+      .from('tenants')
+      .select(hiddenColumn)
+      .eq('id', guard.tenantId)
+      .maybeSingle()
+    const current = ((t as Record<string, string[] | null> | null)?.[hiddenColumn] ?? []) as string[]
+    if (current.includes(code)) return { ok: true }
+    const next = [...current, code]
+    const { error } = await svc
+      .from('tenants')
+      .update({ [hiddenColumn]: next })
+      .eq('id', guard.tenantId)
+    if (error) return { ok: false, error: error.message }
+  }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+/**
+ * Un-hide a previously-deleted built-in code (drops it from the hidden array).
+ */
+export async function restoreDefaultLabel(
+  input: { kind: LabelKind; code: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const code = (input.code ?? '').trim()
+  if (!code) return { ok: false, error: 'الرمز مطلوب.' }
+  const hiddenColumn =
+    input.kind === 'deposit'      ? 'deposit_category_hidden' :
+    input.kind === 'disbursement' ? 'disbursement_type_hidden' :
+    null
+  if (!hiddenColumn) return { ok: false, error: 'قائمة غير معروفة.' }
+
+  const svc = createSupabaseService()
   const { data: t } = await svc
     .from('tenants')
-    .select(column)
+    .select(hiddenColumn)
     .eq('id', guard.tenantId)
     .maybeSingle()
-  const current = ((t as Record<string, Record<string, string> | null> | null)?.[column] ?? {}) as Record<string, string>
-  if (!(code in current)) return { ok: true } // already gone
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { [code]: _dropped, ...rest } = current
+  const current = ((t as Record<string, string[] | null> | null)?.[hiddenColumn] ?? []) as string[]
+  const next = current.filter((c) => c !== code)
 
   const { error } = await svc
     .from('tenants')
-    .update({ [column]: rest })
+    .update({ [hiddenColumn]: next })
     .eq('id', guard.tenantId)
   if (error) return { ok: false, error: error.message }
 

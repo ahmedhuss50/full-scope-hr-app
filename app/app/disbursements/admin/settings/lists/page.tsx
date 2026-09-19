@@ -45,7 +45,7 @@ export default async function ListsAndPercentagesPage() {
   const [tenantRes, vendorCatsRes] = await Promise.all([
     svc
       .from('tenants')
-      .select('deposit_distribution_shares, deposit_category_labels, disbursement_type_labels')
+      .select('deposit_distribution_shares, deposit_category_labels, disbursement_type_labels, deposit_category_hidden, disbursement_type_hidden')
       .eq('id', profile.tenant_id as string)
       .maybeSingle(),
     svc
@@ -65,6 +65,8 @@ export default async function ListsAndPercentagesPage() {
   const vendorCategories = ((vendorCatsRes.data ?? []) as VendorCategory[])
   const depositLabelOverrides      = (tenantRes.data?.deposit_category_labels    as Record<string, string> | null | undefined) ?? {}
   const disbursementLabelOverrides = (tenantRes.data?.disbursement_type_labels   as Record<string, string> | null | undefined) ?? {}
+  const depositHidden      = new Set(((tenantRes.data?.deposit_category_hidden  as string[] | null | undefined) ?? []))
+  const disbursementHidden = new Set(((tenantRes.data?.disbursement_type_hidden as string[] | null | undefined) ?? []))
 
   // Build the LabelRow arrays for both fixed-enum lists. The tones on the
   // deposit rows carry over so the pill in the preview matches what the
@@ -75,7 +77,7 @@ export default async function ListsAndPercentagesPage() {
     { code: 'self_financing',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.self_financing,   description: 'ضخ من المطور بدون قرض بنكي.',                        toneCls: 'bg-emerald-50 text-emerald-800 ring-emerald-200' },
     { code: 'bank_financing',   defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.bank_financing,   description: 'قرض تنموي أو تمويل مؤسسي.',                          toneCls: 'bg-indigo-50 text-indigo-800 ring-indigo-200' },
     { code: 'other',            defaultLabel: DEPOSIT_CATEGORY_DEFAULTS.other,            description: 'أي إيداع لا يندرج تحت التصنيفات أعلاه.',              toneCls: 'bg-slate-50 text-slate-800 ring-slate-200' },
-  ]
+  ].filter((r) => !depositHidden.has(r.code))
   // Append any tenant-added custom deposit categories (migration 075). These
   // are just keys in the overrides JSONB that start with `custom_`.
   for (const [code, label] of Object.entries(depositLabelOverrides ?? {})) {
@@ -98,7 +100,7 @@ export default async function ListsAndPercentagesPage() {
     { code: 'vat_project_registry',  defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.vat_project_registry },
     { code: 'vat_sales_payment',     defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.vat_sales_payment },
     { code: 'other',                 defaultLabel: DISBURSEMENT_TYPE_DEFAULTS.other },
-  ]
+  ].filter((r) => !disbursementHidden.has(r.code))
   for (const [code, label] of Object.entries(disbursementLabelOverrides ?? {})) {
     if (code.startsWith('custom_')) {
       disbursementRows.push({ code, defaultLabel: label, isCustom: true })
