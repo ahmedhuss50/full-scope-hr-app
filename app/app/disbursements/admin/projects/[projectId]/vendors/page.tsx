@@ -132,31 +132,45 @@ export default async function ProjectVendorsPage({
   const contractsByVendorId = new Map<string, VendorContractRow[]>()
   const receiptsByVendorId = new Map<string, ReceiptLite[]>()
   if (vendorIds.length > 0) {
-    const [contractsRes, receiptsRes] = await Promise.all([
-      svc
+    // Try the full select first (needs migration 078 columns). If that fails
+    // — because the migration hasn't been run yet on this env — fall back
+    // to the pre-078 column set so the page still renders.
+    let contractsRes: { data: unknown[] | null; error: { message: string } | null } = await svc
+      .from('dsb_vendor_contracts')
+      .select(
+        'id, vendor_id, contract_number, work_type, start_date, end_date, total_amount_sar, amount_before_tax_sar, vat_sar, payment_schedule, status, storage_bucket, storage_path, filename, file_size_bytes, notes',
+      )
+      .eq('tenant_id', tenantId)
+      .in('vendor_id', vendorIds)
+      .order('start_date', { ascending: false, nullsFirst: false })
+    if (contractsRes.error) {
+      contractsRes = await svc
         .from('dsb_vendor_contracts')
         .select(
-          'id, vendor_id, contract_number, work_type, start_date, end_date, total_amount_sar, amount_before_tax_sar, vat_sar, payment_schedule, status, storage_bucket, storage_path, filename, file_size_bytes, notes',
+          'id, vendor_id, contract_number, work_type, start_date, end_date, total_amount_sar, status, storage_bucket, storage_path, filename, file_size_bytes, notes',
         )
         .eq('tenant_id', tenantId)
         .in('vendor_id', vendorIds)
-        .order('start_date', { ascending: false, nullsFirst: false }),
-      svc
-        .from('dsb_vendor_receipts')
-        .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
-        .eq('tenant_id', tenantId)
-        .in('vendor_id', vendorIds)
-        .order('receipt_date', { ascending: false, nullsFirst: false }),
-    ])
+        .order('start_date', { ascending: false, nullsFirst: false })
+    }
+    // Receipts table may not exist yet — swallow error and treat as empty.
+    const receiptsRes = await svc
+      .from('dsb_vendor_receipts')
+      .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
+      .eq('tenant_id', tenantId)
+      .in('vendor_id', vendorIds)
+      .order('receipt_date', { ascending: false, nullsFirst: false })
     for (const c of (contractsRes.data ?? []) as VendorContractRow[]) {
       const arr = contractsByVendorId.get(c.vendor_id) ?? []
       arr.push(c)
       contractsByVendorId.set(c.vendor_id, arr)
     }
-    for (const r of (receiptsRes.data ?? []) as (ReceiptLite & { vendor_id: string })[]) {
-      const arr = receiptsByVendorId.get(r.vendor_id) ?? []
-      arr.push(r)
-      receiptsByVendorId.set(r.vendor_id, arr)
+    if (!receiptsRes.error) {
+      for (const r of (receiptsRes.data ?? []) as (ReceiptLite & { vendor_id: string })[]) {
+        const arr = receiptsByVendorId.get(r.vendor_id) ?? []
+        arr.push(r)
+        receiptsByVendorId.set(r.vendor_id, arr)
+      }
     }
   }
 
