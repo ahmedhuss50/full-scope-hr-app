@@ -8,6 +8,7 @@
  * The list is server-rendered. Editing / adding is done via inline client
  * components; delete buttons are shown to owners only.
  */
+import { Fragment } from 'react'
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
@@ -17,6 +18,7 @@ import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
 import { CreditTracker } from '../CreditTracker'
+import { VendorReceiptsPanel, type ReceiptLite } from './VendorReceiptsPanel'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
 
@@ -128,19 +130,33 @@ export default async function ProjectVendorsPage({
   // Contracts for those vendors (one round-trip, then bucket client-side).
   const vendorIds = vendors.map((v) => v.id)
   const contractsByVendorId = new Map<string, VendorContractRow[]>()
+  const receiptsByVendorId = new Map<string, ReceiptLite[]>()
   if (vendorIds.length > 0) {
-    const { data: contractsData } = await svc
-      .from('dsb_vendor_contracts')
-      .select(
-        'id, vendor_id, contract_number, work_type, start_date, end_date, total_amount_sar, status, storage_bucket, storage_path, filename, file_size_bytes, notes',
-      )
-      .eq('tenant_id', tenantId)
-      .in('vendor_id', vendorIds)
-      .order('start_date', { ascending: false, nullsFirst: false })
-    for (const c of (contractsData ?? []) as VendorContractRow[]) {
+    const [contractsRes, receiptsRes] = await Promise.all([
+      svc
+        .from('dsb_vendor_contracts')
+        .select(
+          'id, vendor_id, contract_number, work_type, start_date, end_date, total_amount_sar, amount_before_tax_sar, vat_sar, payment_schedule, status, storage_bucket, storage_path, filename, file_size_bytes, notes',
+        )
+        .eq('tenant_id', tenantId)
+        .in('vendor_id', vendorIds)
+        .order('start_date', { ascending: false, nullsFirst: false }),
+      svc
+        .from('dsb_vendor_receipts')
+        .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
+        .eq('tenant_id', tenantId)
+        .in('vendor_id', vendorIds)
+        .order('receipt_date', { ascending: false, nullsFirst: false }),
+    ])
+    for (const c of (contractsRes.data ?? []) as VendorContractRow[]) {
       const arr = contractsByVendorId.get(c.vendor_id) ?? []
       arr.push(c)
       contractsByVendorId.set(c.vendor_id, arr)
+    }
+    for (const r of (receiptsRes.data ?? []) as (ReceiptLite & { vendor_id: string })[]) {
+      const arr = receiptsByVendorId.get(r.vendor_id) ?? []
+      arr.push(r)
+      receiptsByVendorId.set(r.vendor_id, arr)
     }
   }
 
@@ -205,7 +221,8 @@ export default async function ProjectVendorsPage({
                 {vendors.map((v) => {
                   const contracts = contractsByVendorId.get(v.id) ?? []
                   return (
-                    <tr key={v.id} className="align-top hover:bg-slate-50/70">
+                    <Fragment key={v.id}>
+                    <tr className="align-top hover:bg-slate-50/70">
                       <Td>
                         <EditVendorRow
                           vendor={v}
@@ -282,6 +299,25 @@ export default async function ProjectVendorsPage({
                         </div>
                       </Td>
                     </tr>
+                    {canOwner && (
+                      <tr>
+                        <td colSpan={6} className="p-0">
+                          <VendorReceiptsPanel
+                            vendorId={v.id}
+                            contracts={contracts.map((c) => ({
+                              id: c.id,
+                              contract_number: c.contract_number,
+                              total_amount_sar: c.total_amount_sar,
+                              amount_before_tax_sar: (c as unknown as { amount_before_tax_sar: number | null }).amount_before_tax_sar,
+                              vat_sar: (c as unknown as { vat_sar: number | null }).vat_sar,
+                              payment_schedule: (c as unknown as { payment_schedule: unknown }).payment_schedule as null | Array<{ seq: number; label_ar: string; amount_sar: number; paid_at?: string | null }>,
+                            }))}
+                            receipts={receiptsByVendorId.get(v.id) ?? []}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>
