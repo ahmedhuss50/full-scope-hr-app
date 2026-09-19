@@ -16,6 +16,7 @@ import { ArrowRight, Briefcase, Plus } from 'lucide-react'
 import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
+import { CreditTracker } from '../CreditTracker'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
 
@@ -173,6 +174,9 @@ export default async function ProjectVendorsPage({
           العقود المرفقة (PDF) لكل مورد.
         </p>
       </header>
+
+      {/* Credit tracker — same card that renders on the project overview. */}
+      <CreditTracker projectId={projectId} tenantId={tenantId} />
 
       {/* Add vendor — collapsible client form. */}
       {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}

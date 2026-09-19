@@ -6,6 +6,7 @@ import { DeleteProjectButton } from '../../EntityDeleteButtons'
 import { EditProjectInfo } from './EditProjectInfo'
 import { ProjectAccountsSection, type ProjectAccount } from './ProjectAccountsSection'
 import { RegaReportsCard } from './RegaReportsCard'
+import { CreditTracker } from './CreditTracker'
 import { ProjectQuickUpload } from './ProjectQuickUpload'
 import { ContractPdfUpload } from './ContractPdfUpload'
 import {
@@ -504,6 +505,10 @@ export default async function ProjectDetailPage({
           </div>
         </div>
       </header>
+
+      {/* Credit tracker — how much buyer money is in the pool and how
+          much has already been committed to vendors/contractors. */}
+      <CreditTracker projectId={project.id} tenantId={project.tenant_id} />
 
       {/* REGA quarterly reports — owner-only. Sits right under the header
           so it's the first thing the owner sees when opening a project. */}
