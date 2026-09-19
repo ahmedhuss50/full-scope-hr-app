@@ -21,6 +21,8 @@ import { ArrowRight, Settings2 } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { SectionCard } from './SectionCard'
 import { BasicsSection } from './BasicsSection'
+import { PaymentScheduleEditor } from './PaymentScheduleEditor'
+import type { PaymentInstallment } from '../../../edit-actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +57,7 @@ type ProjectRow = {
   contractor_3_contract_sar: number | null
   contractor_4_name: string | null
   contractor_4_contract_sar: number | null
+  payment_schedule: PaymentInstallment[] | null
 }
 
 export default async function ProjectSetupPage({
@@ -87,7 +90,7 @@ export default async function ProjectSetupPage({
   // ---- Project + tenant scope ----
   const { data: projectData } = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar, payment_schedule')
     .eq('id', projectId)
     .maybeSingle()
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
@@ -356,6 +359,19 @@ export default async function ProjectSetupPage({
           summary={<Chip label={`${paymentsCount.toLocaleString('en-US')} دفعة`} tone="emerald" />}
           emptyPrompt="لم تُسجَّل أي دفعات بعد."
         />
+
+        {/* 9. Payment schedule (جدول الدفعات) — inline editor. */}
+        <SectionCard
+          index={9}
+          title="جدول الدفعات"
+          complete={Array.isArray(project.payment_schedule) && project.payment_schedule.length > 0}
+          summary={<Chip label={`${(project.payment_schedule ?? []).length || 7} دفعة`} tone="teal" />}
+        >
+          <PaymentScheduleEditor
+            projectId={project.id}
+            initial={project.payment_schedule}
+          />
+        </SectionCard>
       </div>
 
       {/* REGA quarterly reports card lives on the main project page now

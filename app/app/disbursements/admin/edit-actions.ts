@@ -1055,3 +1055,65 @@ export async function setEmployeeProjects(
   revalidatePath('/app/disbursements/admin')
   return { ok: true }
 }
+
+// ---------------------------------------------------------------------------
+// updateProjectPaymentSchedule — replace the 7-row installment plan.
+// ---------------------------------------------------------------------------
+export interface PaymentInstallment {
+  seq: number
+  label_ar: string
+  completion_pct: number
+  payment_pct: number
+}
+export async function updateProjectPaymentSchedule(input: {
+  project_id: string
+  schedule: PaymentInstallment[]
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users').select('id, tenant_id, dsb_role').eq('email', user.email).maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط.' }
+  if ((profile.dsb_role as string | null) !== 'owner') {
+    return { ok: false, error: 'متاح للمدير فقط.' }
+  }
+
+  const rows = Array.isArray(input.schedule) ? input.schedule : []
+  if (rows.length === 0) return { ok: false, error: 'الجدول فارغ.' }
+
+  const cleaned: PaymentInstallment[] = []
+  let totalPct = 0
+  for (const r of rows) {
+    const seq = Number(r.seq)
+    const cp  = Number(r.completion_pct)
+    const pp  = Number(r.payment_pct)
+    const lb  = String(r.label_ar ?? '').trim()
+    if (!Number.isFinite(seq) || seq < 1) return { ok: false, error: 'رقم الدفعة غير صالح.' }
+    if (!lb) return { ok: false, error: `اسم الدفعة رقم ${seq} فارغ.` }
+    if (!Number.isFinite(cp) || cp < 0 || cp > 100) return { ok: false, error: `نسبة الإنجاز للدفعة ${seq} غير صالحة.` }
+    if (!Number.isFinite(pp) || pp < 0 || pp > 100) return { ok: false, error: `نسبة الدفعة ${seq} غير صالحة.` }
+    cleaned.push({ seq, label_ar: lb, completion_pct: cp, payment_pct: pp })
+    totalPct += pp
+  }
+  if (Math.abs(totalPct - 100) > 0.01) {
+    return { ok: false, error: `مجموع نسب الدفعات يجب أن يساوي 100٪ (الحالي ${totalPct}٪).` }
+  }
+  cleaned.sort((a, b) => a.seq - b.seq)
+
+  const { data: proj } = await svc
+    .from('dsb_projects').select('id, tenant_id').eq('id', input.project_id).maybeSingle()
+  if (!proj || (proj as { tenant_id: string }).tenant_id !== profile.tenant_id) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  const { error } = await svc
+    .from('dsb_projects')
+    .update({ payment_schedule: cleaned })
+    .eq('id', input.project_id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${input.project_id}/setup`)
+  return { ok: true }
+}
