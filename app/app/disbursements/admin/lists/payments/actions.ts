@@ -304,3 +304,107 @@ export async function updatePayment(
   revalidatePath('/app/disbursements/admin/lists/payments')
   return { ok: true }
 }
+
+// ----------------------------------------------------------------------------
+// createSinglePayment — owner-only manual insert of one payment row.
+// Mirrors the field set of the payments importer minus the split logic;
+// deposit_category defaults to 'buyer_collection' so the 76/20/4
+// distribution job (see mig 063 trigger) picks it up automatically.
+// ----------------------------------------------------------------------------
+export interface CreateSinglePaymentInput {
+  project_id: string
+  account_id: string | null
+  payment_date: string          // 'YYYY-MM-DD'
+  amount_sar: number
+  vat_sar: number | null
+  deposit_category: DepositCategory
+  beneficiary_name: string | null
+  description: string | null
+  reference_number: string | null
+  payment_method: string | null
+  contract_number: string | null   // resolves server-side to sale_id
+}
+
+export async function createSinglePayment(
+  input: CreateSinglePaymentInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users').select('id, tenant_id, dsb_role').eq('email', user.email).maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط بمستأجر.' }
+  if ((profile.dsb_role as string | null) !== 'owner') {
+    return { ok: false, error: 'هذا الإجراء متاح للمدير فقط.' }
+  }
+  const tenantId = profile.tenant_id as string
+
+  const projectId = (input.project_id ?? '').trim()
+  if (!projectId) return { ok: false, error: 'المشروع مطلوب.' }
+  if (!input.payment_date || !/^\d{4}-\d{2}-\d{2}$/.test(input.payment_date)) {
+    return { ok: false, error: 'تاريخ الدفعة غير صالح (yyyy-mm-dd).' }
+  }
+  if (!Number.isFinite(input.amount_sar) || input.amount_sar <= 0) {
+    return { ok: false, error: 'المبلغ يجب أن يكون أكبر من صفر.' }
+  }
+  if (!ALLOWED_CATEGORIES.includes(input.deposit_category)) {
+    return { ok: false, error: 'تصنيف غير معروف.' }
+  }
+
+  // Tenant-check the project.
+  const { data: proj } = await svc
+    .from('dsb_projects').select('id, tenant_id').eq('id', projectId).maybeSingle()
+  if (!proj || (proj as { tenant_id: string }).tenant_id !== tenantId) {
+    return { ok: false, error: 'المشروع غير موجود.' }
+  }
+
+  // Optional account tenant-check.
+  let accountId: string | null = null
+  if (input.account_id) {
+    const { data: acc } = await svc
+      .from('dsb_project_accounts').select('id, tenant_id, project_id').eq('id', input.account_id).maybeSingle()
+    if (!acc || (acc as { tenant_id: string }).tenant_id !== tenantId) {
+      return { ok: false, error: 'الحساب غير موجود.' }
+    }
+    accountId = (acc as { id: string }).id
+  }
+
+  // Optional contract → sale_id resolution.
+  let saleId: string | null = null
+  let unitId: string | null = null
+  const cn = (input.contract_number ?? '').trim()
+  if (cn) {
+    const { data: sale } = await svc
+      .from('dsb_unit_sales').select('id, unit_id, tenant_id, project_id')
+      .eq('tenant_id', tenantId).eq('project_id', projectId).eq('contract_number', cn).maybeSingle()
+    if (sale) {
+      saleId = (sale as { id: string }).id
+      unitId = (sale as { unit_id: string | null }).unit_id
+    }
+  }
+
+  const row: Record<string, unknown> = {
+    tenant_id: tenantId,
+    project_id: projectId,
+    account_id: accountId,
+    sale_id: saleId,
+    unit_id: unitId,
+    payment_date: input.payment_date,
+    amount_sar: input.amount_sar,
+    vat_sar: input.vat_sar ?? 0,
+    deposit_category: input.deposit_category,
+    beneficiary_name: (input.beneficiary_name ?? '').trim() || null,
+    description: (input.description ?? '').trim() || null,
+    reference_number: (input.reference_number ?? '').trim() || null,
+    payment_method: (input.payment_method ?? '').trim() || null,
+    contract_number: cn || null,
+  }
+  const { data, error } = await svc.from('dsb_payments').insert(row).select('id').single()
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/lists/payments')
+  revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
+  return { ok: true, id: (data as { id: string }).id }
+}

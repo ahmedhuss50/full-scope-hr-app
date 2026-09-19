@@ -6,6 +6,7 @@ import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DepositCategoryPicker, DEPOSIT_CATEGORY_LABELS } from './DepositCategoryPicker'
 import type { DepositCategory } from './actions'
 import { EditPaymentRow, type PaymentEditable, type ProjectOption, type AccountOption } from './EditPaymentRow'
+import { AddPaymentDialog } from './AddPaymentDialog'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -549,13 +550,19 @@ export default async function PaymentsListPage({
           <Coins className="w-4 h-4" aria-hidden="true" />
           سجل الدفعات
         </div>
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
-            الدفعات
-          </h1>
-          <span className="text-sm text-slate-400 font-mono">
-            ({totalCount.toLocaleString('en-US')})
-          </span>
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
+              الدفعات
+            </h1>
+            <span className="text-sm text-slate-400 font-mono">
+              ({totalCount.toLocaleString('en-US')})
+            </span>
+          </div>
+          <AddPaymentDialog
+            projects={projects.map((p) => ({ id: p.id, name_ar: p.name_ar, code: '' }))}
+            accounts={accounts.map((a) => ({ id: a.id, label: a.label, project_id: a.project_id ?? null }))}
+          />
         </div>
       </header>
 
