@@ -17,7 +17,6 @@ import { ArrowRight, Briefcase, Plus } from 'lucide-react'
 import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
-import { DeveloperDownpaymentTracker } from '../DeveloperDownpaymentTracker'
 import { VendorReceiptsPanel, type ReceiptLite } from './VendorReceiptsPanel'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
@@ -243,9 +242,6 @@ async function renderVendorsPage({
         </p>
       </header>
 
-      {/* Developer downpayment pool — funds vendor/contractor payments.
-          Distinct from buyer collections (which stays on the project overview). */}
-      <DeveloperDownpaymentTracker projectId={projectId} tenantId={tenantId} canEdit={canOwner} />
 
       {/* Add vendor — collapsible client form. */}
       {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}
