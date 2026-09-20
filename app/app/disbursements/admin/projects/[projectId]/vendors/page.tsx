@@ -243,8 +243,8 @@ async function renderVendorsPage({
         </p>
       </header>
 
-      {/* Credit tracker — same card that renders on the project overview. */}
-      <CreditTracker projectId={projectId} tenantId={tenantId} />
+      {/* Credit tracker temporarily disabled while we isolate a production crash. */}
+      {/* <CreditTracker projectId={projectId} tenantId={tenantId} /> */}
 
       {/* Add vendor — collapsible client form. */}
       {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}
