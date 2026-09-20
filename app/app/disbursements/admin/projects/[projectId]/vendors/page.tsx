@@ -351,7 +351,7 @@ async function renderVendorsPage({
                         </div>
                       </Td>
                     </tr>
-                    {canOwner && receiptsFeatureReady && (
+                    {false && canOwner && receiptsFeatureReady && (
                       <tr>
                         <td colSpan={6} className="p-0">
                           <VendorReceiptsPanel
