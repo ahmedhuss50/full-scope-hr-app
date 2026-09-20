@@ -55,7 +55,34 @@ export type VendorContractRow = {
   notes: string | null
 }
 
-export default async function ProjectVendorsPage({
+export default async function ProjectVendorsPage(props: { params: { projectId: string } }) {
+  try {
+    return await renderVendorsPage(props)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const stack = err instanceof Error && err.stack ? err.stack : ''
+    // eslint-disable-next-line no-console
+    console.error('[vendors page caught]', message, stack)
+    return (
+      <div className="max-w-3xl mx-auto mt-10 p-6 border border-red-200 bg-red-50 rounded-xl" dir="rtl">
+        <h1 className="serif font-bold text-xl text-red-900 mb-3">
+          خطأ في تحميل الصفحة
+        </h1>
+        <div className="bg-white border border-red-200 rounded-lg p-3 text-[11px] font-mono text-red-900 whitespace-pre-wrap break-all leading-relaxed">
+          <div><strong>Message:</strong> {message}</div>
+          {stack && (
+            <details className="mt-2">
+              <summary className="cursor-pointer">Stack</summary>
+              <pre className="mt-1 text-[10px]">{stack}</pre>
+            </details>
+          )}
+        </div>
+      </div>
+    )
+  }
+}
+
+async function renderVendorsPage({
   params,
 }: {
   params: { projectId: string }
