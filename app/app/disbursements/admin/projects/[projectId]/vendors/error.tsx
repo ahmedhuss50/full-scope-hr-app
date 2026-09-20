@@ -26,16 +26,19 @@ export default function VendorsPageError({
         تعذّر تحميل صفحة الموردين
       </h1>
       <p className="text-sm text-red-800 mb-3">
-        حدث خطأ أثناء جلب البيانات. غالبًا يعني هذا أن تحديث قاعدة البيانات
-        الأخير (Migration 078) لم يُطبَّق بعد. راجع محرر SQL في Supabase وشغّل
-        الملف <code className="font-mono bg-white px-1 rounded">078_dsb_vendor_receipts_and_schedule.sql</code>،
-        ثم أعد تحميل الصفحة.
+        حدث خطأ أثناء تحميل الصفحة. تفاصيل تقنية أدناه — أرسلها للمطوّر
+        إذا استمرّت المشكلة.
       </p>
-      {error?.digest && (
-        <p className="text-[11px] text-red-700 font-mono mb-3">
-          Digest: {error.digest}
-        </p>
-      )}
+      <div className="bg-white border border-red-200 rounded-lg p-3 mb-3 text-[11px] font-mono text-red-900 whitespace-pre-wrap break-all leading-relaxed">
+        <div><strong>Message:</strong> {String(error?.message ?? '—')}</div>
+        {error?.digest && <div className="mt-1"><strong>Digest:</strong> {error.digest}</div>}
+        {error?.stack && (
+          <details className="mt-2">
+            <summary className="cursor-pointer">Stack</summary>
+            <pre className="mt-1 text-[10px]">{error.stack}</pre>
+          </details>
+        )}
+      </div>
       <button
         type="button"
         onClick={reset}
