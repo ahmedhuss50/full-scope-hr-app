@@ -131,6 +131,9 @@ export default async function ProjectVendorsPage({
   const vendorIds = vendors.map((v) => v.id)
   const contractsByVendorId = new Map<string, VendorContractRow[]>()
   const receiptsByVendorId = new Map<string, ReceiptLite[]>()
+  // Set to false when migration 078 hasn't been applied yet — page hides the
+  // receipts panel instead of trying to render it against a missing table.
+  let receiptsFeatureReady = true
   if (vendorIds.length > 0) {
     // Try the full select first (needs migration 078 columns). If that fails
     // — because the migration hasn't been run yet on this env — fall back
@@ -165,7 +168,9 @@ export default async function ProjectVendorsPage({
       arr.push(c)
       contractsByVendorId.set(c.vendor_id, arr)
     }
-    if (!receiptsRes.error) {
+    if (receiptsRes.error) {
+      receiptsFeatureReady = false
+    } else {
       for (const r of (receiptsRes.data ?? []) as (ReceiptLite & { vendor_id: string })[]) {
         const arr = receiptsByVendorId.get(r.vendor_id) ?? []
         arr.push(r)
@@ -313,7 +318,7 @@ export default async function ProjectVendorsPage({
                         </div>
                       </Td>
                     </tr>
-                    {canOwner && (
+                    {canOwner && receiptsFeatureReady && (
                       <tr>
                         <td colSpan={6} className="p-0">
                           <VendorReceiptsPanel
