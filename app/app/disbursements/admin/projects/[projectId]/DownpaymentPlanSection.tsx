@@ -19,31 +19,9 @@ function fmtSar(n: number): string {
   } catch { return `${Math.round(n)} ر.س` }
 }
 
-async function sumSignedVendorSpend(
-  svc: ReturnType<typeof createSupabaseService>,
-  tenantId: string,
-  projectId: string,
-): Promise<number> {
-  let total = 0
-  const CHUNK = 1000
-  for (let page = 0; page < 100; page++) {
-    const { data } = await svc
-      .from('dsb_cases')
-      .select('amount_sar')
-      .eq('tenant_id', tenantId)
-      .eq('project_id', projectId)
-      .in('status', ['signed', 'delivered'])
-      .range(page * CHUNK, page * CHUNK + CHUNK - 1)
-    const rows = (data ?? []) as { amount_sar: number | null }[]
-    for (const r of rows) total += Number(r.amount_sar || 0)
-    if (rows.length < CHUNK) break
-  }
-  return total
-}
-
 export async function DownpaymentPlanSection({
   projectId,
-  tenantId,
+  tenantId: _tenantId,
   canEdit,
 }: {
   projectId: string
@@ -54,16 +32,12 @@ export async function DownpaymentPlanSection({
 
   let downpayment = 0
   let plan: DownpaymentMilestone[] = []
-  let spent = 0
   try {
-    const [projRes, spentSum] = await Promise.all([
-      svc
-        .from('dsb_projects')
-        .select('developer_downpayment_sar, developer_downpayment_plan')
-        .eq('id', projectId)
-        .maybeSingle(),
-      sumSignedVendorSpend(svc, tenantId, projectId),
-    ])
+    const projRes = await svc
+      .from('dsb_projects')
+      .select('developer_downpayment_sar, developer_downpayment_plan')
+      .eq('id', projectId)
+      .maybeSingle()
     if (!projRes.error && projRes.data) {
       const p = projRes.data as {
         developer_downpayment_sar: number | null
@@ -72,7 +46,6 @@ export async function DownpaymentPlanSection({
       downpayment = Number(p.developer_downpayment_sar ?? 0)
       plan = Array.isArray(p.developer_downpayment_plan) ? p.developer_downpayment_plan : []
     }
-    spent = spentSum
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[DownpaymentPlanSection] query failed', err)
@@ -93,11 +66,10 @@ export async function DownpaymentPlanSection({
       </div>
 
       {/* Rollup */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-right">
+      <div className="grid grid-cols-3 gap-2 text-right">
         <RollupCell label="إجمالي الدفعة المقدّمة" value={fmtSar(downpayment)} tone="indigo" />
         <RollupCell label="مجموع الخطة" value={fmtSar(planTotal)} tone={planTotal === downpayment ? 'slate' : 'amber'} />
         <RollupCell label="المفرج عنه" value={fmtSar(released)} tone="emerald" />
-        <RollupCell label="المصروف فعليًا" value={fmtSar(spent)} tone={spent > released ? 'red' : 'teal'} />
       </div>
 
       {planTotal !== downpayment && downpayment > 0 && (
@@ -115,8 +87,7 @@ export async function DownpaymentPlanSection({
 
       <p className="text-[11px] text-slate-500 leading-relaxed">
         الخطة عبارة عن دفعات مربوطة بنسبة إنجاز المشروع. اضغط على «مفرج عنه»
-        لتحديث الحالة عند بلوغ الميلستون. المصروف الفعلي = مجموع سندات الصرف
-        الموقّعة أو المسلّمة للمشروع.
+        لتحديث الحالة عند بلوغ الميلستون.
       </p>
     </section>
   )
