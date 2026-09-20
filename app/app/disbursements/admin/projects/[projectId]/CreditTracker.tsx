@@ -43,28 +43,38 @@ export async function CreditTracker({
 }) {
   const svc = createSupabaseService()
 
-  const [receivedIn, spentOut] = await Promise.all([
-    sumPagedNumeric(async (from, to) => {
-      const res = await svc
-        .from('dsb_payments')
-        .select('amount_sar')
-        .eq('tenant_id', tenantId)
-        .eq('project_id', projectId)
-        .eq('deposit_category', 'buyer_collection')
-        .range(from, to)
-      return { data: res.data as { amount_sar: number | null }[] | null }
-    }),
-    sumPagedNumeric(async (from, to) => {
-      const res = await svc
-        .from('dsb_cases')
-        .select('amount_sar')
-        .eq('tenant_id', tenantId)
-        .eq('project_id', projectId)
-        .in('status', ['signed', 'delivered'])
-        .range(from, to)
-      return { data: res.data as { amount_sar: number | null }[] | null }
-    }),
-  ])
+  // Wrapped in try/catch — if a required column/table hasn't been migrated
+  // yet on this env, we render a zeroed card instead of crashing the whole
+  // page. Never let the tracker take the vendors page down.
+  let receivedIn = 0
+  let spentOut  = 0
+  try {
+    ;[receivedIn, spentOut] = await Promise.all([
+      sumPagedNumeric(async (from, to) => {
+        const res = await svc
+          .from('dsb_payments')
+          .select('amount_sar')
+          .eq('tenant_id', tenantId)
+          .eq('project_id', projectId)
+          .eq('deposit_category', 'buyer_collection')
+          .range(from, to)
+        return { data: res.data as { amount_sar: number | null }[] | null }
+      }),
+      sumPagedNumeric(async (from, to) => {
+        const res = await svc
+          .from('dsb_cases')
+          .select('amount_sar')
+          .eq('tenant_id', tenantId)
+          .eq('project_id', projectId)
+          .in('status', ['signed', 'delivered'])
+          .range(from, to)
+        return { data: res.data as { amount_sar: number | null }[] | null }
+      }),
+    ])
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[CreditTracker] query failed — rendering zeros', err)
+  }
 
   const remaining = receivedIn - spentOut
   const usagePct  = receivedIn > 0 ? Math.min(100, (spentOut / receivedIn) * 100) : 0
