@@ -2117,6 +2117,58 @@ export async function updateUnitCompletion(
   return { ok: true }
 }
 
+/**
+ * updateUnitCompletionPct — inline percentage editor on قائمة الوحدات.
+ *
+ *   pct = 100 → auto-flips completion_status to 'completed' and stamps
+ *              today as completion_date if empty.
+ *   pct < 100 → flips completion_status back to 'not_completed' and
+ *              clears completion_date.
+ */
+export async function updateUnitCompletionPct(
+  input: { unit_id: string; completion_pct: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (!input.unit_id) return { ok: false, error: 'المُعرِّف مطلوب.' }
+
+  const pct = Math.round(Number(input.completion_pct))
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    return { ok: false, error: 'نسبة الإنجاز يجب أن تكون بين 0 و 100.' }
+  }
+
+  const resolved = await resolveUnitForCaller(caller, input.unit_id)
+  if (!resolved.ok) return resolved
+
+  const svc = createSupabaseService()
+  const { data: existing } = await svc
+    .from('dsb_project_units')
+    .select('completion_date')
+    .eq('id', input.unit_id)
+    .maybeSingle()
+
+  const patch: Record<string, string | number | null> = { completion_pct: pct }
+  if (pct === 100) {
+    patch.completion_status = 'completed'
+    patch.completion_date =
+      ((existing as { completion_date: string | null } | null)?.completion_date ?? null) ||
+      new Date().toISOString().slice(0, 10)
+  } else {
+    patch.completion_status = 'not_completed'
+    patch.completion_date = null
+  }
+
+  const { error } = await svc
+    .from('dsb_project_units')
+    .update(patch)
+    .eq('id', input.unit_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${resolved.unit.project_id}/units`)
+  return { ok: true }
+}
+
 export async function requestUnitDocUploadUrl(
   input: { unit_id: string; kind: UnitDocKind; filename: string; size: number },
 ): Promise<

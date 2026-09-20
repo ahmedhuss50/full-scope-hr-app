@@ -18,6 +18,7 @@ import { DeleteAllButton } from '../_shared/DeleteAllButton'
 import { deleteUnit, deleteAllUnitsForProject } from '../../../units/actions'
 import { DeliveryToggle } from '../buyer-contracts/DeliveryToggle'
 import { CompletionToggle } from './CompletionToggle'
+import { CompletionPctEditor } from './CompletionPctEditor'
 import { UnitAttachmentButton } from './UnitAttachmentButton'
 import { AddUnitDialog } from './AddUnitDialog'
 
@@ -35,6 +36,7 @@ type UnitRow = {
   region: string | null
   completion_status: string | null
   completion_date: string | null
+  completion_pct: number | null
   completion_attachment_storage_path: string | null
   completion_attachment_filename: string | null
   delivery_attachment_storage_path: string | null
@@ -124,7 +126,7 @@ export default async function ProjectUnitsListPage({
     .from('dsb_project_units')
     .select(
       `id, unit_number, unit_type, area_m2, block_number, zone_number, district, city, region,
-       completion_status, completion_date,
+       completion_status, completion_date, completion_pct,
        completion_attachment_storage_path, completion_attachment_filename,
        delivery_attachment_storage_path, delivery_attachment_filename`,
     )
@@ -296,6 +298,7 @@ export default async function ProjectUnitsListPage({
                   <Th>النوع / المساحة</Th>
                   <Th>الموقع</Th>
                   <Th>المشتري والعقد</Th>
+                  <Th>نسبة الإنجاز</Th>
                   <Th>الإنجاز</Th>
                   <Th>مرفق الإنجاز</Th>
                   <Th>التسليم</Th>
@@ -384,6 +387,13 @@ export default async function ProjectUnitsListPage({
                             )
                           })()
                         )}
+                      </Td>
+                      <Td>
+                        <CompletionPctEditor
+                          unitId={u.id}
+                          initialPct={Number(u.completion_pct ?? 0)}
+                          canEdit={['employee', 'supervisor', 'owner'].includes(dsbRole ?? '')}
+                        />
                       </Td>
                       <Td>
                         <CompletionToggle
