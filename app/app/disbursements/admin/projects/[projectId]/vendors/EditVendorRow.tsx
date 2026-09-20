@@ -21,13 +21,16 @@ export function EditVendorRow({
   vendor,
   canEdit,
   categoryOptions,
-  renderView,
+  children,
 }: {
   vendor: VendorRow
   canEdit: boolean
   // Tenant-managed categories for the فئة الخدمة dropdown. Empty → free-text.
   categoryOptions: string[]
-  renderView: () => React.ReactNode
+  // Pre-rendered read-only view. Passed as `children` (JSX / ReactNode) so the
+  // server component can hand it in without needing a function prop — client
+  // components cannot receive functions from server components.
+  children: React.ReactNode
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -79,7 +82,7 @@ export function EditVendorRow({
   if (!editing) {
     return (
       <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">{renderView()}</div>
+        <div className="min-w-0 flex-1">{children}</div>
         {canEdit && (
           <button
             type="button"

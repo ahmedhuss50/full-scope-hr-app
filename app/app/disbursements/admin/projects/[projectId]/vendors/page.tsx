@@ -243,8 +243,8 @@ async function renderVendorsPage({
         </p>
       </header>
 
-      {/* Credit tracker temporarily disabled while we isolate a production crash. */}
-      {/* <CreditTracker projectId={projectId} tenantId={tenantId} /> */}
+      {/* Credit tracker — same card that renders on the project overview. */}
+      <CreditTracker projectId={projectId} tenantId={tenantId} />
 
       {/* Add vendor — collapsible client form. */}
       {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}
@@ -280,37 +280,36 @@ async function renderVendorsPage({
                           vendor={v}
                           canEdit={canWrite}
                           categoryOptions={categoryOptions}
-                          renderView={() => (
-                            <div className="leading-tight">
-                              <div className="font-semibold text-slate-900">{v.name_ar}</div>
-                              {(v.contact_person_name || v.contact_person_phone) && (
-                                <div className="text-[11px] text-slate-500 mt-0.5">
-                                  {v.contact_person_name}
-                                  {v.contact_person_name && v.contact_person_phone && ' · '}
-                                  {v.contact_person_phone && (
-                                    <span className="font-mono" dir="ltr">
-                                      {v.contact_person_phone}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              {(v.tax_number || v.commercial_registration) && (
-                                <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1.5">
-                                  {v.tax_number && (
-                                    <span>
-                                      ض.: <span className="font-mono" dir="ltr">{v.tax_number}</span>
-                                    </span>
-                                  )}
-                                  {v.commercial_registration && (
-                                    <span>
-                                      س.ت: <span className="font-mono" dir="ltr">{v.commercial_registration}</span>
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        />
+                        >
+                          <div className="leading-tight">
+                            <div className="font-semibold text-slate-900">{v.name_ar}</div>
+                            {(v.contact_person_name || v.contact_person_phone) && (
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                {v.contact_person_name}
+                                {v.contact_person_name && v.contact_person_phone && ' · '}
+                                {v.contact_person_phone && (
+                                  <span className="font-mono" dir="ltr">
+                                    {v.contact_person_phone}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {(v.tax_number || v.commercial_registration) && (
+                              <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1.5">
+                                {v.tax_number && (
+                                  <span>
+                                    ض.: <span className="font-mono" dir="ltr">{v.tax_number}</span>
+                                  </span>
+                                )}
+                                {v.commercial_registration && (
+                                  <span>
+                                    س.ت: <span className="font-mono" dir="ltr">{v.commercial_registration}</span>
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </EditVendorRow>
                       </Td>
                       <Td>{v.service_category ?? '—'}</Td>
                       <Td>
@@ -351,7 +350,7 @@ async function renderVendorsPage({
                         </div>
                       </Td>
                     </tr>
-                    {false && canOwner && receiptsFeatureReady && (
+                    {canOwner && receiptsFeatureReady && (
                       <tr>
                         <td colSpan={6} className="p-0">
                           <VendorReceiptsPanel
