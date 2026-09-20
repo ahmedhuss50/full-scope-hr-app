@@ -18,6 +18,7 @@ import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
 import { VendorReceiptsPanel, type ReceiptLite } from './VendorReceiptsPanel'
+import { DownpaymentPlanSection } from '../DownpaymentPlanSection'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
 
@@ -242,6 +243,8 @@ async function renderVendorsPage({
         </p>
       </header>
 
+      {/* Developer downpayment + milestone-based spending plan. */}
+      <DownpaymentPlanSection projectId={projectId} tenantId={tenantId} canEdit={canOwner} />
 
       {/* Add vendor — collapsible client form. */}
       {canWrite && <AddVendorForm projectId={projectId} categoryOptions={categoryOptions} />}
