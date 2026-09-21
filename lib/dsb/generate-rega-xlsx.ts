@@ -1312,10 +1312,67 @@ export async function generateAccountantWorkbookXlsx(
     setCell(s3, 'I13', credit.other[1],            'n')
     setCell(s3, 'I14', credit.wrong_transfer[1],   'n')
   }
-  if (s3 && report) {
-    if (report.opening_balance_sar != null) {
-      setCell(s3, 'C5', Number(report.opening_balance_sar), 'n')
+  if (s3) {
+    // ---------------------------------------------------------------------
+    // Opening balance (C5 = رصيد إغلاق الربع السابق).
+    //
+    // Priority:
+    //   1. Value the user entered on the CPA report page (report.opening_balance_sar > 0)
+    //   2. Auto-computed from prior activity: sum(credits before qStart) - sum(debits before qStart)
+    //   3. Zero (fresh project with no prior activity)
+    //
+    // Sheet 3 has these dependent formulas already:
+    //   B18 = C5                        (رصيد افتتاح الفترة)
+    //   D18 = B18 + I15 - G15           (رصيد اغلاق الفترة)
+    // So once C5 is filled correctly, both the opening AND closing balance
+    // rows on Sheet 3 populate automatically when Excel opens the file.
+    // ---------------------------------------------------------------------
+    const userOpening = Number(report?.opening_balance_sar ?? 0)
+    let openingBalance = userOpening
+    if (openingBalance <= 0) {
+      // Auto-compute: total credits before qStart minus total debits before qStart.
+      // The debit + credit loops above already accumulated ALL history into
+      // the cumulative bucket [0]. We need the prior-period slice, so we
+      // recompute here with an explicit "voucher_date < qStart" filter.
+      const q = Number(quarter.replace('Q', ''))
+      const qStartMonth = (q - 1) * 3 + 1
+      const qStart = `${year}-${String(qStartMonth).padStart(2, '0')}-01`
+      let priorDebits = 0
+      let priorCredits = 0
+      const CHUNK = 1000
+      for (let page = 0; page < 100; page++) {
+        const { data } = await svc
+          .from('dsb_cases')
+          .select('amount_sar, voucher_date')
+          .eq('tenant_id', project.tenant_id)
+          .eq('project_id', projectId)
+          .in('status', ['signed', 'delivered'])
+          .lt('voucher_date', qStart)
+          .range(page * CHUNK, page * CHUNK + CHUNK - 1)
+        const rows = (data ?? []) as Array<{ amount_sar: number | null }>
+        for (const r of rows) priorDebits += Number(r.amount_sar || 0)
+        if (rows.length < CHUNK) break
+      }
+      for (let page = 0; page < 100; page++) {
+        const { data } = await svc
+          .from('dsb_payments')
+          .select('amount_sar, payment_date')
+          .eq('tenant_id', project.tenant_id)
+          .eq('project_id', projectId)
+          .lt('payment_date', qStart)
+          .range(page * CHUNK, page * CHUNK + CHUNK - 1)
+        const rows = (data ?? []) as Array<{ amount_sar: number | null }>
+        for (const r of rows) priorCredits += Number(r.amount_sar || 0)
+        if (rows.length < CHUNK) break
+      }
+      openingBalance = priorCredits - priorDebits
     }
+    // Write C5 unconditionally — even a zero opening is meaningful for the
+    // downstream =C5 formula in B18. Otherwise B18 would render as empty
+    // and the closing-balance calc at D18 would show as 0 with no context.
+    setCell(s3, 'C5', openingBalance, 'n')
+  }
+  if (s3 && report) {
     // Forecast rows: start at row 28 (label at G28 = 'تكاليف انشائية' in the
     // template). We write user-supplied rows into the (label, amount) grid
     // starting at G28/H28 (debit) and I28/J28 (credit) if present.
