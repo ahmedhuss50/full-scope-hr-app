@@ -284,14 +284,6 @@ export function BasicsSection({
           <input className={inputCls} value={regaLicense} onChange={(e) => setRegaLicense(e.target.value)} disabled={saving} dir="ltr" placeholder="مثال: أ/208" />
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ اتفاقية REGA (هجري)</label>
-          <input className={inputCls} value={regaHijri} onChange={(e) => setRegaHijri(e.target.value)} disabled={saving} placeholder="مثال: 02 /07/1445هـ" />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ اتفاقية REGA (ميلادي)</label>
-          <input type="date" className={inputCls} value={regaGreg} onChange={(e) => setRegaGreg(e.target.value)} disabled={saving} dir="ltr" />
-        </div>
-        <div>
           <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ بدء المشروع</label>
           <input type="date" className={inputCls} value={projectStart} onChange={(e) => setProjectStart(e.target.value)} disabled={saving} dir="ltr" />
         </div>
