@@ -19,6 +19,7 @@ import { CommentsThread, type CommentRow } from './CommentsThread'
 import { RevertSignatureButton } from './RevertSignatureButton'
 import { DeliverDocumentButton } from './DeliverDocumentButton'
 import { AttachmentsSection } from './AttachmentsSection'
+import { CaseVendorPicker, type VendorPickerOption } from './CaseVendorPicker'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 import { resolveEffectiveTemplateId } from '@/lib/dsb/effective-checklist'
 
@@ -91,6 +92,7 @@ type CaseRow = {
   delivery_notes: string | null
   paid_from_account_id: string | null
   paid_at: string | null
+  vendor_id: string | null
   unit_id: string | null
   sale_id: string | null
   contract_id: string | null
@@ -145,7 +147,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, unit_id, sale_id, contract_id,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, vendor_id, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
              paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label, bank_name, account_number, iban),
@@ -204,6 +206,21 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
     bank_name: string | null
     account_number: string | null
   }>
+
+  // Vendors dropdown for the case (mig 084 assignment). Falls back to empty.
+  let vendorOptions: VendorPickerOption[] = []
+  if (project?.id) {
+    const { data: vRes, error: vErr } = await svc
+      .from('dsb_vendors')
+      .select('id, name_ar, service_category')
+      .eq('tenant_id', tenantId)
+      .eq('project_id', project.id)
+      .order('name_ar', { ascending: true })
+    if (!vErr) {
+      vendorOptions = ((vRes ?? []) as { id: string; name_ar: string; service_category: string | null }[])
+        .map((v) => ({ id: v.id, name_ar: v.name_ar, category: v.service_category }))
+    }
+  }
 
   // ---- Reassignment dropdowns (developer + project) ----
   // Feeds the "wrong client/project picked at upload" fix in EditCaseInfo.
@@ -517,6 +534,17 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
               {/* تكلفة الاستخراج removed from case UI — cost is still tracked
                   in dsb_cases.extraction_cost_usd for owner-level reports. */}
             </div>
+            {project?.id && (
+              <div className="pt-3 border-t border-slate-100">
+                <CaseVendorPicker
+                  caseId={kase.id}
+                  projectId={project.id}
+                  initialVendorId={kase.vendor_id ?? null}
+                  options={vendorOptions}
+                  canEdit={canWrite}
+                />
+              </div>
+            )}
             {kase.notes && (
               <div className="pt-3 border-t border-slate-100">
                 <div className="text-xs font-semibold text-slate-500 mb-1">ملاحظات المطوّر</div>
