@@ -296,8 +296,13 @@ export function BasicsSection({
           <input type="date" className={inputCls} value={projectStart} onChange={(e) => setProjectStart(e.target.value)} disabled={saving} dir="ltr" />
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ انتهاء الترخيص</label>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">
+            تاريخ نهاية المشروع (انتهاء الترخيص)
+          </label>
           <input type="date" className={inputCls} value={licenseExpiry} onChange={(e) => setLicenseExpiry(e.target.value)} disabled={saving} dir="ltr" />
+          <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+            يظهر في Sheet 5 من نموذج المحاسب القانوني كـ «تاريخ نهاية المشروع».
+          </p>
         </div>
 
         {/* Location — Sheet 5 of the CPA report */}
