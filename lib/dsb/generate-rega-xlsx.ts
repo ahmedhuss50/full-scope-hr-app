@@ -1061,53 +1061,126 @@ export async function generateAccountantWorkbookXlsx(
     notes_current_risks: string | null; notes_future_risks: string | null; notes_other: string | null
   } | null
 
-  // Sheet 3 — opening balance goes at C5 per the reference template.
-  // Also fill the cumulative debit + credit totals that Sheet 5's variance
-  // analysis + Sheet 7's balance sheet formulas reference:
-  //   B9  = تكاليف انشائية cumulative           → sum(cases) construction
-  //   B11 = مصاريف ادارية وتسويقية cumulative → sum(cases) admin_marketing
-  //   D9  = تحصيل من العملاء cumulative        → sum(payments) buyer_collection
+  // Sheet 3 — opening balance goes at C5. Fill every debit/credit cell:
+  //   Cumulative (column B / D)        : since project start
+  //   Current period (column G / I)    : within the selected quarter only
+  //
+  // Row map (both sides use the same rows in the template):
+  //   Row  9  DEBIT: تكاليف انشائية              | CREDIT: تحصيل من العملاء
+  //   Row 10  DEBIT: (الدفعة المقدمة المتبقية)    | CREDIT: تمويل بنكي
+  //   Row 11  DEBIT: مصاريف ادارية وتسويقية       | CREDIT: تمويل ذاتي
+  //   Row 12  DEBIT: ايداعات عملاء مستردة        | CREDIT: تمويل الوزارة
+  //   Row 13  DEBIT: عمولات بنكية                 | CREDIT: أخرى
+  //   Row 14  DEBIT: أخرى                          | CREDIT: أخرى (حوالة خاطئة)
   const s3 = wb.Sheets['(3) العمليات المالية']
   if (s3) {
-    // Cumulative case totals by disbursement type (signed + delivered).
-    let cumConstruction = 0
-    let cumAdminMkt     = 0
+    // Quarter boundaries (Q1 = Jan 1..Mar 31 …).
+    const q = Number(quarter.replace('Q', ''))
+    const qStartMonth = (q - 1) * 3 + 1
+    const qStart = `${year}-${String(qStartMonth).padStart(2, '0')}-01`
+    // End = last day of month qStartMonth+2
+    const qEndDate = new Date(Date.UTC(year, qStartMonth + 2, 0))
+    const qEnd = `${qEndDate.getUTCFullYear()}-${String(qEndDate.getUTCMonth() + 1).padStart(2, '0')}-${String(qEndDate.getUTCDate()).padStart(2, '0')}`
+
+    // Buckets: [cumulative, period]
+    const debit = {
+      construction:      [0, 0],
+      customer_refund:   [0, 0],   // ايداعات عملاء مستردة (case type = 'customer_refund')
+      admin_marketing:   [0, 0],
+      bank_fees:         [0, 0],   // عمولات بنكية (case type = 'bank_fees')
+      other:             [0, 0],
+    } as Record<string, [number, number]>
+    const credit = {
+      buyer_collection:  [0, 0],
+      bank_financing:    [0, 0],
+      self_financing:    [0, 0],
+      ministry:          [0, 0],   // تمويل الوزارة (deposit_category = 'moh_incentive' loosely)
+      other:             [0, 0],
+      wrong_transfer:    [0, 0],
+    } as Record<string, [number, number]>
+
     const CHUNK = 1000
+
+    // DEBITS — from signed/delivered cases with a voucher_date.
     for (let page = 0; page < 100; page++) {
       const { data } = await svc
         .from('dsb_cases')
-        .select('amount_sar, extracted_fields')
+        .select('amount_sar, voucher_date, extracted_fields')
         .eq('tenant_id', project.tenant_id)
         .eq('project_id', projectId)
         .in('status', ['signed', 'delivered'])
         .range(page * CHUNK, page * CHUNK + CHUNK - 1)
-      const rows = (data ?? []) as Array<{ amount_sar: number | null; extracted_fields: { disbursement_type_code?: string | null } | null }>
+      const rows = (data ?? []) as Array<{ amount_sar: number | null; voucher_date: string | null; extracted_fields: { disbursement_type_code?: string | null } | null }>
       for (const r of rows) {
         const amt = Number(r.amount_sar || 0)
-        const code = r.extracted_fields?.disbursement_type_code ?? ''
-        if (code === 'construction') cumConstruction += amt
-        else if (code === 'admin_marketing') cumAdminMkt += amt
+        const code = (r.extracted_fields?.disbursement_type_code ?? '').trim()
+        const bucketKey =
+          code === 'construction' ? 'construction' :
+          code === 'admin_marketing' ? 'admin_marketing' :
+          code === 'customer_refund' ? 'customer_refund' :
+          code === 'bank_fees' ? 'bank_fees' :
+          'other'
+        debit[bucketKey][0] += amt
+        if (r.voucher_date && r.voucher_date >= qStart && r.voucher_date <= qEnd) {
+          debit[bucketKey][1] += amt
+        }
       }
       if (rows.length < CHUNK) break
     }
-    setCell(s3, 'B9',  cumConstruction, 'n')
-    setCell(s3, 'B11', cumAdminMkt,     'n')
 
-    // Cumulative buyer collections (payments with deposit_category = buyer_collection).
-    let cumBuyerCollection = 0
+    // CREDITS — from dsb_payments with a payment_date.
     for (let page = 0; page < 100; page++) {
       const { data } = await svc
         .from('dsb_payments')
-        .select('amount_sar')
+        .select('amount_sar, payment_date, deposit_category')
         .eq('tenant_id', project.tenant_id)
         .eq('project_id', projectId)
-        .eq('deposit_category', 'buyer_collection')
         .range(page * CHUNK, page * CHUNK + CHUNK - 1)
-      const rows = (data ?? []) as Array<{ amount_sar: number | null }>
-      for (const r of rows) cumBuyerCollection += Number(r.amount_sar || 0)
+      const rows = (data ?? []) as Array<{ amount_sar: number | null; payment_date: string | null; deposit_category: string | null }>
+      for (const r of rows) {
+        const amt = Number(r.amount_sar || 0)
+        const cat = (r.deposit_category ?? '').trim()
+        const bucketKey =
+          cat === 'buyer_collection' ? 'buyer_collection' :
+          cat === 'bank_financing'   ? 'bank_financing' :
+          cat === 'self_financing'   ? 'self_financing' :
+          cat === 'moh_incentive'    ? 'ministry' :
+          cat === 'wrong_transfer'   ? 'wrong_transfer' :
+          'other'
+        credit[bucketKey][0] += amt
+        if (r.payment_date && r.payment_date >= qStart && r.payment_date <= qEnd) {
+          credit[bucketKey][1] += amt
+        }
+      }
       if (rows.length < CHUNK) break
     }
-    setCell(s3, 'D9', cumBuyerCollection, 'n')
+
+    // Cumulative debits (column B) — rows 9/11/12/13/14 (row 10 stays blank).
+    setCell(s3, 'B9',  debit.construction[0],      'n')
+    setCell(s3, 'B11', debit.admin_marketing[0],   'n')
+    setCell(s3, 'B12', debit.customer_refund[0],   'n')
+    setCell(s3, 'B13', debit.bank_fees[0],         'n')
+    setCell(s3, 'B14', debit.other[0],             'n')
+    // Cumulative credits (column D) — rows 9..14.
+    setCell(s3, 'D9',  credit.buyer_collection[0], 'n')
+    setCell(s3, 'D10', credit.bank_financing[0],   'n')
+    setCell(s3, 'D11', credit.self_financing[0],   'n')
+    setCell(s3, 'D12', credit.ministry[0],         'n')
+    setCell(s3, 'D13', credit.other[0],            'n')
+    setCell(s3, 'D14', credit.wrong_transfer[0],   'n')
+    // Current-period debits (column G).
+    setCell(s3, 'G9',  debit.construction[1],      'n')
+    setCell(s3, 'G11', debit.admin_marketing[1],   'n')
+    setCell(s3, 'G12', debit.customer_refund[1],   'n')
+    setCell(s3, 'G13', debit.bank_fees[1],         'n')
+    setCell(s3, 'G14', debit.other[1],             'n')
+    // Current-period credits (column I).
+    setCell(s3, 'I9',  credit.buyer_collection[1], 'n')
+    setCell(s3, 'I10', credit.bank_financing[1],   'n')
+    setCell(s3, 'I11', credit.self_financing[1],   'n')
+    setCell(s3, 'I12', credit.ministry[1],         'n')
+    setCell(s3, 'I13', credit.other[1],            'n')
+    setCell(s3, 'I14', credit.wrong_transfer[1],   'n')
   }
   if (s3 && report) {
     if (report.opening_balance_sar != null) {
