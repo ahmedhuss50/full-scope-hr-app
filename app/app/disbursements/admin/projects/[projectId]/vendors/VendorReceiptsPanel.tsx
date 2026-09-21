@@ -97,6 +97,7 @@ export function VendorReceiptsPanel({
         vendorName={vendorName}
         initialDownpayment={vendorDownpayment}
         initialPlan={vendorDownpaymentPlan}
+        paidToVendor={paid}
         canEdit={canEdit}
       />
       <RollupCard contractTotal={contractTotal} invoiced={invoiced} paid={paid} remaining={remaining} />

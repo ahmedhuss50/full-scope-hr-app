@@ -39,12 +39,15 @@ export function VendorDownpaymentEditor({
   vendorName,
   initialDownpayment,
   initialPlan,
+  paidToVendor,
   canEdit,
 }: {
   vendorId: string
   vendorName: string
   initialDownpayment: number
   initialPlan: VendorDownpaymentMilestone[]
+  /** Sum of receipts that reached status='paid' for this vendor. */
+  paidToVendor: number
   canEdit: boolean
 }) {
   const router = useRouter()
@@ -91,6 +94,9 @@ export function VendorDownpaymentEditor({
   const total       = Number(downpayment) || 0
   const planTotal   = plan.reduce((n, m) => n + Number(m.amount_sar || 0), 0)
   const released    = plan.filter((m) => m.released_at).reduce((n, m) => n + Number(m.amount_sar || 0), 0)
+  const remaining   = total - paidToVendor
+  const usagePct    = total > 0 ? Math.min(100, (paidToVendor / total) * 100) : 0
+  const overBudget  = remaining < 0
 
   return (
     <div className="rounded-lg bg-indigo-50/40 border border-indigo-200 p-3">
@@ -125,6 +131,27 @@ export function VendorDownpaymentEditor({
             />
             <span className="text-xs text-slate-500">ر.س</span>
           </div>
+
+          {/* Deduction rollup — auto-computed from paid receipts */}
+          {total > 0 && (
+            <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-right">
+                <RollupBox label="المُودَع" value={fmtSar(total)} tone="indigo" />
+                <RollupBox label="مُسدَّد فعليًا" value={fmtSar(paidToVendor)} tone="amber" />
+                <RollupBox label="الرصيد المتبقي" value={fmtSar(remaining)} tone={overBudget ? 'red' : 'emerald'} />
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className={`h-full ${overBudget ? 'bg-red-500' : usagePct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${Math.min(100, usagePct)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                «مُسدَّد فعليًا» = مجموع الفواتير المُسدَّدة (بعد توقيع/تسليم سند الصرف).
+                يُخصم تلقائيًا من الدفعة كلما تحوّلت فاتورة إلى «مُسدَّدة».
+              </p>
+            </div>
+          )}
 
           {planTotal !== total && total > 0 && (
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -224,6 +251,26 @@ export function VendorDownpaymentEditor({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function RollupBox({
+  label, value, tone,
+}: {
+  label: string
+  value: string
+  tone: 'indigo' | 'amber' | 'emerald' | 'red'
+}) {
+  const cls =
+    tone === 'indigo'  ? 'bg-indigo-50 text-indigo-800 ring-indigo-200' :
+    tone === 'amber'   ? 'bg-amber-50 text-amber-800 ring-amber-200' :
+    tone === 'emerald' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' :
+                         'bg-red-50 text-red-800 ring-red-200'
+  return (
+    <div className={`rounded-md ring-1 ring-inset ${cls} px-2.5 py-1.5`}>
+      <div className="text-[9px] font-bold uppercase tracking-widest opacity-80">{label}</div>
+      <div className="mt-0.5 text-sm font-black font-mono">{value}</div>
     </div>
   )
 }
