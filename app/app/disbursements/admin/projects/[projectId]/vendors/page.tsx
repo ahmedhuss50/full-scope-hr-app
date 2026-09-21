@@ -8,17 +8,14 @@
  * The list is server-rendered. Editing / adding is done via inline client
  * components; delete buttons are shown to owners only.
  */
-import { Fragment } from 'react'
 import Link from 'next/link'
 import { redirect, notFound } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { assignedProjectIds, canAccessProject } from '@/lib/dsb/access'
-import { ArrowRight, Briefcase, Plus } from 'lucide-react'
+import { ArrowRight, ArrowLeft, Briefcase, Plus } from 'lucide-react'
 import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
-import { VendorReceiptsPanel, type ReceiptLite, type DisbursementTypeOption } from './VendorReceiptsPanel'
-import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 import { DownpaymentPlanSection } from '../DownpaymentPlanSection'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
@@ -175,10 +172,6 @@ async function renderVendorsPage({
   // Contracts for those vendors (one round-trip, then bucket client-side).
   const vendorIds = vendors.map((v) => v.id)
   const contractsByVendorId = new Map<string, VendorContractRow[]>()
-  const receiptsByVendorId = new Map<string, ReceiptLite[]>()
-  // Set to false when migration 078 hasn't been applied yet — page hides the
-  // receipts panel instead of trying to render it against a missing table.
-  let receiptsFeatureReady = true
   if (vendorIds.length > 0) {
     // Try the full select first (needs migration 078 columns). If that fails
     // — because the migration hasn't been run yet on this env — fall back
@@ -201,66 +194,15 @@ async function renderVendorsPage({
         .in('vendor_id', vendorIds)
         .order('start_date', { ascending: false, nullsFirst: false })
     }
-    // Receipts table may not exist yet — swallow error and treat as empty.
-    // Try select including disbursement_type_code (mig 082); fall back if column absent.
-    let receiptsRes: { data: unknown[] | null; error: { message: string } | null } = await svc
-      .from('dsb_vendor_receipts')
-      .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, disbursement_type_code, status, case_id')
-      .eq('tenant_id', tenantId)
-      .in('vendor_id', vendorIds)
-      .order('receipt_date', { ascending: false, nullsFirst: false })
-    if (receiptsRes.error) {
-      receiptsRes = await svc
-        .from('dsb_vendor_receipts')
-        .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
-        .eq('tenant_id', tenantId)
-        .in('vendor_id', vendorIds)
-        .order('receipt_date', { ascending: false, nullsFirst: false })
-    }
     for (const c of (contractsRes.data ?? []) as VendorContractRow[]) {
       const arr = contractsByVendorId.get(c.vendor_id) ?? []
       arr.push(c)
       contractsByVendorId.set(c.vendor_id, arr)
     }
-    if (receiptsRes.error) {
-      receiptsFeatureReady = false
-    } else {
-      for (const r of (receiptsRes.data ?? []) as (ReceiptLite & { vendor_id: string })[]) {
-        const arr = receiptsByVendorId.get(r.vendor_id) ?? []
-        arr.push(r)
-        receiptsByVendorId.set(r.vendor_id, arr)
-      }
-    }
   }
 
   const canOwner = dsbRole === 'owner'
   const canWrite = ['employee', 'supervisor', 'owner'].includes(dsbRole)
-
-  // Disbursement-type options for the receipts panel dropdown: merge shipped
-  // defaults + tenant JSONB overrides, minus any hidden codes.
-  let dsbTypeOverrides: Record<string, string> = {}
-  let dsbTypeHidden: string[] = []
-  try {
-    const tenantRes = await svc
-      .from('tenants')
-      .select('disbursement_type_labels, disbursement_type_hidden')
-      .eq('id', tenantId)
-      .maybeSingle()
-    if (!tenantRes.error && tenantRes.data) {
-      const t = tenantRes.data as {
-        disbursement_type_labels: Record<string, string> | null
-        disbursement_type_hidden: string[] | null
-      }
-      dsbTypeOverrides = (t.disbursement_type_labels ?? {}) as Record<string, string>
-      dsbTypeHidden    = Array.isArray(t.disbursement_type_hidden) ? t.disbursement_type_hidden : []
-    }
-  } catch { /* fall back to defaults */ }
-  const hiddenSet = new Set(dsbTypeHidden)
-  const defaultCodes = Object.keys(DISBURSEMENT_TYPE_DEFAULTS)
-  const customCodes  = Object.keys(dsbTypeOverrides).filter((c) => c.startsWith('custom_'))
-  const disbursementTypeOptions: DisbursementTypeOption[] = [...defaultCodes, ...customCodes]
-    .filter((code) => !hiddenSet.has(code))
-    .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
 
   return (
     <div className="max-w-6xl mx-auto space-y-6" dir="rtl">
@@ -320,8 +262,7 @@ async function renderVendorsPage({
                 {vendors.map((v) => {
                   const contracts = contractsByVendorId.get(v.id) ?? []
                   return (
-                    <Fragment key={v.id}>
-                    <tr className="align-top hover:bg-slate-50/70">
+                    <tr key={v.id} className="align-top hover:bg-slate-50/70">
                       <Td>
                         <EditVendorRow
                           vendor={v}
@@ -329,7 +270,13 @@ async function renderVendorsPage({
                           categoryOptions={categoryOptions}
                         >
                           <div className="leading-tight">
-                            <div className="font-semibold text-slate-900">{v.name_ar}</div>
+                            <Link
+                              href={`/app/disbursements/admin/projects/${projectId}/vendors/${v.id}`}
+                              className="font-semibold text-teal-800 hover:text-teal-700 hover:underline inline-flex items-center gap-1"
+                            >
+                              {v.name_ar}
+                              <ArrowLeft className="w-3 h-3 opacity-60" />
+                            </Link>
                             {(v.contact_person_name || v.contact_person_phone) && (
                               <div className="text-[11px] text-slate-500 mt-0.5">
                                 {v.contact_person_name}
@@ -337,20 +284,6 @@ async function renderVendorsPage({
                                 {v.contact_person_phone && (
                                   <span className="font-mono" dir="ltr">
                                     {v.contact_person_phone}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            {(v.tax_number || v.commercial_registration) && (
-                              <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1.5">
-                                {v.tax_number && (
-                                  <span>
-                                    ض.: <span className="font-mono" dir="ltr">{v.tax_number}</span>
-                                  </span>
-                                )}
-                                {v.commercial_registration && (
-                                  <span>
-                                    س.ت: <span className="font-mono" dir="ltr">{v.commercial_registration}</span>
                                   </span>
                                 )}
                               </div>
@@ -397,30 +330,6 @@ async function renderVendorsPage({
                         </div>
                       </Td>
                     </tr>
-                    {canOwner && receiptsFeatureReady && (
-                      <tr>
-                        <td colSpan={6} className="p-0">
-                          <VendorReceiptsPanel
-                            vendorId={v.id}
-                            vendorName={v.name_ar}
-                            contracts={contracts.map((c) => ({
-                              id: c.id,
-                              contract_number: c.contract_number,
-                              total_amount_sar: c.total_amount_sar,
-                              amount_before_tax_sar: (c as unknown as { amount_before_tax_sar: number | null }).amount_before_tax_sar,
-                              vat_sar: (c as unknown as { vat_sar: number | null }).vat_sar,
-                              payment_schedule: (c as unknown as { payment_schedule: unknown }).payment_schedule as null | Array<{ seq: number; label_ar: string; amount_sar: number; paid_at?: string | null }>,
-                            }))}
-                            receipts={receiptsByVendorId.get(v.id) ?? []}
-                            disbursementTypes={disbursementTypeOptions}
-                            vendorDownpayment={Number((v as unknown as { developer_downpayment_sar: number | null }).developer_downpayment_sar ?? 0)}
-                            vendorDownpaymentPlan={Array.isArray((v as unknown as { developer_downpayment_plan: unknown }).developer_downpayment_plan) ? (v as unknown as { developer_downpayment_plan: Array<{ seq: number; label_ar: string; completion_pct: number; amount_sar: number; released_at?: string | null }> }).developer_downpayment_plan : []}
-                            canEdit={canOwner}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
                   )
                 })}
               </tbody>
