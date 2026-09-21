@@ -5,7 +5,7 @@ import { FileText, Download } from 'lucide-react'
 import { fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
-import { EditRowButton, type EditableCase } from './EditRowButton'
+import { EditRowButton, type EditableCase, type DeveloperOpt, type ProjectOpt, type VendorOpt, type AccountOpt } from './EditRowButton'
 import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
@@ -36,15 +36,12 @@ type SignedCaseRow = {
   notes: string | null
   signed_at: string | null
   signed_by_user_id: string | null
-  // Enough of extracted_fields for the display + edit modal.
-  extracted_fields: {
-    beneficiary_name_ar?: string | null
-    beneficiary_capacity_ar?: string | null
-    disbursement_type_code?: string | null
-    invoice_amount_sar?: number | null
-    vat_amount_sar?: number | null
-    invoice_number?: string | null
-  } | null
+  developer_id: string | null
+  project_id: string | null
+  vendor_id: string | null
+  is_downpayment: boolean | null
+  paid_from_account_id: string | null
+  extracted_fields: Record<string, unknown> | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
 }
@@ -148,7 +145,7 @@ export default async function DeliveryDocumentsRegisterPage({
   let casesQuery = svc
     .from('dsb_cases')
     .select(
-      `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, notes, signed_at, signed_by_user_id, extracted_fields,
+      `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, notes, signed_at, signed_by_user_id, developer_id, project_id, vendor_id, is_downpayment, paid_from_account_id, extracted_fields,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -217,6 +214,19 @@ export default async function DeliveryDocumentsRegisterPage({
     .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
 
   const canEditCase = ['employee', 'supervisor', 'owner'].includes(dsbRole)
+
+  // Pre-fetch vendors + project accounts for the edit modal dropdowns.
+  const [vendorsRes, accountsRes] = await Promise.all([
+    svc.from('dsb_vendors').select('id, name_ar, project_id').eq('tenant_id', tenantId).order('name_ar', { ascending: true }),
+    svc.from('dsb_project_accounts').select('id, label, bank_name, project_id').eq('tenant_id', tenantId).order('label', { ascending: true }),
+  ])
+  const vendorOpts: VendorOpt[] = vendorsRes.error ? [] : ((vendorsRes.data ?? []) as { id: string; name_ar: string; project_id: string }[])
+    .map((v) => ({ id: v.id, label: v.name_ar, project_id: v.project_id }))
+  const accountOpts: AccountOpt[] = accountsRes.error ? [] : ((accountsRes.data ?? []) as { id: string; label: string; bank_name: string | null; project_id: string }[])
+    .map((a) => ({ id: a.id, label: a.bank_name ? `${a.label} · ${a.bank_name}` : a.label, project_id: a.project_id }))
+
+  const editDevelopers: DeveloperOpt[] = clientOptions.map((c) => ({ id: c.id, label: c.label }))
+  const editProjects: ProjectOpt[] = projectOptions.map((p) => ({ id: p.id, label: p.label, developer_id: p.developer_id }))
 
   // Resolve signer names in bulk.
   const signerIds = Array.from(
@@ -319,7 +329,7 @@ export default async function DeliveryDocumentsRegisterPage({
                       <Td>
                         <span className="font-mono">{fmtSar(c.amount_sar)}</span>
                       </Td>
-                      <Td>{c.extracted_fields?.beneficiary_name_ar ?? '—'}</Td>
+                      <Td>{(c.extracted_fields?.beneficiary_name_ar as string | null | undefined) ?? '—'}</Td>
                       <Td>{fmtDateTime(c.signed_at)}</Td>
                       <Td>{signer}</Td>
                       <Td>
@@ -334,8 +344,17 @@ export default async function DeliveryDocumentsRegisterPage({
                                 amount_sar: c.amount_sar,
                                 delivery_date: c.delivery_date,
                                 notes: c.notes,
+                                developer_id: c.developer_id,
+                                project_id: c.project_id,
+                                vendor_id: c.vendor_id,
+                                is_downpayment: c.is_downpayment,
+                                paid_from_account_id: c.paid_from_account_id,
                                 extracted_fields: c.extracted_fields as EditableCase['extracted_fields'],
                               }}
+                              developers={editDevelopers}
+                              projects={editProjects}
+                              vendors={vendorOpts}
+                              accounts={accountOpts}
                               disbursementTypes={disbursementTypes}
                             />
                           )}
