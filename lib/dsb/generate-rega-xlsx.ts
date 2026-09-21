@@ -1014,19 +1014,35 @@ export async function generateAccountantWorkbookXlsx(
   // Clear the reference-file numeric samples first (nothing from another
   // tenant should leak through), then fill the pieces we now have data for:
   //   - Sheet 3: opening balance + forecast rows (from dsb_cpa_reports)
+  //   - Sheet 5: project identity (region/city/district — mig 086)
   //   - Sheet 6: 6 narrative sections (from dsb_cpa_reports notes_*)
-  // Sheets 5 + 7 still deferred (need more derived math).
+  //   - Sheet 7: relies on template formulas that reference Sheets 3/4/5
+  // IMPORTANT: skip formula cells during clear — Sheets 5 + 7 are almost
+  // entirely formulas that pull from other sheets, so deleting them would
+  // strip the auto-computed variance analysis + balance sheet.
   for (const sheetName of ['(3) العمليات المالية', '(5) تحليل البيانات المالية', '(6) النتائج والملاحظات', 'قائمة المركز المالي (7)']) {
     const ws = wb.Sheets[sheetName]
     if (!ws) continue
     for (const addr of Object.keys(ws)) {
       if (addr.startsWith('!')) continue
       const cell = ws[addr]
+      // Preserve formulas — clear only hard-coded numeric samples > 100.
+      if (cell?.f) continue
       if (typeof cell?.v === 'number' && Number(cell.v) > 100) {
         delete ws[addr]
       }
     }
   }
+
+  // Extra location fields on the project (mig 086) — needed for Sheet 5
+  // and used verbatim (no formulas point at them). Fetched separately so
+  // the main project select stays untouched.
+  const { data: locData } = await svc
+    .from('dsb_projects')
+    .select('region_ar, city_ar, district_ar')
+    .eq('id', projectId)
+    .maybeSingle()
+  const location = (locData as { region_ar: string | null; city_ar: string | null; district_ar: string | null } | null) ?? { region_ar: null, city_ar: null, district_ar: null }
 
   // Pull the CPA report record for this period (mig 087) — provides
   // opening balance, forecast rows, and 6 narrative sections.
@@ -1046,7 +1062,53 @@ export async function generateAccountantWorkbookXlsx(
   } | null
 
   // Sheet 3 — opening balance goes at C5 per the reference template.
+  // Also fill the cumulative debit + credit totals that Sheet 5's variance
+  // analysis + Sheet 7's balance sheet formulas reference:
+  //   B9  = تكاليف انشائية cumulative           → sum(cases) construction
+  //   B11 = مصاريف ادارية وتسويقية cumulative → sum(cases) admin_marketing
+  //   D9  = تحصيل من العملاء cumulative        → sum(payments) buyer_collection
   const s3 = wb.Sheets['(3) العمليات المالية']
+  if (s3) {
+    // Cumulative case totals by disbursement type (signed + delivered).
+    let cumConstruction = 0
+    let cumAdminMkt     = 0
+    const CHUNK = 1000
+    for (let page = 0; page < 100; page++) {
+      const { data } = await svc
+        .from('dsb_cases')
+        .select('amount_sar, extracted_fields')
+        .eq('tenant_id', project.tenant_id)
+        .eq('project_id', projectId)
+        .in('status', ['signed', 'delivered'])
+        .range(page * CHUNK, page * CHUNK + CHUNK - 1)
+      const rows = (data ?? []) as Array<{ amount_sar: number | null; extracted_fields: { disbursement_type_code?: string | null } | null }>
+      for (const r of rows) {
+        const amt = Number(r.amount_sar || 0)
+        const code = r.extracted_fields?.disbursement_type_code ?? ''
+        if (code === 'construction') cumConstruction += amt
+        else if (code === 'admin_marketing') cumAdminMkt += amt
+      }
+      if (rows.length < CHUNK) break
+    }
+    setCell(s3, 'B9',  cumConstruction, 'n')
+    setCell(s3, 'B11', cumAdminMkt,     'n')
+
+    // Cumulative buyer collections (payments with deposit_category = buyer_collection).
+    let cumBuyerCollection = 0
+    for (let page = 0; page < 100; page++) {
+      const { data } = await svc
+        .from('dsb_payments')
+        .select('amount_sar')
+        .eq('tenant_id', project.tenant_id)
+        .eq('project_id', projectId)
+        .eq('deposit_category', 'buyer_collection')
+        .range(page * CHUNK, page * CHUNK + CHUNK - 1)
+      const rows = (data ?? []) as Array<{ amount_sar: number | null }>
+      for (const r of rows) cumBuyerCollection += Number(r.amount_sar || 0)
+      if (rows.length < CHUNK) break
+    }
+    setCell(s3, 'D9', cumBuyerCollection, 'n')
+  }
   if (s3 && report) {
     if (report.opening_balance_sar != null) {
       setCell(s3, 'C5', Number(report.opening_balance_sar), 'n')
@@ -1069,6 +1131,19 @@ export async function generateAccountantWorkbookXlsx(
       }
       if (debitRow > 33 || creditRow > 33) break
     }
+  }
+
+  // Sheet 5 — project identity block (rows 2–12). Most cells are formulas
+  // pulling from Sheet 1, but the location fields + engineering consultant
+  // + project dates are entered directly here so they always render.
+  const s5 = wb.Sheets['(5) تحليل البيانات المالية']
+  if (s5) {
+    if (location.region_ar)   setCell(s5, 'B5', location.region_ar, 's')
+    if (location.city_ar)     setCell(s5, 'B6', location.city_ar, 's')
+    if (location.district_ar) setCell(s5, 'B7', location.district_ar, 's')
+    if (project.engineer_consultant_name) setCell(s5, 'B8', project.engineer_consultant_name, 's')
+    if (project.project_start_date)       setCell(s5, 'B11', project.project_start_date, 's')
+    if (project.rega_license_expiry_date) setCell(s5, 'B12', project.rega_license_expiry_date, 's')
   }
 
   // Sheet 6 — narrative sections. Section headers live in column B on rows
