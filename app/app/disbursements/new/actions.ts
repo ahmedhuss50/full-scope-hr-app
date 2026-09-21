@@ -104,13 +104,20 @@ async function nextCaseNumber(
 export interface CreateCaseByStaffInput {
   developer_id: string
   project_id: string
-  // The following are optional — the AI extracts them from the PDF after
-  // upload. The form can omit them entirely.
+  // The following are optional — either the AI extracts them from a
+  // subsequently-uploaded PDF, or the staff fills them in manually on
+  // the New Case form (see NewCaseForm's manual mode).
   voucher_number_text?: string | null
   voucher_date?: string | null
   amount_sar?: number | null
   delivery_date?: string | null
   notes?: string | null
+  // Extracted-fields companions (stored in dsb_cases.extracted_fields JSONB).
+  disbursement_type_code?: string | null
+  beneficiary_name_ar?: string | null
+  beneficiary_capacity_ar?: string | null
+  invoice_amount_sar?: number | null
+  vat_amount_sar?: number | null
 }
 
 export type CreateCaseByStaffResult =
@@ -156,6 +163,18 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
       ? amountRaw
       : null
 
+  // Build extracted_fields JSONB from any manually-entered fields.
+  const extracted: Record<string, unknown> = {}
+  if (input.disbursement_type_code)   extracted.disbursement_type_code   = input.disbursement_type_code
+  if (input.beneficiary_name_ar)      extracted.beneficiary_name_ar      = input.beneficiary_name_ar.trim()
+  if (input.beneficiary_capacity_ar)  extracted.beneficiary_capacity_ar  = input.beneficiary_capacity_ar.trim()
+  if (typeof input.invoice_amount_sar === 'number' && Number.isFinite(input.invoice_amount_sar)) {
+    extracted.invoice_amount_sar = input.invoice_amount_sar
+  }
+  if (typeof input.vat_amount_sar === 'number' && Number.isFinite(input.vat_amount_sar)) {
+    extracted.vat_amount_sar = input.vat_amount_sar
+  }
+
   // Retry loop for case_number collisions. The constraint is now
   // (project_id, case_number) per migration 059 — DB is authoritative
   // on uniqueness. Concurrent uploads to the same project can both
@@ -178,6 +197,7 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
         status: 'with_employee',
         submitted_at: new Date().toISOString(),
         notes: input.notes?.trim() || null,
+        extracted_fields: Object.keys(extracted).length > 0 ? extracted : null,
       })
       .select('id')
       .single()

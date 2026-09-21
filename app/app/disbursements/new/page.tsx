@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { NewCaseForm, type DeveloperOption, type ProjectOption } from './NewCaseForm'
+import { NewCaseForm, type DeveloperOption, type ProjectOption, type DisbursementTypeOption } from './NewCaseForm'
+import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,6 +50,32 @@ export default async function StaffNewCasePage({
     (projectsRaw ?? []) as { id: string; code: string; name_ar: string; developer_id: string | null }[]
   ).map((p) => ({ id: p.id, code: p.code, name_ar: p.name_ar, developer_id: p.developer_id }))
 
+  // Disbursement-type dropdown (نوع الصرف). Merge shipped defaults + tenant
+  // JSONB overrides + custom codes minus hidden ones.
+  let dsbTypeOverrides: Record<string, string> = {}
+  let dsbTypeHidden: string[] = []
+  try {
+    const tenantRes = await svc
+      .from('tenants')
+      .select('disbursement_type_labels, disbursement_type_hidden')
+      .eq('id', tenantId)
+      .maybeSingle()
+    if (!tenantRes.error && tenantRes.data) {
+      const t = tenantRes.data as {
+        disbursement_type_labels: Record<string, string> | null
+        disbursement_type_hidden: string[] | null
+      }
+      dsbTypeOverrides = (t.disbursement_type_labels ?? {}) as Record<string, string>
+      dsbTypeHidden    = Array.isArray(t.disbursement_type_hidden) ? t.disbursement_type_hidden : []
+    }
+  } catch { /* fall back to defaults */ }
+  const hiddenSet = new Set(dsbTypeHidden)
+  const defaultCodes = Object.keys(DISBURSEMENT_TYPE_DEFAULTS)
+  const customCodes  = Object.keys(dsbTypeOverrides).filter((c) => c.startsWith('custom_'))
+  const disbursementTypes: DisbursementTypeOption[] = [...defaultCodes, ...customCodes]
+    .filter((code) => !hiddenSet.has(code))
+    .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
+
   const noClients = developers.length === 0
   const noProjects = projects.length === 0
 
@@ -93,6 +120,7 @@ export default async function StaffNewCasePage({
         <NewCaseForm
           developers={developers}
           projects={projects}
+          disbursementTypes={disbursementTypes}
           defaultDeveloperId={defaultDeveloperId}
           defaultProjectId={defaultProjectId}
         />
