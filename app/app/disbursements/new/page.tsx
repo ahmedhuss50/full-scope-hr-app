@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { NewCaseForm, type DeveloperOption, type ProjectOption, type DisbursementTypeOption } from './NewCaseForm'
+import { NewCaseForm, type DeveloperOption, type ProjectOption, type DisbursementTypeOption, type BeneficiaryOption } from './NewCaseForm'
 import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
@@ -76,6 +76,22 @@ export default async function StaffNewCasePage({
     .filter((code) => !hiddenSet.has(code))
     .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
 
+  // Vendors across all tenant projects (bucketed by project_id in the form).
+  // Used to populate the اسم المستفيد dropdown in manual mode.
+  const { data: vendorsRaw } = await svc
+    .from('dsb_vendors')
+    .select('id, name_ar, service_category, project_id')
+    .eq('tenant_id', tenantId)
+    .order('name_ar', { ascending: true })
+  const beneficiaries: BeneficiaryOption[] = (
+    (vendorsRaw ?? []) as { id: string; name_ar: string; service_category: string | null; project_id: string }[]
+  ).map((v) => ({
+    id: v.id,
+    name_ar: v.name_ar,
+    category: v.service_category,
+    project_id: v.project_id,
+  }))
+
   const noClients = developers.length === 0
   const noProjects = projects.length === 0
 
@@ -121,6 +137,7 @@ export default async function StaffNewCasePage({
           developers={developers}
           projects={projects}
           disbursementTypes={disbursementTypes}
+          beneficiaries={beneficiaries}
           defaultDeveloperId={defaultDeveloperId}
           defaultProjectId={defaultProjectId}
         />

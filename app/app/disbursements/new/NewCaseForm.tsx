@@ -15,6 +15,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 export type DeveloperOption = { id: string; company_name_ar: string }
 export type ProjectOption = { id: string; code: string; name_ar: string; developer_id: string | null }
 export type DisbursementTypeOption = { code: string; label: string }
+export type BeneficiaryOption = { id: string; name_ar: string; category: string | null; project_id: string }
 
 /**
  * New-case form with two modes:
@@ -28,12 +29,14 @@ export function NewCaseForm({
   developers,
   projects,
   disbursementTypes,
+  beneficiaries,
   defaultDeveloperId = null,
   defaultProjectId = null,
 }: {
   developers: DeveloperOption[]
   projects: ProjectOption[]
   disbursementTypes: DisbursementTypeOption[]
+  beneficiaries: BeneficiaryOption[]
   defaultDeveloperId?: string | null
   defaultProjectId?: string | null
 }) {
@@ -78,11 +81,35 @@ export function NewCaseForm({
   const [voucherDate, setVoucherDate] = useState('')
   const [amount, setAmount] = useState('')
   const [dsbTypeCode, setDsbTypeCode] = useState('')
+  const [beneficiaryVendorId, setBeneficiaryVendorId] = useState<string>('')
   const [beneficiaryName, setBeneficiaryName] = useState('')
   const [beneficiaryCapacity, setBeneficiaryCapacity] = useState('')
   const [invoiceAmount, setInvoiceAmount] = useState('')
   const [vatAmount, setVatAmount] = useState('')
   const [notes, setNotes] = useState('')
+
+  // Filter beneficiaries to the currently-selected project.
+  const projectBeneficiaries = useMemo(
+    () => beneficiaries.filter((b) => b.project_id === projectId),
+    [beneficiaries, projectId],
+  )
+
+  // When user picks a vendor from the dropdown, auto-fill the name +
+  // capacity so the case is linked properly (fills vendor_id on save).
+  function onBeneficiaryChange(vendorId: string) {
+    setBeneficiaryVendorId(vendorId)
+    if (!vendorId) return
+    const v = beneficiaries.find((b) => b.id === vendorId)
+    if (v) {
+      setBeneficiaryName(v.name_ar)
+      if (v.category && !beneficiaryCapacity) setBeneficiaryCapacity(v.category)
+    }
+  }
+
+  // If the user switches projects, clear the vendor selection.
+  function onDeveloperOrProjectChange() {
+    setBeneficiaryVendorId('')
+  }
 
   const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -131,6 +158,7 @@ export function NewCaseForm({
           beneficiary_capacity_ar: beneficiaryCapacity.trim() || null,
           invoice_amount_sar: invoiceAmount ? Number(invoiceAmount) : null,
           vat_amount_sar: vatAmount ? Number(vatAmount) : null,
+          vendor_id: beneficiaryVendorId || null,
         } : {}),
       })
       if (!create.ok) {
@@ -247,7 +275,7 @@ export function NewCaseForm({
         <div>
           <label className={labelCls} htmlFor="developer_id">العميل / المطور *</label>
           <select id="developer_id" required className={inputCls}
-            value={developerId} onChange={(e) => onDeveloperChange(e.target.value)}>
+            value={developerId} onChange={(e) => { onDeveloperChange(e.target.value); onDeveloperOrProjectChange() }}>
             <option value="">—</option>
             {developers.map((d) => (
               <option key={d.id} value={d.id}>{d.company_name_ar}</option>
@@ -257,7 +285,7 @@ export function NewCaseForm({
         <div>
           <label className={labelCls} htmlFor="project_id">المشروع *</label>
           <select id="project_id" required className={inputCls}
-            value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            value={projectId} onChange={(e) => { setProjectId(e.target.value); onDeveloperOrProjectChange() }}>
             <option value="">—</option>
             {filteredProjects.map((p) => (
               <option key={p.id} value={p.id}>{p.code} — {p.name_ar}</option>
@@ -298,11 +326,36 @@ export function NewCaseForm({
                 ))}
               </select>
             </div>
-            <div>
-              <label className={labelCls} htmlFor="ben_name">اسم المستفيد</label>
+            <div className="sm:col-span-2">
+              <label className={labelCls} htmlFor="ben_vendor">اسم المستفيد *</label>
+              <select
+                id="ben_vendor"
+                className={inputCls}
+                value={beneficiaryVendorId}
+                onChange={(e) => onBeneficiaryChange(e.target.value)}
+              >
+                <option value="">— اختر من موردي المشروع —</option>
+                {projectBeneficiaries.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name_ar}{b.category ? ` · ${b.category}` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1">
+                يربط السند بصفحة المورد لعرض النشاط والحسم من الدفعة المقدّمة تلقائيًا.
+                {projectBeneficiaries.length === 0 && projectId && (
+                  <> لا يوجد موردون لهذا المشروع بعد.{' '}
+                    <a href={`/app/disbursements/admin/projects/${projectId}/vendors`}
+                       className="text-teal-700 font-semibold hover:underline">أضِف موردًا</a>.
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelCls} htmlFor="ben_name">اسم المستفيد (نص حر — إذا لم يكن ضمن الموردين)</label>
               <input id="ben_name" className={inputCls}
-                value={beneficiaryName} onChange={(e) => setBeneficiaryName(e.target.value)}
-                placeholder="مثال: شركة كذا للمقاولات" />
+                value={beneficiaryName} onChange={(e) => { setBeneficiaryName(e.target.value); if (beneficiaryVendorId) setBeneficiaryVendorId('') }}
+                placeholder="اترك فارغًا إذا اخترت من الأعلى" />
             </div>
             <div>
               <label className={labelCls} htmlFor="ben_cap">صفة المستفيد</label>

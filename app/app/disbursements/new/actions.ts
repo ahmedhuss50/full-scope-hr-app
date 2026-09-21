@@ -118,6 +118,10 @@ export interface CreateCaseByStaffInput {
   beneficiary_capacity_ar?: string | null
   invoice_amount_sar?: number | null
   vat_amount_sar?: number | null
+  // Link to a specific vendor/contractor row (mig 084). When a vendor is
+  // picked from the beneficiary dropdown, the app fills this and the
+  // beneficiary_name_ar in one shot.
+  vendor_id?: string | null
 }
 
 export type CreateCaseByStaffResult =
@@ -198,6 +202,10 @@ export async function createCaseByStaff(input: CreateCaseByStaffInput): Promise<
         submitted_at: new Date().toISOString(),
         notes: input.notes?.trim() || null,
         extracted_fields: Object.keys(extracted).length > 0 ? extracted : null,
+        // Only include vendor_id when set — some envs may not have mig 084
+        // applied yet, in which case the field is silently ignored by
+        // Supabase's insert.
+        ...(input.vendor_id ? { vendor_id: input.vendor_id } : {}),
       })
       .select('id')
       .single()

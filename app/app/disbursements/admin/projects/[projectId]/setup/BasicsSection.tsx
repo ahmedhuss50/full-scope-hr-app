@@ -48,6 +48,10 @@ type Project = {
   contractor_3_contract_sar: number | null
   contractor_4_name: string | null
   contractor_4_contract_sar: number | null
+  // Migration 086 — project location (CPA report Sheet 5).
+  region_ar: string | null
+  city_ar: string | null
+  district_ar: string | null
 }
 type ClientOpt = { id: string; company_name_ar: string }
 
@@ -103,6 +107,10 @@ export function BasicsSection({
   const [c3Val,         setC3Val]         = useState(project.contractor_3_contract_sar != null ? String(project.contractor_3_contract_sar) : '')
   const [c4Name,        setC4Name]        = useState(project.contractor_4_name ?? '')
   const [c4Val,         setC4Val]         = useState(project.contractor_4_contract_sar != null ? String(project.contractor_4_contract_sar) : '')
+  // Migration 086 — location fields.
+  const [regionAr,   setRegionAr]   = useState(project.region_ar ?? '')
+  const [cityAr,     setCityAr]     = useState(project.city_ar ?? '')
+  const [districtAr, setDistrictAr] = useState(project.district_ar ?? '')
 
   function reset() {
     setCode(project.code)
@@ -128,6 +136,9 @@ export function BasicsSection({
     setC3Val(project.contractor_3_contract_sar != null ? String(project.contractor_3_contract_sar) : '')
     setC4Name(project.contractor_4_name ?? '')
     setC4Val(project.contractor_4_contract_sar != null ? String(project.contractor_4_contract_sar) : '')
+    setRegionAr(project.region_ar ?? '')
+    setCityAr(project.city_ar ?? '')
+    setDistrictAr(project.district_ar ?? '')
     setError(null)
   }
 
@@ -166,6 +177,9 @@ export function BasicsSection({
       contractor_3_contract_sar: c3Val.trim() ? Number(c3Val) : null,
       contractor_4_name: c4Name.trim() || null,
       contractor_4_contract_sar: c4Val.trim() ? Number(c4Val) : null,
+      region_ar:   regionAr.trim() || null,
+      city_ar:     cityAr.trim() || null,
+      district_ar: districtAr.trim() || null,
     })
     setSaving(false)
     if (!res.ok) { setError(res.error); return }
@@ -284,6 +298,25 @@ export function BasicsSection({
         <div>
           <label className="text-xs font-semibold text-slate-500 mb-1 block">تاريخ انتهاء الترخيص</label>
           <input type="date" className={inputCls} value={licenseExpiry} onChange={(e) => setLicenseExpiry(e.target.value)} disabled={saving} dir="ltr" />
+        </div>
+
+        {/* Location — Sheet 5 of the CPA report */}
+        <div className="sm:col-span-2 pt-2 mt-1 border-t border-slate-100">
+          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+            الموقع
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">المنطقة</label>
+          <input className={inputCls} value={regionAr} onChange={(e) => setRegionAr(e.target.value)} disabled={saving} placeholder="مثال: الرياض" />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">المدينة</label>
+          <input className={inputCls} value={cityAr} onChange={(e) => setCityAr(e.target.value)} disabled={saving} placeholder="مثال: الرياض" />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">الحي</label>
+          <input className={inputCls} value={districtAr} onChange={(e) => setDistrictAr(e.target.value)} disabled={saving} placeholder="مثال: النرجس" />
         </div>
 
         {/* Estimated costs — feed variance analysis on Sheet 5 */}

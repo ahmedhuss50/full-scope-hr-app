@@ -57,6 +57,9 @@ type ProjectRow = {
   contractor_3_contract_sar: number | null
   contractor_4_name: string | null
   contractor_4_contract_sar: number | null
+  region_ar: string | null
+  city_ar: string | null
+  district_ar: string | null
   payment_schedule: PaymentInstallment[] | null
 }
 
@@ -88,15 +91,30 @@ export default async function ProjectSetupPage({
   const projectId = params.projectId
 
   // ---- Project + tenant scope ----
-  const { data: projectData } = await svc
+  // Attempt with mig-086 location columns; fall back if they don't exist yet.
+  let projectRes = await svc
     .from('dsb_projects')
-    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar, payment_schedule')
+    .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar, region_ar, city_ar, district_ar, payment_schedule')
     .eq('id', projectId)
     .maybeSingle()
+  if (projectRes.error) {
+    projectRes = await svc
+      .from('dsb_projects')
+      .select('id, tenant_id, code, name_ar, status, notes, developer_id, assigned_employee_id, bank_name, bank_account, bank_iban, checklist_template_id, rega_license_no, rega_agreement_date_hijri, rega_agreement_date_gregorian, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, project_start_date, rega_license_expiry_date, engineer_consultant_name, engineer_consultant_contract_sar, contractor_1_name, contractor_1_contract_sar, contractor_2_name, contractor_2_contract_sar, contractor_3_name, contractor_3_contract_sar, contractor_4_name, contractor_4_contract_sar, payment_schedule')
+      .eq('id', projectId)
+      .maybeSingle()
+  }
+  const projectData = projectRes.data
   if (!projectData || (projectData as { tenant_id: string }).tenant_id !== tenantId) {
     notFound()
   }
-  const project = projectData as ProjectRow
+  const projectRaw = projectData as Partial<ProjectRow> & { tenant_id: string; id: string; code: string; name_ar: string; developer_id: string }
+  const project: ProjectRow = {
+    ...projectRaw,
+    region_ar:   projectRaw.region_ar   ?? null,
+    city_ar:     projectRaw.city_ar     ?? null,
+    district_ar: projectRaw.district_ar ?? null,
+  } as ProjectRow
 
   // ---- Developer name for the summary card ----
   let developerName: string | null = null
@@ -274,6 +292,9 @@ export default async function ProjectSetupPage({
               contractor_3_contract_sar: project.contractor_3_contract_sar,
               contractor_4_name: project.contractor_4_name,
               contractor_4_contract_sar: project.contractor_4_contract_sar,
+              region_ar:   project.region_ar,
+              city_ar:     project.city_ar,
+              district_ar: project.district_ar,
             }}
             developerName={developerName}
             clients={clients}

@@ -5,6 +5,8 @@ import { FileText, Download } from 'lucide-react'
 import { fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
+import { EditRowButton, type EditableCase } from './EditRowButton'
+import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,12 +30,21 @@ type SignedCaseRow = {
   id: string
   case_number: string
   voucher_number_text: string | null
+  voucher_date: string | null
   amount_sar: number | null
+  delivery_date: string | null
+  notes: string | null
   signed_at: string | null
   signed_by_user_id: string | null
-  // Only beneficiary_name_ar is displayed — matches the kanban card + archive
-  // treatment so the same JSONB shape is used everywhere.
-  extracted_fields: { beneficiary_name_ar?: string | null } | null
+  // Enough of extracted_fields for the display + edit modal.
+  extracted_fields: {
+    beneficiary_name_ar?: string | null
+    beneficiary_capacity_ar?: string | null
+    disbursement_type_code?: string | null
+    invoice_amount_sar?: number | null
+    vat_amount_sar?: number | null
+    invoice_number?: string | null
+  } | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
 }
@@ -137,7 +148,7 @@ export default async function DeliveryDocumentsRegisterPage({
   let casesQuery = svc
     .from('dsb_cases')
     .select(
-      `id, case_number, voucher_number_text, amount_sar, signed_at, signed_by_user_id, extracted_fields,
+      `id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, notes, signed_at, signed_by_user_id, extracted_fields,
        project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar),
        developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
     )
@@ -182,6 +193,30 @@ export default async function DeliveryDocumentsRegisterPage({
   casesQuery = applyProjectScope(casesQuery, allowedProjectIds)
   const { data: casesData } = await casesQuery.order('signed_at', { ascending: false })
   const cases = (casesData ?? []) as SignedCaseRow[]
+
+  // Disbursement type options for the edit modal.
+  let dsbTypeOverrides: Record<string, string> = {}
+  let dsbTypeHidden: string[] = []
+  try {
+    const tenantRes = await svc
+      .from('tenants')
+      .select('disbursement_type_labels, disbursement_type_hidden')
+      .eq('id', tenantId)
+      .maybeSingle()
+    if (!tenantRes.error && tenantRes.data) {
+      const t = tenantRes.data as { disbursement_type_labels: Record<string, string> | null; disbursement_type_hidden: string[] | null }
+      dsbTypeOverrides = (t.disbursement_type_labels ?? {}) as Record<string, string>
+      dsbTypeHidden    = Array.isArray(t.disbursement_type_hidden) ? t.disbursement_type_hidden : []
+    }
+  } catch { /* defaults only */ }
+  const hiddenSet = new Set(dsbTypeHidden)
+  const defaultCodes = Object.keys(DISBURSEMENT_TYPE_DEFAULTS)
+  const customCodes  = Object.keys(dsbTypeOverrides).filter((c) => c.startsWith('custom_'))
+  const disbursementTypes = [...defaultCodes, ...customCodes]
+    .filter((code) => !hiddenSet.has(code))
+    .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
+
+  const canEditCase = ['employee', 'supervisor', 'owner'].includes(dsbRole)
 
   // Resolve signer names in bulk.
   const signerIds = Array.from(
@@ -288,15 +323,32 @@ export default async function DeliveryDocumentsRegisterPage({
                       <Td>{fmtDateTime(c.signed_at)}</Td>
                       <Td>{signer}</Td>
                       <Td>
-                        <Link
-                          href={`/app/disbursements/${c.id}/delivery-document`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-200 bg-white text-teal-700 text-xs font-semibold hover:bg-teal-50 transition"
-                        >
-                          <Download className="w-3.5 h-3.5" aria-hidden="true" />
-                          تنزيل
-                        </Link>
+                        <div className="inline-flex items-center gap-1.5">
+                          {canEditCase && (
+                            <EditRowButton
+                              kase={{
+                                id: c.id,
+                                case_number: c.case_number,
+                                voucher_number_text: c.voucher_number_text,
+                                voucher_date: c.voucher_date,
+                                amount_sar: c.amount_sar,
+                                delivery_date: c.delivery_date,
+                                notes: c.notes,
+                                extracted_fields: c.extracted_fields as EditableCase['extracted_fields'],
+                              }}
+                              disbursementTypes={disbursementTypes}
+                            />
+                          )}
+                          <Link
+                            href={`/app/disbursements/${c.id}/delivery-document`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-200 bg-white text-teal-700 text-xs font-semibold hover:bg-teal-50 transition"
+                          >
+                            <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                            تنزيل
+                          </Link>
+                        </div>
                       </Td>
                     </tr>
                   )

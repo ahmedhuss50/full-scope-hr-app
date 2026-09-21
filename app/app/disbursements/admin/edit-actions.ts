@@ -228,6 +228,10 @@ export interface UpdateProjectInput {
   contractor_3_contract_sar?: number | null
   contractor_4_name?: string | null
   contractor_4_contract_sar?: number | null
+  // Migration 086 — project location (Sheet 5).
+  region_ar?: string | null
+  city_ar?: string | null
+  district_ar?: string | null
 }
 
 export async function updateProject(
@@ -321,6 +325,9 @@ export async function updateProject(
       ...(input.contractor_3_contract_sar       !== undefined ? { contractor_3_contract_sar:       numOrNull(input.contractor_3_contract_sar) } : {}),
       ...(input.contractor_4_name               !== undefined ? { contractor_4_name:               (input.contractor_4_name ?? '').trim() || null } : {}),
       ...(input.contractor_4_contract_sar       !== undefined ? { contractor_4_contract_sar:       numOrNull(input.contractor_4_contract_sar) } : {}),
+      ...(input.region_ar   !== undefined ? { region_ar:   (input.region_ar   ?? '').trim() || null } : {}),
+      ...(input.city_ar     !== undefined ? { city_ar:     (input.city_ar     ?? '').trim() || null } : {}),
+      ...(input.district_ar !== undefined ? { district_ar: (input.district_ar ?? '').trim() || null } : {}),
     })
     .eq('id', input.project_id)
     .eq('tenant_id', caller.tenantId)
