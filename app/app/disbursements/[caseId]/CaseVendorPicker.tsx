@@ -8,8 +8,8 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, Check, Briefcase, ExternalLink } from 'lucide-react'
-import { updateCaseVendor } from './actions-vendor'
+import { Loader2, Check, Briefcase, ExternalLink, Wallet } from 'lucide-react'
+import { updateCaseVendor, updateCaseIsDownpayment } from './actions-vendor'
 
 export type VendorPickerOption = { id: string; name_ar: string; category: string | null }
 
@@ -17,18 +17,21 @@ export function CaseVendorPicker({
   caseId,
   projectId,
   initialVendorId,
+  initialIsDownpayment,
   options,
   canEdit,
 }: {
   caseId: string
   projectId: string
   initialVendorId: string | null
+  initialIsDownpayment: boolean
   options: VendorPickerOption[]
   canEdit: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [selected, setSelected] = useState<string>(initialVendorId ?? '')
+  const [isDownpayment, setIsDownpayment] = useState<boolean>(!!initialIsDownpayment)
   const [busy, setBusy] = useState(false)
   const [savedTick, setSavedTick] = useState(0)
   const [err, setErr] = useState<string | null>(null)
@@ -43,6 +46,23 @@ export function CaseVendorPicker({
     setBusy(false)
     if (!res.ok) {
       setSelected(prev)
+      setErr(res.error)
+      return
+    }
+    setSavedTick((n) => n + 1)
+    startTransition(() => router.refresh())
+  }
+
+  async function onToggleDownpayment(next: boolean) {
+    if (!canEdit) return
+    setErr(null)
+    const prev = isDownpayment
+    setIsDownpayment(next)
+    setBusy(true)
+    const res = await updateCaseIsDownpayment({ case_id: caseId, is_downpayment: next })
+    setBusy(false)
+    if (!res.ok) {
+      setIsDownpayment(prev)
       setErr(res.error)
       return
     }
@@ -92,9 +112,36 @@ export function CaseVendorPicker({
               فتح صفحة المورد <ExternalLink className="w-3 h-3" />
             </Link>
           )}
+
+          {/* Downpayment toggle */}
+          <label className={`flex items-start gap-2 mt-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+            isDownpayment
+              ? 'bg-indigo-50 border-indigo-300'
+              : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+          } ${!canEdit ? 'cursor-default opacity-70' : ''}`}>
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              checked={isDownpayment}
+              disabled={!canEdit || busy}
+              onChange={(e) => onToggleDownpayment(e.target.checked)}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-slate-800 inline-flex items-center gap-1">
+                <Wallet className="w-3.5 h-3.5 text-indigo-600" />
+                هذا سند دفعة مقدّمة
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
+                علِّم عند صرف (أو صرف جزء من) الدفعة المقدّمة للمورد. سيظهر في
+                صفحة المورد ضمن قسم «دفعات مقدمة» ويُحسم من الدفعة الكلية.
+              </div>
+            </div>
+          </label>
+
           <p className="text-[10px] text-slate-500 leading-relaxed">
             تحديد المورد يربط هذا السند بصفحته لعرض النشاط والحسم من دفعة المطوّر
-            المخصصة له.
+            المخصصة له. تأكّد من اختيار حساب الدفع (حساب الضمان) في قسم مسار
+            التحويل المالي أدناه.
           </p>
         </>
       )}

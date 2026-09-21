@@ -7,6 +7,48 @@
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 
+/**
+ * Toggle the "this voucher is a developer downpayment" flag (mig 085).
+ * Owner + supervisor + employee can set.
+ */
+export async function updateCaseIsDownpayment(
+  input: { case_id: string; is_downpayment: boolean },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users').select('id, tenant_id, dsb_role').eq('email', user.email).maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط بمستأجر.' }
+  const role = (profile.dsb_role as string | null) ?? ''
+  if (!['employee', 'supervisor', 'owner'].includes(role)) {
+    return { ok: false, error: 'لا تملك صلاحية.' }
+  }
+  const tenantId = profile.tenant_id as string
+
+  const { data: kase } = await svc
+    .from('dsb_cases').select('id, project_id, vendor_id')
+    .eq('tenant_id', tenantId).eq('id', input.case_id).maybeSingle()
+  if (!kase) return { ok: false, error: 'الطلب غير موجود.' }
+  const k = kase as { project_id: string; vendor_id: string | null }
+
+  const { error } = await svc
+    .from('dsb_cases')
+    .update({ is_downpayment: !!input.is_downpayment })
+    .eq('id', input.case_id)
+    .eq('tenant_id', tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/${input.case_id}`)
+  revalidatePath(`/app/disbursements/admin/projects/${k.project_id}/vendors`)
+  if (k.vendor_id) {
+    revalidatePath(`/app/disbursements/admin/projects/${k.project_id}/vendors/${k.vendor_id}`)
+  }
+  return { ok: true }
+}
+
 export async function updateCaseVendor(
   input: { case_id: string; vendor_id: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {

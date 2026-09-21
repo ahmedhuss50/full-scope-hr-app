@@ -93,6 +93,7 @@ type CaseRow = {
   paid_from_account_id: string | null
   paid_at: string | null
   vendor_id: string | null
+  is_downpayment: boolean | null
   unit_id: string | null
   sale_id: string | null
   contract_id: string | null
@@ -147,7 +148,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, vendor_id, unit_id, sale_id, contract_id,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, vendor_id, is_downpayment, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
              paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label, bank_name, account_number, iban),
@@ -540,6 +541,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                   caseId={kase.id}
                   projectId={project.id}
                   initialVendorId={kase.vendor_id ?? null}
+                  initialIsDownpayment={!!kase.is_downpayment}
                   options={vendorOptions}
                   canEdit={canWrite}
                 />

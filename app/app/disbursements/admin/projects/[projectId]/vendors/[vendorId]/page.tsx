@@ -34,6 +34,7 @@ type CaseLite = {
   amount_sar: number | null
   status: string
   paid_at: string | null
+  is_downpayment: boolean | null
 }
 
 export default async function VendorDetailPage({
@@ -106,21 +107,35 @@ export default async function VendorDetailPage({
   // All cases (وثائق الصرف) assigned to this vendor (mig 084)
   let cases: CaseLite[] = []
   let vendorLinkReady = true
-  const casesRes = await svc
+  let casesRes: { data: unknown[] | null; error: { message: string } | null } = await svc
     .from('dsb_cases')
-    .select('id, case_number, voucher_number_text, voucher_date, amount_sar, status, paid_at')
+    .select('id, case_number, voucher_number_text, voucher_date, amount_sar, status, paid_at, is_downpayment')
     .eq('tenant_id', tenantId)
     .eq('vendor_id', vendorId)
     .order('voucher_date', { ascending: false, nullsFirst: false })
+  if (casesRes.error) {
+    // Fallback if migration 085 not yet applied
+    casesRes = await svc
+      .from('dsb_cases')
+      .select('id, case_number, voucher_number_text, voucher_date, amount_sar, status, paid_at')
+      .eq('tenant_id', tenantId)
+      .eq('vendor_id', vendorId)
+      .order('voucher_date', { ascending: false, nullsFirst: false })
+  }
   if (casesRes.error) {
     vendorLinkReady = false
   } else {
     cases = (casesRes.data ?? []) as CaseLite[]
   }
 
-  // Rollup: total paid to this vendor = sum of signed/delivered cases
+  // Rollup: total paid to this vendor = sum of signed/delivered cases.
+  // Split into downpayment vs invoices for accountant reporting.
   const paidCases = cases.filter((c) => c.status === 'signed' || c.status === 'delivered')
   const paidToVendor  = paidCases.reduce((n, c) => n + Number(c.amount_sar || 0), 0)
+  const paidDownpayment = paidCases
+    .filter((c) => c.is_downpayment)
+    .reduce((n, c) => n + Number(c.amount_sar || 0), 0)
+  const paidInvoices = paidToVendor - paidDownpayment
   const pendingAmount = cases
     .filter((c) => c.status !== 'signed' && c.status !== 'delivered' && c.status !== 'cancelled' && c.status !== 'rejected')
     .reduce((n, c) => n + Number(c.amount_sar || 0), 0)
@@ -220,8 +235,9 @@ export default async function VendorDetailPage({
         {vendorLinkReady && (
           <>
             {/* Activity rollup */}
-            <div className="grid grid-cols-3 gap-2 text-right">
-              <RollupCell label="مسدَّد فعليًا" value={fmtSar(paidToVendor)} icon={<TrendingDown className="w-3 h-3" />} tone="amber" />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-right">
+              <RollupCell label="دفعات مقدمة مسدَّدة" value={fmtSar(paidDownpayment)} icon={<Wallet className="w-3 h-3" />} tone="indigo" />
+              <RollupCell label="فواتير مسدَّدة" value={fmtSar(paidInvoices)} icon={<TrendingDown className="w-3 h-3" />} tone="amber" />
               <RollupCell label="قيد المعالجة" value={fmtSar(pendingAmount)} icon={<FileText className="w-3 h-3" />} tone="slate" />
               <RollupCell label="عدد الوثائق" value={String(cases.length)} icon={<Activity className="w-3 h-3" />} tone="emerald" />
             </div>
@@ -254,12 +270,17 @@ export default async function VendorDetailPage({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {cases.map((c) => (
-                      <tr key={c.id} className="hover:bg-slate-50/60">
+                      <tr key={c.id} className={`hover:bg-slate-50/60 ${c.is_downpayment ? 'bg-indigo-50/30' : ''}`}>
                         <td className="px-3 py-2">
                           <Link href={`/app/disbursements/${c.id}`} className="text-teal-700 font-mono hover:underline text-xs inline-flex items-center gap-1">
                             {c.case_number ?? c.id.slice(0, 8)}
                             <ArrowLeft className="w-3 h-3 opacity-60" />
                           </Link>
+                          {c.is_downpayment && (
+                            <span className="mr-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-800 ring-1 ring-inset ring-indigo-200">
+                              <Wallet className="w-2.5 h-2.5" /> دفعة مقدّمة
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono">{c.voucher_number_text ?? '—'}</td>
                         <td className="px-3 py-2 text-xs text-slate-500">{c.voucher_date ?? '—'}</td>
@@ -314,12 +335,13 @@ function InfoRow({ icon, label, value, mono }: {
 
 function RollupCell({ label, value, icon, tone }: {
   label: string; value: string; icon: React.ReactNode
-  tone: 'amber' | 'slate' | 'emerald'
+  tone: 'amber' | 'slate' | 'emerald' | 'indigo'
 }) {
   const cls =
-    tone === 'amber' ? 'bg-amber-50 text-amber-800 ring-amber-200' :
-    tone === 'slate' ? 'bg-slate-50 text-slate-800 ring-slate-200' :
-                       'bg-emerald-50 text-emerald-800 ring-emerald-200'
+    tone === 'amber'  ? 'bg-amber-50 text-amber-800 ring-amber-200' :
+    tone === 'slate'  ? 'bg-slate-50 text-slate-800 ring-slate-200' :
+    tone === 'indigo' ? 'bg-indigo-50 text-indigo-800 ring-indigo-200' :
+                        'bg-emerald-50 text-emerald-800 ring-emerald-200'
   return (
     <div className={`rounded-lg ring-1 ring-inset ${cls} px-3 py-2`}>
       <div className="text-[10px] font-bold uppercase tracking-widest opacity-80 inline-flex items-center gap-1">
