@@ -128,14 +128,18 @@ export default async function VendorDetailPage({
     cases = (casesRes.data ?? []) as CaseLite[]
   }
 
-  // Rollup: total paid to this vendor = sum of signed/delivered cases.
-  // Split into downpayment vs invoices for accountant reporting.
+  // Rollup: split paid cases into two flows.
+  //   - Downpayment cases: money moved FROM the escrow account INTO the
+  //     vendor's downpayment pool → these ADD to what's deposited.
+  //   - Invoice cases: money paid OUT to the vendor for work done →
+  //     these DEDUCT from the deposited pool.
   const paidCases = cases.filter((c) => c.status === 'signed' || c.status === 'delivered')
-  const paidToVendor  = paidCases.reduce((n, c) => n + Number(c.amount_sar || 0), 0)
   const paidDownpayment = paidCases
     .filter((c) => c.is_downpayment)
     .reduce((n, c) => n + Number(c.amount_sar || 0), 0)
-  const paidInvoices = paidToVendor - paidDownpayment
+  const paidInvoices = paidCases
+    .filter((c) => !c.is_downpayment)
+    .reduce((n, c) => n + Number(c.amount_sar || 0), 0)
   const pendingAmount = cases
     .filter((c) => c.status !== 'signed' && c.status !== 'delivered' && c.status !== 'cancelled' && c.status !== 'rejected')
     .reduce((n, c) => n + Number(c.amount_sar || 0), 0)
@@ -201,7 +205,8 @@ export default async function VendorDetailPage({
             vendorName={vendor.name_ar}
             initialDownpayment={Number(vendor.developer_downpayment_sar ?? 0)}
             initialPlan={Array.isArray(vendor.developer_downpayment_plan) ? vendor.developer_downpayment_plan : []}
-            paidToVendor={paidToVendor}
+            paidToVendor={paidInvoices}
+            fundedFromVouchers={paidDownpayment}
             canEdit={canOwner}
           />
         </div>
@@ -236,8 +241,8 @@ export default async function VendorDetailPage({
           <>
             {/* Activity rollup */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-right">
-              <RollupCell label="دفعات مقدمة مسدَّدة" value={fmtSar(paidDownpayment)} icon={<Wallet className="w-3 h-3" />} tone="indigo" />
-              <RollupCell label="فواتير مسدَّدة" value={fmtSar(paidInvoices)} icon={<TrendingDown className="w-3 h-3" />} tone="amber" />
+              <RollupCell label="مُودَع للمورد (سندات دفعة مقدمة)" value={fmtSar(paidDownpayment)} icon={<Wallet className="w-3 h-3" />} tone="indigo" />
+              <RollupCell label="فواتير مسدَّدة (مخصوم)" value={fmtSar(paidInvoices)} icon={<TrendingDown className="w-3 h-3" />} tone="amber" />
               <RollupCell label="قيد المعالجة" value={fmtSar(pendingAmount)} icon={<FileText className="w-3 h-3" />} tone="slate" />
               <RollupCell label="عدد الوثائق" value={String(cases.length)} icon={<Activity className="w-3 h-3" />} tone="emerald" />
             </div>

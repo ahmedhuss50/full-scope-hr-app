@@ -40,14 +40,21 @@ export function VendorDownpaymentEditor({
   initialDownpayment,
   initialPlan,
   paidToVendor,
+  fundedFromVouchers = 0,
   canEdit,
 }: {
   vendorId: string
   vendorName: string
   initialDownpayment: number
   initialPlan: VendorDownpaymentMilestone[]
-  /** Sum of receipts that reached status='paid' for this vendor. */
+  /** Sum of INVOICE cases paid to this vendor (deducts from the pool). */
   paidToVendor: number
+  /**
+   * Sum of paid DOWNPAYMENT cases (وثائق صرف flagged as دفعة مقدمة).
+   * These represent money moved FROM the escrow account INTO the vendor's
+   * downpayment pool, so they ADD to what's deposited.
+   */
+  fundedFromVouchers?: number
   canEdit: boolean
 }) {
   const router = useRouter()
@@ -91,12 +98,17 @@ export function VendorDownpaymentEditor({
     startTransition(() => router.refresh())
   }
 
-  const total       = Number(downpayment) || 0
+  const committed   = Number(downpayment) || 0
   const planTotal   = plan.reduce((n, m) => n + Number(m.amount_sar || 0), 0)
   const released    = plan.filter((m) => m.released_at).reduce((n, m) => n + Number(m.amount_sar || 0), 0)
-  const remaining   = total - paidToVendor
-  const usagePct    = total > 0 ? Math.min(100, (paidToVendor / total) * 100) : 0
+  // Total pool = the developer's manual commitment + everything actually
+  // funded into it via signed «دفعة مقدمة» vouchers.
+  const totalPool   = committed + fundedFromVouchers
+  const remaining   = totalPool - paidToVendor
+  const usagePct    = totalPool > 0 ? Math.min(100, (paidToVendor / totalPool) * 100) : 0
   const overBudget  = remaining < 0
+  // Kept for the collapsed-header chip.
+  const total       = committed
 
   return (
     <div className="rounded-lg bg-indigo-50/40 border border-indigo-200 p-3">
@@ -132,13 +144,14 @@ export function VendorDownpaymentEditor({
             <span className="text-xs text-slate-500">ر.س</span>
           </div>
 
-          {/* Deduction rollup — auto-computed from paid receipts */}
-          {total > 0 && (
+          {/* Rollup — auto-computed from وثائق الصرف of this vendor */}
+          {(totalPool > 0 || fundedFromVouchers > 0) && (
             <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 space-y-2">
-              <div className="grid grid-cols-3 gap-2 text-right">
-                <RollupBox label="المُودَع" value={fmtSar(total)} tone="indigo" />
-                <RollupBox label="مُسدَّد فعليًا" value={fmtSar(paidToVendor)} tone="amber" />
-                <RollupBox label="الرصيد المتبقي" value={fmtSar(remaining)} tone={overBudget ? 'red' : 'emerald'} />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-right">
+                <RollupBox label="التزام المطوّر" value={fmtSar(committed)} tone="slate" />
+                <RollupBox label="مُودَع فعليًا (سندات دفعة مقدمة)" value={fmtSar(fundedFromVouchers)} tone="indigo" />
+                <RollupBox label="مُسدَّد للمورد (فواتير)" value={fmtSar(paidToVendor)} tone="amber" />
+                <RollupBox label="الرصيد المتاح" value={fmtSar(remaining)} tone={overBudget ? 'red' : 'emerald'} />
               </div>
               <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                 <div
@@ -147,8 +160,9 @@ export function VendorDownpaymentEditor({
                 />
               </div>
               <p className="text-[10px] text-slate-500 leading-relaxed">
-                «مُسدَّد فعليًا» = مجموع الفواتير المُسدَّدة (بعد توقيع/تسليم سند الصرف).
-                يُخصم تلقائيًا من الدفعة كلما تحوّلت فاتورة إلى «مُسدَّدة».
+                «التزام المطوّر» = المبلغ المخطَّط له. «مُودَع فعليًا» = وثائق صرف
+                موقّعة بعلامة «دفعة مقدمة» — تضاف للرصيد. «مُسدَّد للمورد» = فواتير
+                موقّعة — تُخصم من الرصيد.
               </p>
             </div>
           )}
@@ -260,12 +274,13 @@ function RollupBox({
 }: {
   label: string
   value: string
-  tone: 'indigo' | 'amber' | 'emerald' | 'red'
+  tone: 'indigo' | 'amber' | 'emerald' | 'red' | 'slate'
 }) {
   const cls =
     tone === 'indigo'  ? 'bg-indigo-50 text-indigo-800 ring-indigo-200' :
     tone === 'amber'   ? 'bg-amber-50 text-amber-800 ring-amber-200' :
     tone === 'emerald' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' :
+    tone === 'slate'   ? 'bg-slate-50 text-slate-800 ring-slate-200' :
                          'bg-red-50 text-red-800 ring-red-200'
   return (
     <div className={`rounded-md ring-1 ring-inset ${cls} px-2.5 py-1.5`}>
