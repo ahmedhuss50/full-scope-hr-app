@@ -4,19 +4,18 @@
  * Query params:
  *   project=<uuid> · year=<YYYY> · quarter=<1..4>
  *
- * MVP status: STUB. The actual xlsx generator (which opens the template,
- * fills every sheet from dsb_projects + dsb_cpa_reports + dsb_cases +
- * dsb_payments + dsb_project_units + dsb_unit_sales, preserves formulas,
- * and streams back the .xlsx) lands in the next iteration.
- *
- * For now this route validates access and returns 501 so the editor page
- * gets a clean error message instead of crashing on a missing endpoint.
+ * Owner-only. Loads the CPA template + fills sheets 1, 2, 4 (project data,
+ * vouchers, unit-type breakdown). Sheets 3/5/6/7 are filled from the
+ * dsb_cpa_reports record (opening balance, forecast, notes) — the pieces
+ * we can't derive automatically.
  */
 import { NextResponse } from 'next/server'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
+import { generateAccountantWorkbookXlsx } from '@/lib/dsb/generate-rega-xlsx'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+export const maxDuration = 60
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -34,6 +33,7 @@ export async function GET(req: Request) {
   if (![1, 2, 3, 4].includes(quarter)) {
     return NextResponse.json({ error: 'الربع غير صالح.' }, { status: 400 })
   }
+  const quarterKey = (`Q${quarter}` as 'Q1' | 'Q2' | 'Q3' | 'Q4')
 
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
@@ -48,15 +48,44 @@ export async function GET(req: Request) {
   }
 
   const { data: proj } = await svc
-    .from('dsb_projects').select('id, tenant_id').eq('id', projectId).maybeSingle()
+    .from('dsb_projects').select('id, tenant_id, name_ar').eq('id', projectId).maybeSingle()
   if (!proj || (proj as { tenant_id: string }).tenant_id !== (profile.tenant_id as string)) {
     return NextResponse.json({ error: 'المشروع غير موجود.' }, { status: 404 })
   }
+  const projectName = (proj as { name_ar: string }).name_ar || 'project'
 
-  // TODO(next): open the template xlsx, fill in the sheets, return as
-  // application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-  return NextResponse.json(
-    { error: 'مولّد الملف قيد التطوير — استخدم زر «حفظ التقرير» في الوقت الحالي، وسنكمل توليد النموذج في التحديث القادم.' },
-    { status: 501 },
-  )
+  try {
+    const buf = await generateAccountantWorkbookXlsx(projectId, quarterKey, year)
+
+    // Stamp generation timestamp on the report record (best-effort; ignore
+    // errors so we don't block the download).
+    try {
+      await svc
+        .from('dsb_cpa_reports')
+        .update({ generated_at: new Date().toISOString(), generated_by_user_id: profile.id as string })
+        .eq('tenant_id', profile.tenant_id as string)
+        .eq('project_id', projectId)
+        .eq('period_year', year)
+        .eq('period_quarter', quarter)
+    } catch { /* fall through */ }
+
+    // Return the .xlsx. Filename is Arabic-safe via RFC 5987 encoding.
+    const fname = `نموذج المحاسب — ${projectName} — Q${quarter} ${year}.xlsx`
+    const encoded = encodeURIComponent(fname)
+    // Copy into a fresh ArrayBuffer to satisfy the BodyInit type checker.
+    const ab = new ArrayBuffer(buf.byteLength)
+    new Uint8Array(ab).set(new Uint8Array(buf))
+    return new Response(new Blob([ab]), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encoded}`,
+      },
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'فشل توليد الملف.'
+    // eslint-disable-next-line no-console
+    console.error('[dsb-cpa-report] generation failed', err)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 }

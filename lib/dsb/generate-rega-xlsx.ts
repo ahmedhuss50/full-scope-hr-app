@@ -1011,22 +1011,81 @@ export async function generateAccountantWorkbookXlsx(
   }
 
   // === Sheets 3 / 5 / 6 / 7 ===
-  // Deferred — those need R1 schema (estimates + notes) + balance-sheet math.
-  // Clear the sample data so nothing from another tenant leaks through.
+  // Clear the reference-file numeric samples first (nothing from another
+  // tenant should leak through), then fill the pieces we now have data for:
+  //   - Sheet 3: opening balance + forecast rows (from dsb_cpa_reports)
+  //   - Sheet 6: 6 narrative sections (from dsb_cpa_reports notes_*)
+  // Sheets 5 + 7 still deferred (need more derived math).
   for (const sheetName of ['(3) العمليات المالية', '(5) تحليل البيانات المالية', '(6) النتائج والملاحظات', 'قائمة المركز المالي (7)']) {
     const ws = wb.Sheets[sheetName]
     if (!ws) continue
-    // Wipe entire data area but leave the template's labels — we identify
-    // "data" cells here as any cell whose value is a number OR a date >
-    // 2020 OR a specific known Ayal Alasala string. Simpler: clear a broad
-    // rectangle and rely on Excel to show a mostly-empty sheet. Users see
-    // the sheet headers + labels but no data — a clear signal it's TBD.
     for (const addr of Object.keys(ws)) {
       if (addr.startsWith('!')) continue
       const cell = ws[addr]
       if (typeof cell?.v === 'number' && Number(cell.v) > 100) {
         delete ws[addr]
       }
+    }
+  }
+
+  // Pull the CPA report record for this period (mig 087) — provides
+  // opening balance, forecast rows, and 6 narrative sections.
+  const { data: reportRow } = await svc
+    .from('dsb_cpa_reports')
+    .select('opening_balance_sar, forecast_rows, notes_sales, notes_expenses, notes_collection, notes_current_risks, notes_future_risks, notes_other')
+    .eq('tenant_id', project.tenant_id)
+    .eq('project_id', projectId)
+    .eq('period_year', year)
+    .eq('period_quarter', Number(quarter.replace('Q', '')))
+    .maybeSingle()
+  const report = reportRow as {
+    opening_balance_sar: number | null
+    forecast_rows: Array<{ seq: number; label_ar: string; side: 'debit' | 'credit'; amount_sar: number }> | null
+    notes_sales: string | null; notes_expenses: string | null; notes_collection: string | null
+    notes_current_risks: string | null; notes_future_risks: string | null; notes_other: string | null
+  } | null
+
+  // Sheet 3 — opening balance goes at C5 per the reference template.
+  const s3 = wb.Sheets['(3) العمليات المالية']
+  if (s3 && report) {
+    if (report.opening_balance_sar != null) {
+      setCell(s3, 'C5', Number(report.opening_balance_sar), 'n')
+    }
+    // Forecast rows: start at row 28 (label at G28 = 'تكاليف انشائية' in the
+    // template). We write user-supplied rows into the (label, amount) grid
+    // starting at G28/H28 (debit) and I28/J28 (credit) if present.
+    const forecast = Array.isArray(report.forecast_rows) ? report.forecast_rows : []
+    let debitRow = 28
+    let creditRow = 28
+    for (const f of forecast) {
+      if (f.side === 'credit') {
+        setCell(s3, `I${creditRow}`, f.label_ar, 's')
+        setCell(s3, `J${creditRow}`, Number(f.amount_sar), 'n')
+        creditRow += 1
+      } else {
+        setCell(s3, `G${debitRow}`, f.label_ar, 's')
+        setCell(s3, `H${debitRow}`, Number(f.amount_sar), 'n')
+        debitRow += 1
+      }
+      if (debitRow > 33 || creditRow > 33) break
+    }
+  }
+
+  // Sheet 6 — narrative sections. Section headers live in column B on rows
+  // 2 / 7 / 12 / 17 / 23 / 29. We write each note into column C on the
+  // next few rows so the text sits under its heading.
+  const s6 = wb.Sheets['(6) النتائج والملاحظات']
+  if (s6 && report) {
+    const sections: Array<[string, string | null]> = [
+      ['C3',  report.notes_sales],
+      ['C8',  report.notes_expenses],
+      ['C13', report.notes_collection],
+      ['C18', report.notes_current_risks],
+      ['C24', report.notes_future_risks],
+      ['C30', report.notes_other],
+    ]
+    for (const [addr, note] of sections) {
+      if (note && note.trim()) setCell(s6, addr, note.trim(), 's')
     }
   }
 
