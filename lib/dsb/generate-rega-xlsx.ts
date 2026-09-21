@@ -1098,12 +1098,32 @@ export async function generateAccountantWorkbookXlsx(
 
 function mapUnitTypeToAr(t: string | null): string {
   if (!t) return 'أخرى'
-  const k = t.toLowerCase().trim()
-  if (k === 'villa' || k === 'فيلا' || k === 'فلل') return 'فلل'
-  if (k === 'apartment' || k === 'شقة' || k === 'شقق') return 'شقق'
-  if (k === 'duplex' || k === 'دوبلكس') return 'دوبلكس'
-  if (k === 'townhouse' || k === 'تاون هاوس') return 'تاون هاوس'
-  return t
+  const raw = t.trim()
+  const k = raw.toLowerCase()
+  // Villa
+  if (k === 'villa' || raw === 'فيلا' || raw === 'فلل' || raw === 'فلة') return 'فلل'
+  // Apartment
+  if (k === 'apartment' || raw === 'شقة' || raw === 'شقق') return 'شقق'
+  // Duplex
+  if (k === 'duplex' || raw === 'دوبلكس') return 'دوبلكس'
+  // Townhouse
+  if (k === 'townhouse' || raw === 'تاون هاوس' || raw === 'تاون-هاوس') return 'تاون هاوس'
+  // Penthouse
+  if (k === 'penthouse' || raw === 'بنت هاوس' || raw === 'بنتهاوس') return 'بنت هاوس'
+  // Floors
+  if (k === 'floor' || k === 'floors' || raw === 'أدوار' || raw === 'دور') return 'أدوار'
+  // Offices
+  if (k === 'office' || raw === 'مكاتب تجارية' || raw === 'مكتب تجاري') return 'مكاتب تجارية'
+  // Hotel rooms/suites
+  if (raw === 'غرف فندقية' || raw === 'غرفة فندقية') return 'غرف فندقية'
+  if (raw === 'أجنحة فندقية' || raw === 'جناح فندقي') return 'أجنحة فندقية'
+  // Lands
+  if (raw === 'أراضي سكنية' || raw === 'أرض سكنية') return 'أراضي سكنية'
+  if (raw === 'أراضي تجارية' || raw === 'أرض تجارية') return 'أراضي تجارية'
+  if (raw === 'أراضي صناعية' || raw === 'أرض صناعية') return 'أراضي صناعية'
+  if (raw === 'أراضي زراعية' || raw === 'أرض زراعية') return 'أراضي زراعية'
+  if (raw === 'أراضي سياحية' || raw === 'أرض سياحية') return 'أراضي سياحية'
+  return raw
 }
 
 function mapDisbursementTypeToAr(code: string): string {

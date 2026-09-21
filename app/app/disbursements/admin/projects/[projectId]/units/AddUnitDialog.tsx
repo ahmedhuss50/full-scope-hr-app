@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, Loader2 } from 'lucide-react'
+import { UnitTypePicker } from '@/components/UnitTypePicker'
 
 /**
  * Minimal inline "add a unit" form. Posts to /api/dsb-add-unit — a plain
@@ -97,7 +98,7 @@ export function AddUnitDialog({ projectId }: { projectId: string }) {
             <input className={inputCls} value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} disabled={busy} autoFocus />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className={labelCls}>نوع الوحدة</label><input className={inputCls} value={unitType} onChange={(e) => setUnitType(e.target.value)} disabled={busy} placeholder="villa / apartment" /></div>
+            <div><label className={labelCls}>نوع الوحدة</label><UnitTypePicker value={unitType} onChange={setUnitType} disabled={busy} className={inputCls} /></div>
             <div><label className={labelCls}>المساحة (م²)</label><input className={inputCls} value={areaM2} onChange={(e) => setAreaM2(e.target.value)} disabled={busy} type="number" step="0.01" /></div>
             <div><label className={labelCls}>رقم البلوك</label><input className={inputCls} value={block} onChange={(e) => setBlock(e.target.value)} disabled={busy} /></div>
             <div><label className={labelCls}>رقم المنطقة (ZONE)</label><input className={inputCls} value={zone} onChange={(e) => setZone(e.target.value)} disabled={busy} /></div>
