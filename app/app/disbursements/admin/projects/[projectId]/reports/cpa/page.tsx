@@ -97,11 +97,11 @@ export default async function CpaReportPage({
   // ---- Pre-generation validation ----
   const [projFullRes, accountsRes] = await Promise.all([
     svc.from('dsb_projects')
-      .select('rega_license_no, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, engineer_consultant_name, contractor_1_name, project_start_date, region_ar, city_ar, district_ar')
+      .select('rega_license_no, land_price_sar, estimated_construction_sar, estimated_admin_marketing_sar, engineer_consultant_name, contractor_1_name, project_start_date, rega_license_expiry_date, bank_name, bank_iban, region_ar, city_ar, district_ar')
       .eq('id', projectId)
       .maybeSingle(),
     svc.from('dsb_project_accounts')
-      .select('id, label, account_role')
+      .select('id, label, account_role, bank_name, iban')
       .eq('tenant_id', tenantId)
       .eq('project_id', projectId),
   ])
@@ -113,10 +113,16 @@ export default async function CpaReportPage({
     engineer_consultant_name?: string | null
     contractor_1_name?: string | null
     project_start_date?: string | null
+    rega_license_expiry_date?: string | null
+    bank_name?: string | null
+    bank_iban?: string | null
     region_ar?: string | null; city_ar?: string | null; district_ar?: string | null
   }
-  const accounts = (accountsRes.data ?? []) as Array<{ id: string; label: string; account_role: string | null }>
+  const accounts = (accountsRes.data ?? []) as Array<{ id: string; label: string; account_role: string | null; bank_name: string | null; iban: string | null }>
   const untaggedAccounts = accounts.filter((a) => !a.account_role).length
+  // Bank details for Sheet 1: project fields OR any account with a bank set.
+  const hasBankName = !!(projFull.bank_name || accounts.some((a) => a.bank_name))
+  const hasBankIban = !!(projFull.bank_iban || accounts.some((a) => a.iban))
 
   // Quarter date range
   const qStartMonth = (quarter - 1) * 3 + 1
@@ -150,7 +156,10 @@ export default async function CpaReportPage({
     { ok: !!projFull.contractor_1_name,           severity: 'warning', label: 'اسم المقاول الرئيسي',                        hint: 'يظهر في Sheet 1', fixHref: setupUrl },
     { ok: !!projFull.engineer_consultant_name,    severity: 'warning', label: 'الاستشاري الهندسي',                          hint: 'يظهر في Sheet 5', fixHref: setupUrl },
     { ok: !!projFull.project_start_date,          severity: 'warning', label: 'تاريخ بداية المشروع',                       fixHref: setupUrl },
+    { ok: !!projFull.rega_license_expiry_date,    severity: 'warning', label: 'تاريخ نهاية المشروع (انتهاء الرخصة)',      hint: 'يظهر في Sheet 5', fixHref: setupUrl },
     { ok: !!projFull.region_ar && !!projFull.city_ar, severity: 'warning', label: 'الموقع (المنطقة / المدينة)',        hint: 'يظهر في Sheet 5', fixHref: setupUrl },
+    { ok: hasBankName,                            severity: 'warning', label: 'اسم البنك (أمين الحساب)',                    hint: 'من إعدادات المشروع أو من الحسابات المضافة', fixHref: setupUrl },
+    { ok: hasBankIban,                            severity: 'warning', label: 'رقم الآيبان لحساب الضمان',                    hint: 'من إعدادات المشروع أو من الحسابات المضافة', fixHref: accountsUrl },
     // ---- Accounts ----
     { ok: accounts.length > 0,       severity: 'error',   label: 'حسابات الضمان مضافة',                                   hint: 'أضف حسابات المشروع', fixHref: accountsUrl },
     { ok: untaggedAccounts === 0,    severity: 'warning', label: 'كل حساب مُصنَّف (إنشاءات / إداري / حفظ / عام)',        hint: untaggedAccounts > 0 ? `${untaggedAccounts} حساب/حسابات بدون تصنيف` : undefined, fixHref: accountsUrl },

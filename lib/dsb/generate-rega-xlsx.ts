@@ -866,6 +866,13 @@ export async function generateAccountantWorkbookXlsx(
   }
   // Simpler: iterate saleIdSet lookup back to units via a fresh query above — reuse chosenByUnit if we had kept it. For MVP: skip collected-by-type breakdown and total instead below.
 
+  // Quarter end date — for filtering vouchers to the reporting window
+  // (cumulative through end-of-quarter; no future-dated vouchers leak in).
+  const qNum = Number(quarter.replace('Q', ''))
+  const qStartMonth = (qNum - 1) * 3 + 1
+  const qEndDate = new Date(Date.UTC(year, qStartMonth + 2, 0))
+  const qEndISO = `${qEndDate.getUTCFullYear()}-${String(qEndDate.getUTCMonth() + 1).padStart(2, '0')}-${String(qEndDate.getUTCDate()).padStart(2, '0')}`
+
   // ---- Load vouchers (paid cases) — for sheet 2 ----
   type CaseRow = {
     id: string
@@ -874,40 +881,92 @@ export async function generateAccountantWorkbookXlsx(
     amount_sar: number | null
     status: string
     is_historical: boolean | null
+    is_downpayment: boolean | null
     paid_from_account_id: string | null
+    vendor_id: string | null
     paid_at: string | null
     signed_at: string | null
     voucher_date: string | null
     submitted_at: string | null
+    notes: string | null
     extracted_fields: Record<string, unknown> | null
   }
-  const cases = await fetchAllChunked<CaseRow>(async (from, to) => {
-    const res = await svc
-      .from('dsb_cases')
-      .select('id, case_number, voucher_number_text, amount_sar, status, is_historical, paid_from_account_id, paid_at, signed_at, voucher_date, submitted_at, extracted_fields')
-      .eq('tenant_id', project.tenant_id)
-      .eq('project_id', projectId)
-      .or('status.in.(signed,delivered),is_historical.eq.true')
-      .range(from, to)
-    return { data: res.data as CaseRow[] | null, error: res.error }
+  // Try wide select first (needs mig 084 + 085); fall back to narrow if either
+  // column is missing on this deployment.
+  let cases: CaseRow[] = []
+  try {
+    cases = await fetchAllChunked<CaseRow>(async (from, to) => {
+      const res = await svc
+        .from('dsb_cases')
+        .select('id, case_number, voucher_number_text, amount_sar, status, is_historical, is_downpayment, paid_from_account_id, vendor_id, paid_at, signed_at, voucher_date, submitted_at, notes, extracted_fields')
+        .eq('tenant_id', project.tenant_id)
+        .eq('project_id', projectId)
+        .or('status.in.(signed,delivered),is_historical.eq.true')
+        .range(from, to)
+      if (res.error) throw res.error
+      return { data: res.data as CaseRow[] | null, error: res.error }
+    })
+  } catch {
+    cases = await fetchAllChunked<CaseRow>(async (from, to) => {
+      const res = await svc
+        .from('dsb_cases')
+        .select('id, case_number, voucher_number_text, amount_sar, status, is_historical, paid_from_account_id, paid_at, signed_at, voucher_date, submitted_at, notes, extracted_fields')
+        .eq('tenant_id', project.tenant_id)
+        .eq('project_id', projectId)
+        .or('status.in.(signed,delivered),is_historical.eq.true')
+        .range(from, to)
+      return { data: (res.data ?? []).map((r) => ({ ...r, vendor_id: null, is_downpayment: null })) as CaseRow[] | null, error: res.error }
+    })
+  }
+  // Filter out future-dated vouchers (later than the report period). Cases
+  // with no date at all stay in — legacy imports we still want to surface.
+  const casesInPeriod = cases.filter((c) => {
+    const dateAnchor = c.voucher_date ?? c.paid_at ?? (c.signed_at ? c.signed_at.slice(0, 10) : null) ?? (c.submitted_at ? c.submitted_at.slice(0, 10) : null)
+    if (!dateAnchor) return true
+    return dateAnchor <= qEndISO
   })
   // Sort by paid/signed date
-  const casesSorted = cases
+  const casesSorted = casesInPeriod
     .map((c) => ({ ...c, effectiveDate: c.paid_at ?? c.signed_at?.slice(0, 10) ?? c.voucher_date ?? c.submitted_at?.slice(0, 10) ?? '' }))
     .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate))
 
-  // Account labels for the "نوع حساب الضمان" column
+  // ---- Load vendors (for صفة المستفيد fallback via service_category) ----
+  const vendorCategoryById = new Map<string, string | null>()
+  const vendorNameById     = new Map<string, string>()
+  try {
+    const { data: vRows } = await svc
+      .from('dsb_vendors')
+      .select('id, contact_name_ar, service_category')
+      .eq('tenant_id', project.tenant_id)
+      .eq('project_id', projectId)
+    for (const v of ((vRows ?? []) as Array<{ id: string; contact_name_ar: string | null; service_category: string | null }>)) {
+      vendorCategoryById.set(v.id, v.service_category)
+      if (v.contact_name_ar) vendorNameById.set(v.id, v.contact_name_ar)
+    }
+  } catch { /* vendors table may not exist on very old deployments */ }
+
+  // Account labels for the "نوع حساب الضمان" column. Also pull bank_name so
+  // Sheet 1 (B11/B12) can fall back to the escrow/general account's bank
+  // when the project itself has bank_name/bank_iban empty.
   const { data: acctRows } = await svc
     .from('dsb_project_accounts')
-    .select('id, label, account_role')
+    .select('id, label, account_role, bank_name, iban, account_number')
     .eq('tenant_id', project.tenant_id)
     .eq('project_id', projectId)
   const acctLabelById = new Map<string, string>()
   const acctRoleById  = new Map<string, string | null>()
-  for (const a of ((acctRows ?? []) as Array<{ id: string; label: string; account_role: string | null }>)) {
+  type AcctRow = { id: string; label: string; account_role: string | null; bank_name: string | null; iban: string | null; account_number: string | null }
+  const acctList = ((acctRows ?? []) as AcctRow[])
+  for (const a of acctList) {
     acctLabelById.set(a.id, a.label)
     acctRoleById.set(a.id, a.account_role)
   }
+  // Prefer the escrow (حساب الحفظ) account for Sheet 1 fallback; otherwise
+  // any account that has a bank_name set. This gives the accountant something
+  // reasonable to see even when the project record hasn't been fully filled.
+  const escrowAcct = acctList.find((a) => a.account_role === 'escrow' && (a.bank_name || a.iban))
+  const anyBankAcct = acctList.find((a) => a.bank_name || a.iban)
+  const fallbackAcct = escrowAcct ?? anyBankAcct ?? null
 
   // ---- Populate the template ----
   const wb = await loadWorkbook(ACCOUNTANT_TEMPLATE_PATH)
@@ -926,8 +985,11 @@ export async function generateAccountantWorkbookXlsx(
     setCell(s1, 'B8',  project.name_ar)
     setCell(s1, 'B9',  developerName ?? '')
     setCell(s1, 'B10', tenant?.accountant_office_name ?? '')
-    setCell(s1, 'B11', project.bank_name ?? '')
-    setCell(s1, 'B12', project.bank_iban ?? project.bank_account ?? '')
+    // Bank name (B11) and IBAN (B12): project fields first, then fall back
+    // to the primary escrow / bank account so the sheet isn't empty when the
+    // project header hasn't been fully filled.
+    setCell(s1, 'B11', project.bank_name ?? fallbackAcct?.bank_name ?? '')
+    setCell(s1, 'B12', project.bank_iban ?? project.bank_account ?? fallbackAcct?.iban ?? fallbackAcct?.account_number ?? '')
     // Contractors block — rows 13..16, name in B, contract value in D
     setCell(s1, 'B13', project.contractor_1_name ?? '')
     if (project.contractor_1_contract_sar != null) setCell(s1, 'D13', Number(project.contractor_1_contract_sar), 'n')
@@ -974,10 +1036,51 @@ export async function generateAccountantWorkbookXlsx(
       idx += 1
       const acctLabel = c.paid_from_account_id ? (acctLabelById.get(c.paid_from_account_id) ?? '') : ''
       const acctRole  = c.paid_from_account_id ? (acctRoleById.get(c.paid_from_account_id) ?? null) : null
+
+      // --- Column C: البند (nawa'a al-sarf) --------------------------------
+      // Priority: explicit disbursement_type_code → account role → 'أخرى'.
+      // A signed case that came in through the construction account is
+      // construction even if the AI never tagged it — the account role is
+      // usually a reliable proxy.
       const typeCode  = (c.extracted_fields as { disbursement_type_code?: string } | null)?.disbursement_type_code ?? ''
-      const typeLabel = mapDisbursementTypeToAr(typeCode)
-      const beneficiary = (c.extracted_fields as { beneficiary_name_ar?: string } | null)?.beneficiary_name_ar ?? ''
-      const capacity = (c.extracted_fields as { beneficiary_capacity_ar?: string } | null)?.beneficiary_capacity_ar ?? ''
+      const typeLabel = mapDisbursementTypeToAr(typeCode) !== 'أخرى'
+        ? mapDisbursementTypeToAr(typeCode)
+        : mapAccountRoleToItemLabel(acctRole)
+
+      // --- Column F: اسم المستفيد ------------------------------------------
+      // Priority: extracted_fields.beneficiary_name_ar → linked vendor name.
+      const beneficiaryFromExtract = (c.extracted_fields as { beneficiary_name_ar?: string } | null)?.beneficiary_name_ar ?? ''
+      const beneficiary = beneficiaryFromExtract || (c.vendor_id ? (vendorNameById.get(c.vendor_id) ?? '') : '')
+
+      // --- Column G: صفة المستفيد ------------------------------------------
+      // Priority: extracted_fields.beneficiary_capacity_ar → derive from
+      // vendor.service_category → derive from disbursement type or account
+      // role → blank (only when we truly have nothing).
+      const capacityFromExtract = (c.extracted_fields as { beneficiary_capacity_ar?: string } | null)?.beneficiary_capacity_ar ?? ''
+      const vendorCategory = c.vendor_id ? (vendorCategoryById.get(c.vendor_id) ?? null) : null
+      const capacity = capacityFromExtract
+        || deriveCapacityFromCategory(vendorCategory)
+        || deriveCapacityFromType(typeCode, acctRole)
+        || ''
+
+      // --- Column H: بيان الصرف --------------------------------------------
+      // Priority: extracted_fields.description → case.notes → synthesized
+      // from (type / vendor). Better a short auto-generated line than blank.
+      const descFromExtract = (c.extracted_fields as { description?: string; bayan?: string } | null)?.description
+        ?? (c.extracted_fields as { bayan?: string } | null)?.bayan
+        ?? ''
+      const description = String(descFromExtract).trim()
+        || (c.notes ?? '').trim()
+        || buildDescriptionFallback(typeLabel, beneficiary, c.is_downpayment)
+
+      // --- Column I: حالة الوثيقة ------------------------------------------
+      // مستحق  = paid (paid_at set)
+      // مقدم   = submitted / signed but not yet paid
+      // تاريخي = imported without any paid_at AND explicitly flagged historical
+      const status = c.paid_at
+        ? 'مستحق'
+        : (c.is_historical ? 'تاريخي' : 'مقدم')
+
       setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  0 }), idx, 'n')
       setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  1 }), mapAccountRoleToAr(acctRole) || acctLabel, 's')
       setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  2 }), typeLabel, 's')
@@ -985,8 +1088,8 @@ export async function generateAccountantWorkbookXlsx(
       if (c.voucher_date) setCell(s2, XLSX.utils.encode_cell({ r: r0, c: 4 }), c.voucher_date, 's')
       setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  5 }), beneficiary, 's')
       setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  6 }), capacity, 's')
-      setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  7 }), '', 's') // بيان الصرف — free text; we don't extract it separately
-      setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  8 }), c.is_historical ? 'تاريخي' : 'مستحق', 's')
+      setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  7 }), description, 's')
+      setCell(s2, XLSX.utils.encode_cell({ r: r0, c:  8 }), status, 's')
       if (c.signed_at) setCell(s2, XLSX.utils.encode_cell({ r: r0, c: 9 }), c.signed_at.slice(0, 10), 's')
       if (c.paid_at)   setCell(s2, XLSX.utils.encode_cell({ r: r0, c: 10 }), c.paid_at, 's')
       if (c.amount_sar != null) setCell(s2, XLSX.utils.encode_cell({ r: r0, c: 11 }), Number(c.amount_sar), 'n')
@@ -1121,25 +1224,32 @@ export async function generateAccountantWorkbookXlsx(
 
     const CHUNK = 1000
 
-    // DEBITS — from signed/delivered cases with a voucher_date.
+    // DEBITS — from signed/delivered cases with a voucher_date. Bucket by
+    // disbursement_type_code first, then fall back to the paid-from account's
+    // role so historical cases (no code set) land in the right column
+    // (construction / admin_marketing) instead of the "other" pile.
     for (let page = 0; page < 100; page++) {
       const { data } = await svc
         .from('dsb_cases')
-        .select('amount_sar, voucher_date, extracted_fields')
+        .select('amount_sar, voucher_date, paid_from_account_id, extracted_fields')
         .eq('tenant_id', project.tenant_id)
         .eq('project_id', projectId)
         .in('status', ['signed', 'delivered'])
         .range(page * CHUNK, page * CHUNK + CHUNK - 1)
-      const rows = (data ?? []) as Array<{ amount_sar: number | null; voucher_date: string | null; extracted_fields: { disbursement_type_code?: string | null } | null }>
+      const rows = (data ?? []) as Array<{ amount_sar: number | null; voucher_date: string | null; paid_from_account_id: string | null; extracted_fields: { disbursement_type_code?: string | null } | null }>
       for (const r of rows) {
         const amt = Number(r.amount_sar || 0)
         const code = (r.extracted_fields?.disbursement_type_code ?? '').trim()
-        const bucketKey =
-          code === 'construction' ? 'construction' :
-          code === 'admin_marketing' ? 'admin_marketing' :
-          code === 'customer_refund' ? 'customer_refund' :
-          code === 'bank_fees' ? 'bank_fees' :
-          'other'
+        const role = r.paid_from_account_id ? acctRoleById.get(r.paid_from_account_id) : null
+        // Explicit code wins; otherwise map account role → bucket.
+        let bucketKey: keyof typeof debit
+        if (code === 'construction')       bucketKey = 'construction'
+        else if (code === 'admin_marketing') bucketKey = 'admin_marketing'
+        else if (code === 'customer_refund') bucketKey = 'customer_refund'
+        else if (code === 'bank_fees')       bucketKey = 'bank_fees'
+        else if (role === 'construction')    bucketKey = 'construction'
+        else if (role === 'admin_marketing') bucketKey = 'admin_marketing'
+        else                                  bucketKey = 'other'
         debit[bucketKey][0] += amt
         if (r.voucher_date && r.voucher_date >= qStart && r.voucher_date <= qEnd) {
           debit[bucketKey][1] += amt
@@ -1315,4 +1425,72 @@ function mapAccountRoleToAr(role: string | null): string {
     case 'general':         return 'الحساب العام'
     default:                 return ''
   }
+}
+
+/**
+ * Sheet 2 column C fallback — البند ("nawa'a al-sarf") derived from the
+ * paid-from account's role. Only used when the case has no explicit
+ * disbursement_type_code. The REGA-approved values for this column are
+ * انشائي / اداري / تسويقي / حفظ / أخرى.
+ */
+function mapAccountRoleToItemLabel(role: string | null): string {
+  switch (role) {
+    case 'construction':    return 'انشائي'
+    case 'admin_marketing': return 'اداري وتسويقي'
+    case 'escrow':          return 'حفظ'
+    case 'general':         return 'أخرى'
+    default:                 return 'أخرى'
+  }
+}
+
+/**
+ * Sheet 2 column G fallback — derive صفة المستفيد from a vendor's
+ * service_category. The vendor form uses a curated category list; we map
+ * each category to the closest canonical capacity value (see
+ * lib/dsb/beneficiary-capacity.ts).
+ */
+function deriveCapacityFromCategory(category: string | null): string {
+  if (!category) return ''
+  const c = category.trim()
+  // Direct hits first (owner-curated list may already use canonical values).
+  if (['مقاول', 'مورد', 'ممول', 'مشتري', 'مسوق', 'استشاري هندسي', 'محاسب قانوني', 'أخرى'].includes(c)) return c
+  // Common category → capacity heuristics.
+  if (/مقاول/.test(c))                return 'مقاول'
+  if (/مورد|توريد/.test(c))           return 'مورد'
+  if (/تسويق|مسوق/.test(c))           return 'مسوق'
+  if (/استشار|هندس|مصمم/.test(c))     return 'استشاري هندسي'
+  if (/محاس|مراج|CPA/i.test(c))       return 'محاسب قانوني'
+  if (/تمويل|بنك|ممول/.test(c))       return 'ممول'
+  if (/مشتري|عميل/.test(c))           return 'مشتري'
+  return ''
+}
+
+/**
+ * Last-resort صفة المستفيد fallback — infer from the disbursement type or
+ * the paid-from account's role when neither the extracted field nor the
+ * linked vendor gives us anything.
+ */
+function deriveCapacityFromType(typeCode: string, acctRole: string | null): string {
+  const t = (typeCode ?? '').trim()
+  if (t === 'construction') return 'مقاول'
+  if (t === 'admin_marketing') return 'مسوق'
+  if (t === 'bank_financing') return 'ممول'
+  if (acctRole === 'construction') return 'مقاول'
+  if (acctRole === 'admin_marketing') return 'مسوق'
+  return ''
+}
+
+/**
+ * Sheet 2 column H fallback — bayan al-sarf ("statement of disbursement").
+ * Free-text description of what the voucher was for. We synthesize a short
+ * Arabic phrase when nothing was captured, so the accountant sees more
+ * than a blank cell.
+ */
+function buildDescriptionFallback(typeLabel: string, beneficiary: string, isDownpayment: boolean | null): string {
+  const bits: string[] = []
+  if (isDownpayment) bits.push('دفعة مقدّمة')
+  else bits.push('صرف')
+  if (typeLabel && typeLabel !== 'أخرى') bits.push(typeLabel)
+  if (beneficiary) bits.push(`للمستفيد ${beneficiary}`)
+  return bits.join(' ')
 }
