@@ -17,7 +17,8 @@ import { ArrowRight, Briefcase, Plus } from 'lucide-react'
 import { AddVendorForm } from './AddVendorForm'
 import { EditVendorRow } from './EditVendorRow'
 import { VendorContractsList } from './VendorContractsList'
-import { VendorReceiptsPanel, type ReceiptLite } from './VendorReceiptsPanel'
+import { VendorReceiptsPanel, type ReceiptLite, type DisbursementTypeOption } from './VendorReceiptsPanel'
+import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 import { DownpaymentPlanSection } from '../DownpaymentPlanSection'
 import { DeleteRowButton } from '../_shared/DeleteRowButton'
 import { deleteVendor } from './actions'
@@ -136,11 +137,22 @@ async function renderVendorsPage({
   let vendorsRes: { data: unknown[] | null; error: { message: string } | null } = await svc
     .from('dsb_vendors')
     .select(
-      'id, name_ar, service_category, tax_number, commercial_registration, phone, email, iban, references_text, contact_person_name, contact_person_phone, notes',
+      'id, name_ar, service_category, tax_number, commercial_registration, phone, email, iban, references_text, contact_person_name, contact_person_phone, notes, developer_downpayment_sar, developer_downpayment_plan',
     )
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
     .order('name_ar', { ascending: true })
+  if (vendorsRes.error) {
+    // Fallback: pre-083 columns absent
+    vendorsRes = await svc
+      .from('dsb_vendors')
+      .select(
+        'id, name_ar, service_category, tax_number, commercial_registration, phone, email, iban, references_text, contact_person_name, contact_person_phone, notes',
+      )
+      .eq('tenant_id', tenantId)
+      .eq('project_id', projectId)
+      .order('name_ar', { ascending: true })
+  }
   if (vendorsRes.error) {
     vendorsRes = await svc
       .from('dsb_vendors')
@@ -190,12 +202,21 @@ async function renderVendorsPage({
         .order('start_date', { ascending: false, nullsFirst: false })
     }
     // Receipts table may not exist yet — swallow error and treat as empty.
-    const receiptsRes = await svc
+    // Try select including disbursement_type_code (mig 082); fall back if column absent.
+    let receiptsRes: { data: unknown[] | null; error: { message: string } | null } = await svc
       .from('dsb_vendor_receipts')
-      .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
+      .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, disbursement_type_code, status, case_id')
       .eq('tenant_id', tenantId)
       .in('vendor_id', vendorIds)
       .order('receipt_date', { ascending: false, nullsFirst: false })
+    if (receiptsRes.error) {
+      receiptsRes = await svc
+        .from('dsb_vendor_receipts')
+        .select('id, vendor_id, contract_id, installment_seq, receipt_number, receipt_date, amount_before_tax_sar, vat_sar, total_amount_sar, description, status, case_id')
+        .eq('tenant_id', tenantId)
+        .in('vendor_id', vendorIds)
+        .order('receipt_date', { ascending: false, nullsFirst: false })
+    }
     for (const c of (contractsRes.data ?? []) as VendorContractRow[]) {
       const arr = contractsByVendorId.get(c.vendor_id) ?? []
       arr.push(c)
@@ -214,6 +235,32 @@ async function renderVendorsPage({
 
   const canOwner = dsbRole === 'owner'
   const canWrite = ['employee', 'supervisor', 'owner'].includes(dsbRole)
+
+  // Disbursement-type options for the receipts panel dropdown: merge shipped
+  // defaults + tenant JSONB overrides, minus any hidden codes.
+  let dsbTypeOverrides: Record<string, string> = {}
+  let dsbTypeHidden: string[] = []
+  try {
+    const tenantRes = await svc
+      .from('tenants')
+      .select('disbursement_type_labels, disbursement_type_hidden')
+      .eq('id', tenantId)
+      .maybeSingle()
+    if (!tenantRes.error && tenantRes.data) {
+      const t = tenantRes.data as {
+        disbursement_type_labels: Record<string, string> | null
+        disbursement_type_hidden: string[] | null
+      }
+      dsbTypeOverrides = (t.disbursement_type_labels ?? {}) as Record<string, string>
+      dsbTypeHidden    = Array.isArray(t.disbursement_type_hidden) ? t.disbursement_type_hidden : []
+    }
+  } catch { /* fall back to defaults */ }
+  const hiddenSet = new Set(dsbTypeHidden)
+  const defaultCodes = Object.keys(DISBURSEMENT_TYPE_DEFAULTS)
+  const customCodes  = Object.keys(dsbTypeOverrides).filter((c) => c.startsWith('custom_'))
+  const disbursementTypeOptions: DisbursementTypeOption[] = [...defaultCodes, ...customCodes]
+    .filter((code) => !hiddenSet.has(code))
+    .map((code) => ({ code, label: resolveDisbursementLabel(code, dsbTypeOverrides) }))
 
   return (
     <div className="max-w-6xl mx-auto space-y-6" dir="rtl">
@@ -355,6 +402,7 @@ async function renderVendorsPage({
                         <td colSpan={6} className="p-0">
                           <VendorReceiptsPanel
                             vendorId={v.id}
+                            vendorName={v.name_ar}
                             contracts={contracts.map((c) => ({
                               id: c.id,
                               contract_number: c.contract_number,
@@ -364,6 +412,10 @@ async function renderVendorsPage({
                               payment_schedule: (c as unknown as { payment_schedule: unknown }).payment_schedule as null | Array<{ seq: number; label_ar: string; amount_sar: number; paid_at?: string | null }>,
                             }))}
                             receipts={receiptsByVendorId.get(v.id) ?? []}
+                            disbursementTypes={disbursementTypeOptions}
+                            vendorDownpayment={Number((v as unknown as { developer_downpayment_sar: number | null }).developer_downpayment_sar ?? 0)}
+                            vendorDownpaymentPlan={Array.isArray((v as unknown as { developer_downpayment_plan: unknown }).developer_downpayment_plan) ? (v as unknown as { developer_downpayment_plan: Array<{ seq: number; label_ar: string; completion_pct: number; amount_sar: number; released_at?: string | null }> }).developer_downpayment_plan : []}
+                            canEdit={canOwner}
                           />
                         </td>
                       </tr>

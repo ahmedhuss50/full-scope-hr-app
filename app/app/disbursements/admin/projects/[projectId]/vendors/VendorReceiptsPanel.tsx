@@ -24,7 +24,9 @@ import {
   deleteVendorReceipt,
   createCaseFromReceipt,
   type VendorInstallment,
+  type VendorDownpaymentMilestone,
 } from './receipts-actions'
+import { VendorDownpaymentEditor } from './VendorDownpaymentEditor'
 
 export type ContractLite = {
   id: string
@@ -45,9 +47,12 @@ export type ReceiptLite = {
   vat_sar: number
   total_amount_sar: number
   description: string | null
+  disbursement_type_code: string | null
   status: 'pending' | 'invoiced' | 'paid'
   case_id: string | null
 }
+
+export type DisbursementTypeOption = { code: string; label: string }
 
 function fmtSar(n: number | null | undefined): string {
   if (n == null) return '—'
@@ -57,12 +62,22 @@ function fmtSar(n: number | null | undefined): string {
 
 export function VendorReceiptsPanel({
   vendorId,
+  vendorName,
   contracts,
   receipts,
+  disbursementTypes,
+  vendorDownpayment,
+  vendorDownpaymentPlan,
+  canEdit,
 }: {
   vendorId: string
+  vendorName: string
   contracts: ContractLite[]
   receipts: ReceiptLite[]
+  disbursementTypes: DisbursementTypeOption[]
+  vendorDownpayment: number
+  vendorDownpaymentPlan: VendorDownpaymentMilestone[]
+  canEdit: boolean
 }) {
   // Pick the primary contract (first) as the working target. For vendors
   // with multiple contracts, we let the user switch via the receipt row.
@@ -77,6 +92,13 @@ export function VendorReceiptsPanel({
 
   return (
     <div className="border-t border-slate-100 bg-slate-50/40 p-4 space-y-4" dir="rtl">
+      <VendorDownpaymentEditor
+        vendorId={vendorId}
+        vendorName={vendorName}
+        initialDownpayment={vendorDownpayment}
+        initialPlan={vendorDownpaymentPlan}
+        canEdit={canEdit}
+      />
       <RollupCard contractTotal={contractTotal} invoiced={invoiced} paid={paid} remaining={remaining} />
       {primary && (
         <ScheduleEditor
@@ -89,6 +111,7 @@ export function VendorReceiptsPanel({
         vendorId={vendorId}
         contracts={contracts}
         receipts={receipts}
+        disbursementTypes={disbursementTypes}
       />
     </div>
   )
@@ -246,9 +269,10 @@ function ScheduleEditor({
 /* ─────────────────────────────  Receipts  ───────────────────────────── */
 
 function ReceiptsTable({
-  vendorId, contracts, receipts,
+  vendorId, contracts, receipts, disbursementTypes,
 }: {
   vendorId: string; contracts: ContractLite[]; receipts: ReceiptLite[]
+  disbursementTypes: DisbursementTypeOption[]
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -265,12 +289,14 @@ function ReceiptsTable({
   const [amount, setAmount]         = useState('')
   const [vat, setVat]               = useState('')
   const [description, setDescription] = useState('')
+  const [dsbTypeCode, setDsbTypeCode] = useState<string>('')
 
   function resetForm() {
     setContractId(contracts[0]?.id ?? '')
     setInstallSeq('')
     setReceiptNo(''); setReceiptDate(new Date().toISOString().slice(0, 10))
     setAmount(''); setVat(''); setDescription('')
+    setDsbTypeCode('')
     setErr(null)
   }
 
@@ -288,6 +314,7 @@ function ReceiptsTable({
       amount_before_tax_sar: amt,
       vat_sar: vat ? Number(vat) : 0,
       description: description.trim() || null,
+      disbursement_type_code: dsbTypeCode || null,
     })
     setBusy(false)
     if (!res.ok) { setErr(res.error); return }
@@ -356,6 +383,15 @@ function ReceiptsTable({
             <label className="text-[10px] font-bold text-slate-600 mb-0.5 block">الضريبة</label>
             <input className={inp} type="number" step={0.01} min={0} value={vat} onChange={(e) => setVat(e.target.value)} disabled={busy} />
           </div>
+          <div className="col-span-2">
+            <label className="text-[10px] font-bold text-slate-600 mb-0.5 block">نوع الصرف</label>
+            <select className={inp} value={dsbTypeCode} onChange={(e) => setDsbTypeCode(e.target.value)} disabled={busy}>
+              <option value="">— اختر —</option>
+              {disbursementTypes.map((t) => (
+                <option key={t.code} value={t.code}>{t.label}</option>
+              ))}
+            </select>
+          </div>
           <div className="col-span-2 md:col-span-4">
             <label className="text-[10px] font-bold text-slate-600 mb-0.5 block">البيان</label>
             <input className={inp} value={description} onChange={(e) => setDescription(e.target.value)} disabled={busy} />
@@ -394,7 +430,12 @@ function ReceiptsTable({
               {receipts.map((r) => (
                 <tr key={r.id} className={editingId === r.id ? 'bg-teal-50/40' : ''}>
                   {editingId === r.id ? (
-                    <ReceiptEditRow r={r} onClose={() => setEditingId(null)} onSaved={() => { setEditingId(null); startTransition(() => router.refresh()) }} />
+                    <ReceiptEditRow
+                      r={r}
+                      disbursementTypes={disbursementTypes}
+                      onClose={() => setEditingId(null)}
+                      onSaved={() => { setEditingId(null); startTransition(() => router.refresh()) }}
+                    />
                   ) : (
                     <>
                       <td className="px-2 py-1.5 font-mono text-xs">{r.receipt_number ?? '—'}</td>
@@ -451,9 +492,10 @@ function StatusPill({ s }: { s: ReceiptLite['status'] }) {
 }
 
 function ReceiptEditRow({
-  r, onClose, onSaved,
+  r, onClose, onSaved, disbursementTypes,
 }: {
   r: ReceiptLite; onClose: () => void; onSaved: () => void
+  disbursementTypes: DisbursementTypeOption[]
 }) {
   const [num, setNum] = useState(r.receipt_number ?? '')
   const [date, setDate] = useState(r.receipt_date ?? '')
@@ -461,6 +503,7 @@ function ReceiptEditRow({
   const [amt, setAmt] = useState(String(r.amount_before_tax_sar))
   const [vat, setVat] = useState(String(r.vat_sar))
   const [desc, setDesc] = useState(r.description ?? '')
+  const [dsbTypeCode, setDsbTypeCode] = useState<string>(r.disbursement_type_code ?? '')
   const [busy, setBusy] = useState(false)
 
   async function onSave() {
@@ -474,6 +517,7 @@ function ReceiptEditRow({
         amount_before_tax_sar: Number(amt || 0),
         vat_sar: Number(vat || 0),
         description: desc,
+        disbursement_type_code: dsbTypeCode || null,
       },
     })
     setBusy(false)
@@ -487,7 +531,15 @@ function ReceiptEditRow({
       <td className="px-2 py-1"><input className={inp} type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={busy} dir="ltr" /></td>
       <td className="px-2 py-1"><input className={inp} type="number" min={1} value={seq} onChange={(e) => setSeq(e.target.value)} disabled={busy} /></td>
       <td className="px-2 py-1"><input className={inp + ' font-mono text-left'} type="number" step={0.01} value={amt} onChange={(e) => setAmt(e.target.value)} disabled={busy} /></td>
-      <td className="px-2 py-1" colSpan={2}>
+      <td className="px-2 py-1">
+        <select className={inp} value={dsbTypeCode} onChange={(e) => setDsbTypeCode(e.target.value)} disabled={busy}>
+          <option value="">نوع الصرف —</option>
+          {disbursementTypes.map((t) => (
+            <option key={t.code} value={t.code}>{t.label}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-2 py-1">
         <input className={inp} value={desc} onChange={(e) => setDesc(e.target.value)} disabled={busy} placeholder="البيان" />
       </td>
       <td className="px-2 py-1 text-center">

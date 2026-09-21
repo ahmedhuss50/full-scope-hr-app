@@ -108,6 +108,7 @@ export interface CreateVendorReceiptInput {
   amount_before_tax_sar: number
   vat_sar?: number | null
   description?: string | null
+  disbursement_type_code?: string | null    // نوع الصرف (matches dsb_cases codes)
 }
 
 export async function createVendorReceipt(
@@ -140,6 +141,7 @@ export async function createVendorReceipt(
     amount_before_tax_sar: input.amount_before_tax_sar,
     vat_sar: input.vat_sar ?? 0,
     description: (input.description ?? '').trim() || null,
+    disbursement_type_code: (input.disbursement_type_code ?? '').trim() || null,
     status: 'pending',
   }
   const { data, error } = await svc
@@ -168,13 +170,14 @@ export async function updateVendorReceipt(
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   const p = input.patch
-  if (p.contract_id !== undefined)           patch.contract_id = p.contract_id
-  if (p.installment_seq !== undefined)       patch.installment_seq = p.installment_seq
-  if (p.receipt_number !== undefined)        patch.receipt_number = (p.receipt_number ?? '').toString().trim() || null
-  if (p.receipt_date !== undefined)          patch.receipt_date = p.receipt_date || null
-  if (p.amount_before_tax_sar !== undefined) patch.amount_before_tax_sar = p.amount_before_tax_sar
-  if (p.vat_sar !== undefined)               patch.vat_sar = p.vat_sar
-  if (p.description !== undefined)           patch.description = (p.description ?? '').toString().trim() || null
+  if (p.contract_id !== undefined)             patch.contract_id = p.contract_id
+  if (p.installment_seq !== undefined)         patch.installment_seq = p.installment_seq
+  if (p.receipt_number !== undefined)          patch.receipt_number = (p.receipt_number ?? '').toString().trim() || null
+  if (p.receipt_date !== undefined)            patch.receipt_date = p.receipt_date || null
+  if (p.amount_before_tax_sar !== undefined)   patch.amount_before_tax_sar = p.amount_before_tax_sar
+  if (p.vat_sar !== undefined)                 patch.vat_sar = p.vat_sar
+  if (p.description !== undefined)             patch.description = (p.description ?? '').toString().trim() || null
+  if (p.disbursement_type_code !== undefined)  patch.disbursement_type_code = (p.disbursement_type_code ?? '').toString().trim() || null
 
   const { error } = await svc
     .from('dsb_vendor_receipts').update(patch).eq('id', input.id).eq('tenant_id', guard.tenantId)
@@ -226,7 +229,7 @@ export async function createCaseFromReceipt(
 
   const { data: r } = await svc
     .from('dsb_vendor_receipts')
-    .select('id, tenant_id, vendor_id, contract_id, receipt_number, amount_before_tax_sar, vat_sar, total_amount_sar, description, case_id')
+    .select('id, tenant_id, vendor_id, contract_id, receipt_number, amount_before_tax_sar, vat_sar, total_amount_sar, description, disbursement_type_code, case_id')
     .eq('id', input.receipt_id).maybeSingle()
   if (!r || (r as { tenant_id: string }).tenant_id !== guard.tenantId) {
     return { ok: false, error: 'الفاتورة غير موجودة.' }
@@ -234,7 +237,8 @@ export async function createCaseFromReceipt(
   const receipt = r as {
     id: string; vendor_id: string; contract_id: string | null
     receipt_number: string | null; amount_before_tax_sar: number; vat_sar: number
-    total_amount_sar: number; description: string | null; case_id: string | null
+    total_amount_sar: number; description: string | null
+    disbursement_type_code: string | null; case_id: string | null
   }
   if (receipt.case_id) return { ok: true, case_id: receipt.case_id }   // already has one
 
@@ -258,7 +262,7 @@ export async function createCaseFromReceipt(
     extracted_fields: {
       beneficiary_name_ar: vendor.name_ar,
       beneficiary_capacity_ar: vendor.service_category,
-      disbursement_type_code: 'construction',
+      disbursement_type_code: receipt.disbursement_type_code || 'construction',
       invoice_amount_sar: receipt.amount_before_tax_sar,
       vat_amount_sar: receipt.vat_sar,
     },
@@ -298,6 +302,113 @@ export async function markInstallmentPaid(
 
   const { error } = await svc
     .from('dsb_vendor_contracts').update({ payment_schedule: next }).eq('id', input.contract_id).eq('tenant_id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${project.project_id}/vendors`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Vendor-level developer downpayment + milestone plan (mig 083)
+// ---------------------------------------------------------------------------
+export interface VendorDownpaymentMilestone {
+  seq: number
+  label_ar: string
+  completion_pct: number
+  amount_sar: number
+  released_at?: string | null
+}
+
+async function loadVendorProject(
+  svc: ReturnType<typeof createSupabaseService>,
+  tenantId: string,
+  vendorId: string,
+): Promise<{ project_id: string } | null> {
+  const { data } = await svc
+    .from('dsb_vendors').select('id, tenant_id, project_id').eq('id', vendorId).maybeSingle()
+  if (!data) return null
+  const v = data as { tenant_id: string; project_id: string }
+  if (v.tenant_id !== tenantId) return null
+  return { project_id: v.project_id }
+}
+
+export async function updateVendorDownpayment(
+  input: { vendor_id: string; amount_sar: number },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const svc = createSupabaseService()
+
+  const amount = Number(input.amount_sar)
+  if (!Number.isFinite(amount) || amount < 0) return { ok: false, error: 'المبلغ غير صالح.' }
+
+  const project = await loadVendorProject(svc, guard.tenantId, input.vendor_id)
+  if (!project) return { ok: false, error: 'المورد غير موجود.' }
+
+  const { error } = await svc
+    .from('dsb_vendors').update({ developer_downpayment_sar: amount })
+    .eq('id', input.vendor_id).eq('tenant_id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${project.project_id}/vendors`)
+  return { ok: true }
+}
+
+export async function updateVendorDownpaymentPlan(
+  input: { vendor_id: string; plan: VendorDownpaymentMilestone[] },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const svc = createSupabaseService()
+
+  const cleaned: VendorDownpaymentMilestone[] = []
+  for (const r of Array.isArray(input.plan) ? input.plan : []) {
+    const seq = Number(r.seq)
+    const pct = Number(r.completion_pct)
+    const amt = Number(r.amount_sar)
+    const lb  = String(r.label_ar ?? '').trim()
+    if (!Number.isFinite(seq) || seq < 1) return { ok: false, error: 'رقم الدفعة غير صالح.' }
+    if (!lb) return { ok: false, error: `اسم الدفعة رقم ${seq} فارغ.` }
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return { ok: false, error: `نسبة الإنجاز للدفعة ${seq} غير صالحة.` }
+    if (!Number.isFinite(amt) || amt < 0) return { ok: false, error: `مبلغ الدفعة ${seq} غير صالح.` }
+    cleaned.push({
+      seq, label_ar: lb, completion_pct: pct, amount_sar: amt,
+      released_at: r.released_at ? String(r.released_at) : null,
+    })
+  }
+  cleaned.sort((a, b) => a.seq - b.seq)
+
+  const project = await loadVendorProject(svc, guard.tenantId, input.vendor_id)
+  if (!project) return { ok: false, error: 'المورد غير موجود.' }
+
+  const { error } = await svc
+    .from('dsb_vendors').update({ developer_downpayment_plan: cleaned })
+    .eq('id', input.vendor_id).eq('tenant_id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath(`/app/disbursements/admin/projects/${project.project_id}/vendors`)
+  return { ok: true }
+}
+
+export async function markVendorMilestoneReleased(
+  input: { vendor_id: string; seq: number; released_at: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const svc = createSupabaseService()
+
+  const { data: v } = await svc
+    .from('dsb_vendors').select('developer_downpayment_plan').eq('id', input.vendor_id)
+    .eq('tenant_id', guard.tenantId).maybeSingle()
+  const plan = (((v as { developer_downpayment_plan: VendorDownpaymentMilestone[] | null } | null)?.developer_downpayment_plan) ?? []) as VendorDownpaymentMilestone[]
+  const next = plan.map((m) => (m.seq === input.seq ? { ...m, released_at: input.released_at } : m))
+
+  const project = await loadVendorProject(svc, guard.tenantId, input.vendor_id)
+  if (!project) return { ok: false, error: 'المورد غير موجود.' }
+
+  const { error } = await svc
+    .from('dsb_vendors').update({ developer_downpayment_plan: next })
+    .eq('id', input.vendor_id).eq('tenant_id', guard.tenantId)
   if (error) return { ok: false, error: error.message }
 
   revalidatePath(`/app/disbursements/admin/projects/${project.project_id}/vendors`)
