@@ -40,16 +40,36 @@ async function loadWorkbook(templatePath: string): Promise<XLSX.WorkBook> {
 }
 
 function workbookToBuffer(wb: XLSX.WorkBook): Buffer {
+  // Force Excel to recalculate every formula when the file is opened.
+  // Without this, Excel may show the CACHED value from the template
+  // (computed against the sample data) instead of recomputing against
+  // the numbers we just wrote. SheetJS's Workbook typings don't declare
+  // CalcPr, so we set it via a targeted cast — the underlying xlsx
+  // writer respects the extra property when serializing.
+  const wbAny = wb.Workbook as (XLSX.WBProps & { CalcPr?: Record<string, unknown> }) | undefined ?? {}
+  ;(wb as XLSX.WorkBook).Workbook = {
+    ...wbAny,
+    CalcPr: {
+      ...(wbAny.CalcPr ?? {}),
+      fullCalcOnLoad: true,
+      calcMode: 'auto',
+    },
+  } as XLSX.WBProps
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true }) as Buffer
 }
 
 // Set a cell value while trying to preserve formatting from the template.
 // If the cell already exists we overwrite `.v` (and `.w`) and keep `.s`.
+// We DROP any existing `.f` (formula): the whole point of calling setCell
+// is that the caller wants their value, not a template formula that would
+// overwrite it on Excel's next recalc.
 function setCell(sheet: XLSX.WorkSheet, address: string, value: unknown, t?: XLSX.ExcelDataType) {
   const existing = sheet[address] as XLSX.CellObject | undefined
   const cell: XLSX.CellObject = existing
     ? { ...existing, v: value as XLSX.CellObject['v'], w: undefined }
     : { v: value as XLSX.CellObject['v'], t: t ?? (typeof value === 'number' ? 'n' : 's') }
+  // Strip any inherited formula — the caller wants this value verbatim.
+  if ('f' in cell) delete (cell as { f?: string }).f
   if (t) cell.t = t
   else if (typeof value === 'number') cell.t = 'n'
   else if (value instanceof Date) { cell.t = 'd' }
