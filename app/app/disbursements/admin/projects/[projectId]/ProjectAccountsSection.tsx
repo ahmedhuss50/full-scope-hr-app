@@ -2,10 +2,11 @@
 
 import { useState, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2, Upload, Check, X, Wallet } from 'lucide-react'
+import { Plus, Trash2, Upload, Check, X, Wallet, Pencil } from 'lucide-react'
 import {
   addProjectAccount,
   deleteProjectAccount,
+  updateProjectAccount,
   bulkUploadProjectAccounts,
 } from '../../edit-actions'
 
@@ -444,31 +445,7 @@ export function ProjectAccountsSection({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {initialAccounts.map((a) => (
-                <tr key={a.id} className="hover:bg-slate-50 transition">
-                  <Td><span className="font-semibold text-slate-900">{a.label}</span></Td>
-                  <Td>
-                    {a.account_role ? (
-                      <span className="inline-flex items-center rounded-md bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-200 px-1.5 py-0.5 text-[11px] font-bold">
-                        {ROLE_LABEL[a.account_role]}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </Td>
-                  <Td><span className="font-mono text-xs" dir="ltr">{a.account_number ?? '—'}</span></Td>
-                  <Td>{a.bank_name ?? '—'}</Td>
-                  <Td><span className="font-mono text-xs" dir="ltr">{a.iban ?? '—'}</span></Td>
-                  <Td>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(a.id, a.label)}
-                      title="حذف الحساب"
-                      className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-500 hover:text-red-700 hover:bg-red-50 transition"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  </Td>
-                </tr>
+                <AccountRow key={a.id} account={a} onDelete={onDelete} onRefresh={() => startTransition(() => router.refresh())} />
               ))}
             </tbody>
           </table>
@@ -488,4 +465,148 @@ function Th({ children }: { children: React.ReactNode }) {
 
 function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-3 py-2 text-sm text-slate-700 align-top">{children}</td>
+}
+
+/**
+ * One row of the accounts table — read-only by default, flips to an
+ * inline edit form when the pencil icon is clicked. All five fields
+ * (name / role / account number / bank / IBAN) are editable in place
+ * to match the "I want to edit each option" ask.
+ */
+function AccountRow({
+  account,
+  onDelete,
+  onRefresh,
+}: {
+  account: ProjectAccount
+  onDelete: (id: string, label: string) => void
+  onRefresh: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [label, setLabel] = useState(account.label)
+  const [role, setRole]                 = useState<'' | AccountRole>(account.account_role ?? '')
+  const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
+  const [bankName, setBankName]         = useState(account.bank_name ?? '')
+  const [iban, setIban]                 = useState(account.iban ?? '')
+
+  const cellCls =
+    'w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 ' +
+    'focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 disabled:bg-slate-50'
+
+  async function onSave() {
+    setError(null)
+    if (!label.trim()) { setError('اسم الحساب مطلوب.'); return }
+    setSaving(true)
+    const res = await updateProjectAccount({
+      id: account.id,
+      label,
+      account_number: accountNumber || null,
+      bank_name: bankName || null,
+      iban: iban || null,
+      account_role: role || null,
+    })
+    setSaving(false)
+    if (!res.ok) { setError(res.error); return }
+    setEditing(false)
+    onRefresh()
+  }
+
+  function onCancel() {
+    setLabel(account.label)
+    setRole(account.account_role ?? '')
+    setAccountNumber(account.account_number ?? '')
+    setBankName(account.bank_name ?? '')
+    setIban(account.iban ?? '')
+    setError(null)
+    setEditing(false)
+  }
+
+  if (!editing) {
+    return (
+      <tr className="hover:bg-slate-50 transition">
+        <Td><span className="font-semibold text-slate-900">{account.label}</span></Td>
+        <Td>
+          {account.account_role ? (
+            <span className="inline-flex items-center rounded-md bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-200 px-1.5 py-0.5 text-[11px] font-bold">
+              {ROLE_LABEL[account.account_role]}
+            </span>
+          ) : (
+            <span className="text-slate-400">—</span>
+          )}
+        </Td>
+        <Td><span className="font-mono text-xs" dir="ltr">{account.account_number ?? '—'}</span></Td>
+        <Td>{account.bank_name ?? '—'}</Td>
+        <Td><span className="font-mono text-xs" dir="ltr">{account.iban ?? '—'}</span></Td>
+        <Td>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              title="تعديل الحساب"
+              className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-500 hover:text-teal-700 hover:bg-teal-50 transition"
+            >
+              <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(account.id, account.label)}
+              title="حذف الحساب"
+              className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-500 hover:text-red-700 hover:bg-red-50 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </Td>
+      </tr>
+    )
+  }
+
+  return (
+    <tr className="bg-teal-50/40">
+      <Td>
+        <input className={cellCls} value={label} onChange={(e) => setLabel(e.target.value)} disabled={saving} autoFocus />
+      </Td>
+      <Td>
+        <select className={cellCls} value={role} onChange={(e) => setRole(e.target.value as '' | AccountRole)} disabled={saving}>
+          {ACCOUNT_ROLE_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+        </select>
+      </Td>
+      <Td>
+        <input className={cellCls} value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} disabled={saving} dir="ltr" />
+      </Td>
+      <Td>
+        <input className={cellCls} value={bankName} onChange={(e) => setBankName(e.target.value)} disabled={saving} />
+      </Td>
+      <Td>
+        <input className={cellCls} value={iban} onChange={(e) => setIban(e.target.value.toUpperCase())} disabled={saving} dir="ltr" placeholder="SA__ ____ ____ ____ ____ ____" />
+      </Td>
+      <Td>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            title="حفظ التعديلات"
+            className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-teal-600 text-white hover:bg-teal-700 transition disabled:opacity-50"
+          >
+            <Check className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            title="إلغاء"
+            className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+        {error && (
+          <div role="alert" className="mt-1 text-[11px] text-red-700 font-semibold">{error}</div>
+        )}
+      </Td>
+    </tr>
+  )
 }
