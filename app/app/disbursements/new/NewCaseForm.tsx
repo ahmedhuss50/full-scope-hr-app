@@ -9,6 +9,7 @@ import {
   registerUpload,
   finalizeStaffUpload,
 } from './actions'
+import { BeneficiaryCapacityPicker } from '@/components/BeneficiaryCapacityPicker'
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 
@@ -358,10 +359,8 @@ export function NewCaseForm({
                 placeholder="اترك فارغًا إذا اخترت من الأعلى" />
             </div>
             <div>
-              <label className={labelCls} htmlFor="ben_cap">صفة المستفيد</label>
-              <input id="ben_cap" className={inputCls}
-                value={beneficiaryCapacity} onChange={(e) => setBeneficiaryCapacity(e.target.value)}
-                placeholder="مثال: مقاول عام" />
+              <label className={labelCls}>صفة المستفيد</label>
+              <BeneficiaryCapacityPicker value={beneficiaryCapacity} onChange={setBeneficiaryCapacity} className={inputCls} />
             </div>
             <div>
               <label className={labelCls} htmlFor="inv_amount">قيمة الفاتورة قبل الضريبة</label>

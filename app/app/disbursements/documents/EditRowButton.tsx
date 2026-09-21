@@ -11,6 +11,7 @@ import { Pencil, X, Save, Loader2, ExternalLink, Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { updateCaseFields, updateExtractedFields, updatePaidFromAccount } from '../[caseId]/actions'
 import { updateCaseVendor, updateCaseIsDownpayment } from '../[caseId]/actions-vendor'
+import { BeneficiaryCapacityPicker } from '@/components/BeneficiaryCapacityPicker'
 
 export type EditableCase = {
   id: string
@@ -263,7 +264,9 @@ export function EditRowButton({
               <Section title="بيانات المستفيد">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="اسم المستفيد"><input type="text" className={inp} value={benName} onChange={(e) => setBenName(e.target.value)} disabled={busy} /></Field>
-                  <Field label="صفة المستفيد"><input type="text" className={inp} value={benCap} onChange={(e) => setBenCap(e.target.value)} disabled={busy} /></Field>
+                  <Field label="صفة المستفيد">
+                    <BeneficiaryCapacityPicker value={benCap} onChange={setBenCap} disabled={busy} />
+                  </Field>
                   <Field label="نوع الصرف">
                     <select className={inp} value={dsbType} onChange={(e) => setDsbType(e.target.value)} disabled={busy}>
                       <option value="">—</option>
