@@ -595,7 +595,7 @@ export default async function ProjectDetailPage({
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Link
             href={`/app/disbursements/admin/projects/${project.id}/reports/buyers-register`}
             className="group flex items-start gap-3 rounded-xl border border-teal-200 bg-teal-50/40 hover:bg-teal-50 hover:border-teal-300 transition p-4"
@@ -625,6 +625,22 @@ export default async function ProjectDetailPage({
               </div>
               <div className="text-xs text-slate-600 mt-0.5">
                 تحصيل داخل − صرف خارج = الرصيد الجاري، مع فلترة حسب الحساب.
+              </div>
+            </div>
+          </Link>
+          <Link
+            href={`/app/disbursements/admin/projects/${project.id}/reports/cpa`}
+            className="group flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 transition p-4"
+          >
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+              <FileText className="w-5 h-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-slate-900 group-hover:text-amber-800 transition">
+                نموذج المحاسب القانوني
+              </div>
+              <div className="text-xs text-slate-600 mt-0.5">
+                إعداد وتوليد التقرير الربعي (REGA CPA workbook).
               </div>
             </div>
           </Link>
