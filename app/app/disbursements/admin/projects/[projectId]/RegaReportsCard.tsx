@@ -59,6 +59,11 @@ export function RegaReportsCard({
   const [fromDate, setFromDate] = useState<string>(q.from)
   const [toDate, setToDate] = useState<string>(q.to)
 
+  // Whether to embed the REGA-approved letterhead + footer graphics on export.
+  // Default on — accountants usually want the official-looking version.
+  const [includeLetterhead, setIncludeLetterhead] = useState(true)
+  const letterheadParam = includeLetterhead ? '' : '&letterhead=0'
+
   // Year dropdown: current year ± 3
   const yearOptions = useMemo(() => {
     const cur = nowPeriod.year
@@ -72,8 +77,8 @@ export function RegaReportsCard({
   const effTo   = useCustomRange ? toDate   : q.to
 
   const deliveryHref   = `/api/dsb-delivery-notice?project_id=${projectId}&quarter=${quarter}&year=${year}`
-  const accountantHref = `/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${quarter}&year=${year}`
-  const buyersHref     = `/api/dsb-buyers-register-xlsx?project_id=${projectId}&from=${effFrom}&to=${effTo}`
+  const accountantHref = `/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${quarter}&year=${year}${letterheadParam}`
+  const buyersHref     = `/api/dsb-buyers-register-xlsx?project_id=${projectId}&from=${effFrom}&to=${effTo}${letterheadParam}`
 
   const btn =
     'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-bold shadow-sm hover:bg-teal-700 transition'
@@ -155,6 +160,21 @@ export function RegaReportsCard({
               className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-mono" dir="ltr" />
           </div>
         )}
+
+        {/* Letterhead + footer toggle — controls whether the exported .xlsx
+            includes the REGA-approved letterhead (top image) and footer
+            (bottom image) that are embedded in the template. Default on. */}
+        <label className="inline-flex items-start gap-2 text-xs cursor-pointer">
+          <input
+            type="checkbox"
+            checked={includeLetterhead}
+            onChange={(e) => setIncludeLetterhead(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+          />
+          <span className="text-slate-700">
+            تضمين ترويسة وتذييل الرسمية في التقارير (الصورة العلوية والسفلية)
+          </span>
+        </label>
       </div>
 
       {/* Download buttons — one per report type, all use the picked period */}

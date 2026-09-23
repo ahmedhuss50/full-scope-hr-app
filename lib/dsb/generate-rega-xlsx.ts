@@ -216,7 +216,11 @@ function retargetRow8Refs(formula: string, targetRow: number): string {
   return formula.replace(/(\$?[A-Z]+\$?)8(?![0-9])/g, `$1${targetRow}`)
 }
 
-export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buffer> {
+export async function generateBuyersRegisterXlsx(
+  projectId: string,
+  opts: { includeLetterhead?: boolean } = {},
+): Promise<Buffer> {
+  const includeLetterhead = opts.includeLetterhead !== false // default: true
   const svc = createSupabaseService()
 
   // Project + tenant identity for the header
@@ -822,12 +826,110 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows)
   if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
-  // Write to buffer, then post-process to inject Excel data validation on
-  // cell Q3 (رقم الرخصة). SheetJS's community writer doesn't emit data
-  // validation, so we crack the .xlsx (which is a zip), append a
-  // <dataValidations> element to the first worksheet's XML, and re-zip.
+  // Write to buffer, then post-process:
+  //   1. Restore letterhead + footer graphics that SheetJS strips (preserveTemplateAssets)
+  //   2. Inject the Q3 dropdown for رقم الرخصة (injectLicenseDropdown)
+  // Order matters: dropdown injection modifies sheet1.xml, so asset preservation
+  // (which touches media + drawings, not sheet XML) can run either side. We run
+  // asset preservation first so the dropdown injection works on the "final" XML.
   const rawBuffer = workbookToBuffer(wb)
-  return injectLicenseDropdown(rawBuffer, tenantLicenses)
+  const withAssets = includeLetterhead
+    ? preserveTemplateAssets(rawBuffer, BUYERS_TEMPLATE_PATH)
+    : rawBuffer
+  return injectLicenseDropdown(withAssets, tenantLicenses)
+}
+
+/**
+ * Preserve the template's letterhead + footer graphics on the output buffer.
+ *
+ * SheetJS's community writer strips oddHeader/oddFooter graphics and their
+ * backing drawings + media entries on round-trip. Because REGA-approved
+ * templates ship with a mandatory letterhead (top) and footer (bottom) as
+ * embedded PNG images referenced via Excel's `&G` code, dropping them makes
+ * the output non-compliant.
+ *
+ * The fix: after SheetJS writes the file, we open both the template and the
+ * output as zips (via pizzip), then copy from the template into the output:
+ *   • xl/media/*                    — the actual PNG bytes
+ *   • xl/drawings/*                 — drawing XML + VML for header/footer refs
+ *   • xl/drawings/_rels/*.rels     — drawing → media relationships
+ *   • xl/worksheets/_rels/*.rels   — sheet → drawing relationships
+ *   • [Content_Types].xml           — MIME declarations for image + drawing types
+ *
+ * The oddHeader/oddFooter `&G` markers in each sheet's XML are text and
+ * SheetJS preserves them, so we don't touch them.
+ */
+function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buffer {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const PizZip = require('pizzip') as new (data: Buffer | string) => {
+      file: (path?: string, data?: string) => { asText: () => string; asNodeBuffer: () => Buffer } | Array<{ name: string; asNodeBuffer: () => Buffer }> | null
+      files: Record<string, { name: string; dir: boolean; asText: () => string; asNodeBuffer: () => Buffer }>
+      generate: (opts: { type: 'nodebuffer'; compression: string }) => Buffer
+      remove: (path: string) => void
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as { readFileSync: (p: string) => Buffer }
+
+    const templateBuf = fs.readFileSync(templatePath)
+    const template = new PizZip(templateBuf)
+    const output = new PizZip(outputBuffer)
+
+    // Copy asset directories verbatim from template → output.
+    const assetPrefixes = [
+      'xl/media/',
+      'xl/drawings/',
+      'xl/drawings/_rels/',
+      'xl/worksheets/_rels/',
+    ]
+    for (const path of Object.keys(template.files)) {
+      const entry = template.files[path]
+      if (entry.dir) continue
+      if (!assetPrefixes.some((p) => path.startsWith(p))) continue
+      // Skip if the entry is a rels file for a sheet SheetJS may have replaced
+      // — we still overwrite because SheetJS won't have re-added the drawing rel.
+      const bytes = entry.asNodeBuffer()
+      if (output.files[path]) output.remove(path)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(output as any).file(path, bytes)
+    }
+
+    // Merge [Content_Types].xml — add image + drawing MIME types if missing.
+    const ctPath = '[Content_Types].xml'
+    const outCt = output.file(ctPath) as { asText: () => string } | null
+    const tplCt = template.file(ctPath) as { asText: () => string } | null
+    if (outCt && tplCt) {
+      let outXml = outCt.asText()
+      const tplXml = tplCt.asText()
+      // Pull each <Default> and <Override> from the template that references
+      // image or drawing types, and inject any that are missing from output.
+      const injectPatterns = [
+        /<Default[^>]*Extension="png"[^>]*\/>/g,
+        /<Default[^>]*Extension="jpeg"[^>]*\/>/g,
+        /<Default[^>]*Extension="jpg"[^>]*\/>/g,
+        /<Default[^>]*Extension="vml"[^>]*\/>/g,
+        /<Default[^>]*Extension="emf"[^>]*\/>/g,
+        /<Override[^>]*drawing[^>]*\/>/g,
+      ]
+      for (const re of injectPatterns) {
+        const matches = tplXml.match(re) ?? []
+        for (const tag of matches) {
+          if (!outXml.includes(tag)) {
+            outXml = outXml.replace('</Types>', `${tag}</Types>`)
+          }
+        }
+      }
+      output.remove(ctPath)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(output as any).file(ctPath, outXml)
+    }
+
+    return output.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[rega-xlsx] failed to preserve template letterhead/footer:', err)
+    return outputBuffer
+  }
 }
 
 /**
@@ -909,7 +1011,9 @@ export async function generateAccountantWorkbookXlsx(
   projectId: string,
   quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4',
   year: number,
+  opts: { includeLetterhead?: boolean } = {},
 ): Promise<Buffer> {
+  const includeLetterhead = opts.includeLetterhead !== false // default: true
   const svc = createSupabaseService()
 
   // ---- Load project + tenant + developer + accountant identity ----
@@ -1576,7 +1680,35 @@ export async function generateAccountantWorkbookXlsx(
     }
   }
 
-  return workbookToBuffer(wb)
+  // Sheet 7 — قائمة المركز المالي — header shows «كما في تاريخ التقرير».
+  // The label sits in E9 ("كما في") + F9 ("تاريخ التقرير") in the template;
+  // we overwrite F9 with the actual report date so users don't see the
+  // literal placeholder text. Also fill the report period label if present.
+  const s7 = wb.Sheets['قائمة المركز المالي (7)']
+  if (s7) {
+    const today = new Date()
+    const isoDate = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`
+    // Use quarter-end date instead of today for a truer "as of" reference
+    // (the balance sheet is meant to reflect end-of-quarter position).
+    const qEndForBalance = qEndISO
+    setCell(s7, 'F9', qEndForBalance, 's')
+  }
+
+  // Also set Sheet 1's report date (D2) to today's date if not already
+  // stamped by the report-meta section above.
+  if (s1) {
+    // D2 was set earlier to today's ISO date; format is fine, keep as-is.
+    // Explicitly re-write in case the earlier setCell used a different format.
+    const todayIso = new Date().toISOString().slice(0, 10)
+    setCell(s1, 'D2', todayIso, 's')
+  }
+
+  // Post-process: restore letterhead + footer images from the template
+  // (unless the caller opted out via includeLetterhead=false). SheetJS
+  // strips oddHeader/oddFooter `&G` graphics on round-trip; pizzip re-injects
+  // them so the output matches the REGA-approved layout exactly.
+  const raw = workbookToBuffer(wb)
+  return includeLetterhead ? preserveTemplateAssets(raw, ACCOUNTANT_TEMPLATE_PATH) : raw
 }
 
 // ---------------------------------------------------------------------------

@@ -54,8 +54,10 @@ export async function GET(req: Request) {
   }
   const projectName = (proj as { name_ar: string }).name_ar || 'project'
 
+  const letterheadParam = url.searchParams.get('letterhead')
+  const includeLetterhead = letterheadParam !== '0' && letterheadParam !== 'false'
   try {
-    const buf = await generateAccountantWorkbookXlsx(projectId, quarterKey, year)
+    const buf = await generateAccountantWorkbookXlsx(projectId, quarterKey, year, { includeLetterhead })
 
     // Stamp generation timestamp on the report record (best-effort; ignore
     // errors so we don't block the download).
