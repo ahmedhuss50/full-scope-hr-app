@@ -20,6 +20,8 @@ import { RevertSignatureButton } from './RevertSignatureButton'
 import { DeliverDocumentButton } from './DeliverDocumentButton'
 import { AttachmentsSection } from './AttachmentsSection'
 import { CaseVendorPicker, type VendorPickerOption } from './CaseVendorPicker'
+import { CaseDisbursementTypePicker, type DisbursementTypeOption } from './CaseDisbursementTypePicker'
+import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 import { resolveEffectiveTemplateId } from '@/lib/dsb/effective-checklist'
 
@@ -222,6 +224,32 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
         .map((v) => ({ id: v.id, name_ar: v.name_ar, category: v.service_category }))
     }
   }
+
+  // نوع الوثيقة dropdown options — pulled from tenant's أنواع الصرف list
+  // (mig 070 labels + 075 custom_* codes + 077 hidden defaults).
+  let disbursementTypeOptions: DisbursementTypeOption[] = []
+  try {
+    const { data: tenantRow } = await svc
+      .from('tenants')
+      .select('disbursement_type_labels, disbursement_type_hidden')
+      .eq('id', tenantId)
+      .maybeSingle()
+    const overrides = (tenantRow as { disbursement_type_labels: Record<string, string> | null } | null)?.disbursement_type_labels ?? {}
+    const hiddenArr = ((tenantRow as { disbursement_type_hidden: string[] | null } | null)?.disbursement_type_hidden ?? []) as string[]
+    const hidden = new Set(hiddenArr)
+    // Union: shipped default codes + any custom_* codes owner added.
+    const allCodes = new Set<string>([...Object.keys(DISBURSEMENT_TYPE_DEFAULTS), ...Object.keys(overrides ?? {})])
+    disbursementTypeOptions = Array.from(allCodes)
+      .filter((code) => !hidden.has(code))
+      .map((code) => ({ code, label: resolveDisbursementLabel(code, overrides) }))
+      // Sort: shipped codes first (in their canonical order), then custom_* alphabetically.
+      .sort((a, b) => {
+        const aCustom = a.code.startsWith('custom_')
+        const bCustom = b.code.startsWith('custom_')
+        if (aCustom !== bCustom) return aCustom ? 1 : -1
+        return a.label.localeCompare(b.label, 'ar')
+      })
+  } catch { /* tenants table read failure — leave options empty */ }
 
   // ---- Reassignment dropdowns (developer + project) ----
   // Feeds the "wrong client/project picked at upload" fix in EditCaseInfo.
@@ -536,13 +564,19 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                   in dsb_cases.extraction_cost_usd for owner-level reports. */}
             </div>
             {project?.id && (
-              <div className="pt-3 border-t border-slate-100">
+              <div className="pt-3 border-t border-slate-100 space-y-3">
                 <CaseVendorPicker
                   caseId={kase.id}
                   projectId={project.id}
                   initialVendorId={kase.vendor_id ?? null}
                   initialIsDownpayment={!!kase.is_downpayment}
                   options={vendorOptions}
+                  canEdit={canWrite}
+                />
+                <CaseDisbursementTypePicker
+                  caseId={kase.id}
+                  initialCode={(kase.extracted_fields as { disbursement_type_code?: string } | null)?.disbursement_type_code ?? null}
+                  options={disbursementTypeOptions}
                   canEdit={canWrite}
                 />
               </div>
