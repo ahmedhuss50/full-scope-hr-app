@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
   }
 
-  const letterheadParam = url.searchParams.get('letterhead')
+  const letterheadParam = req.nextUrl.searchParams.get('letterhead')
   const includeLetterhead = letterheadParam !== '0' && letterheadParam !== 'false'
   const bytes = await generateAccountantWorkbookXlsx(projectId, quarter, yearNum, { includeLetterhead })
   const ab = new ArrayBuffer(bytes.byteLength)

@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
   // ?letterhead=0 disables the REGA-approved letterhead + footer graphics.
   // Default (unset or =1) keeps them.
-  const letterheadParam = url.searchParams.get('letterhead')
+  const letterheadParam = req.nextUrl.searchParams.get('letterhead')
   const includeLetterhead = letterheadParam !== '0' && letterheadParam !== 'false'
   const bytes = await generateBuyersRegisterXlsx(projectId, { includeLetterhead })
   const ab = new ArrayBuffer(bytes.byteLength)
