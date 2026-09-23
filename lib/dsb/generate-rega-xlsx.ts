@@ -845,30 +845,36 @@ export async function generateBuyersRegisterXlsx(
 }
 
 /**
- * Preserve the template's letterhead + footer graphics on the output buffer.
+ * Preserve the template's full formatting on the output buffer.
  *
- * SheetJS's community writer strips oddHeader/oddFooter graphics and their
- * backing drawings + media entries on round-trip. Because REGA-approved
- * templates ship with a mandatory letterhead (top) and footer (bottom) as
- * embedded PNG images referenced via Excel's `&G` code, dropping them makes
- * the output non-compliant.
+ * SheetJS's community writer preserves cell values + formulas but strips
+ * many things Excel needs for pixel-perfect rendering:
+ *   • oddHeader/oddFooter graphics (letterhead + footer PNGs)
+ *   • Excel Table definitions (xl/tables/*.xml — referenced by structured
+ *     formulas like Table19[[#This Row],[عدد]])
+ *   • Theme colors + fonts (xl/theme/*.xml)
+ *   • Sheet-level tableParts + drawing r:id references
+ *   • Custom column widths, mergeCells, dataValidations
+ *   • Page setup: margins, print area, orientation, scaling
+ *   • Freeze panes and sheet views
  *
- * The fix: after SheetJS writes the file, we open both the template and the
- * output as zips (via pizzip), then copy from the template into the output:
- *   • xl/media/*                    — the actual PNG bytes
- *   • xl/drawings/*                 — drawing XML + VML for header/footer refs
- *   • xl/drawings/_rels/*.rels     — drawing → media relationships
- *   • xl/worksheets/_rels/*.rels   — sheet → drawing relationships
- *   • [Content_Types].xml           — MIME declarations for image + drawing types
+ * The fix: for each sheet, take the TEMPLATE's original sheet XML (which
+ * has all those elements intact) and splice in only the <sheetData> block
+ * from SheetJS's output. This gives 100% formatting fidelity because every
+ * worksheet-level element (cols, mergeCells, pageSetup, headerFooter,
+ * drawing, tableParts, sheetProtection, sheetViews) comes from the
+ * template verbatim — only the actual cell values change.
  *
- * The oddHeader/oddFooter `&G` markers in each sheet's XML are text and
- * SheetJS preserves them, so we don't touch them.
+ * We also copy all supporting binary assets: media (PNGs), drawings (VML
+ * + XML), theme, and Excel Tables. Styles.xml is preserved from SheetJS's
+ * output because its cell `s=` indices reference it — replacing would
+ * mispaint every cell.
  */
 function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buffer {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const PizZip = require('pizzip') as new (data: Buffer | string) => {
-      file: (path?: string, data?: string) => { asText: () => string; asNodeBuffer: () => Buffer } | Array<{ name: string; asNodeBuffer: () => Buffer }> | null
+      file: (path?: string, data?: string) => { asText: () => string; asNodeBuffer: () => Buffer } | null
       files: Record<string, { name: string; dir: boolean; asText: () => string; asNodeBuffer: () => Buffer }>
       generate: (opts: { type: 'nodebuffer'; compression: string }) => Buffer
       remove: (path: string) => void
@@ -880,34 +886,87 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
     const template = new PizZip(templateBuf)
     const output = new PizZip(outputBuffer)
 
-    // Copy asset directories verbatim from template → output.
+    // ---------------------------------------------------------------------
+    // STEP 1 — Copy binary + non-cell-XML assets verbatim from template.
+    //
+    // These are things SheetJS either strips entirely or normalises in a
+    // way that loses formatting fidelity. Styles.xml is deliberately NOT
+    // copied — cell style refs in the output would break.
+    // ---------------------------------------------------------------------
     const assetPrefixes = [
       'xl/media/',
       'xl/drawings/',
       'xl/drawings/_rels/',
       'xl/worksheets/_rels/',
+      'xl/tables/',
+      'xl/tables/_rels/',
+      'xl/theme/',
+      'xl/charts/',
+      'xl/charts/_rels/',
     ]
     for (const path of Object.keys(template.files)) {
       const entry = template.files[path]
       if (entry.dir) continue
       if (!assetPrefixes.some((p) => path.startsWith(p))) continue
-      // Skip if the entry is a rels file for a sheet SheetJS may have replaced
-      // — we still overwrite because SheetJS won't have re-added the drawing rel.
       const bytes = entry.asNodeBuffer()
       if (output.files[path]) output.remove(path)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(output as any).file(path, bytes)
     }
 
-    // Merge [Content_Types].xml — add image + drawing MIME types if missing.
+    // ---------------------------------------------------------------------
+    // STEP 2 — Splice <sheetData> from output into each template sheet XML.
+    //
+    // The template's sheet XML is what Excel opens with all formatting
+    // intact. We keep everything from the template except the <sheetData>
+    // block, which we replace with SheetJS's output (containing our
+    // fresh cell values + formulas).
+    // ---------------------------------------------------------------------
+    const sheetDataRegex = /<sheetData\b[^>]*>[\s\S]*?<\/sheetData>|<sheetData\b[^>]*\/>/
+    const dimensionRegex = /<dimension\s+ref="[^"]*"\s*\/>/
+
+    for (const path of Object.keys(template.files)) {
+      if (!path.startsWith('xl/worksheets/sheet') || !path.endsWith('.xml')) continue
+      if (path.includes('/_rels/')) continue
+
+      const tplSheet = template.file(path) as { asText: () => string } | null
+      const outSheet = output.file(path) as { asText: () => string } | null
+      if (!tplSheet || !outSheet) continue
+
+      const tplXml = tplSheet.asText()
+      const outXml = outSheet.asText()
+
+      // Extract SheetJS's <sheetData>...</sheetData> block (has our cells).
+      const outSheetDataMatch = outXml.match(sheetDataRegex)
+      if (!outSheetDataMatch) continue
+      const outSheetData = outSheetDataMatch[0]
+
+      // Extract SheetJS's <dimension ref="..."/> so we can update the
+      // template's dimension to match the actual data range.
+      const outDimMatch = outXml.match(dimensionRegex)
+      const outDim = outDimMatch ? outDimMatch[0] : null
+
+      // Splice into template XML: replace template's <sheetData> block +
+      // <dimension> ref with output's versions. Everything else (cols,
+      // mergeCells, pageSetup, headerFooter, drawing, tableParts) stays.
+      let merged = tplXml.replace(sheetDataRegex, outSheetData)
+      if (outDim) merged = merged.replace(dimensionRegex, outDim)
+
+      output.remove(path)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(output as any).file(path, merged)
+    }
+
+    // ---------------------------------------------------------------------
+    // STEP 3 — Merge [Content_Types].xml so Excel recognises the copied
+    // media / drawing / table types.
+    // ---------------------------------------------------------------------
     const ctPath = '[Content_Types].xml'
     const outCt = output.file(ctPath) as { asText: () => string } | null
     const tplCt = template.file(ctPath) as { asText: () => string } | null
     if (outCt && tplCt) {
       let outXml = outCt.asText()
       const tplXml = tplCt.asText()
-      // Pull each <Default> and <Override> from the template that references
-      // image or drawing types, and inject any that are missing from output.
       const injectPatterns = [
         /<Default[^>]*Extension="png"[^>]*\/>/g,
         /<Default[^>]*Extension="jpeg"[^>]*\/>/g,
@@ -915,6 +974,8 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
         /<Default[^>]*Extension="vml"[^>]*\/>/g,
         /<Default[^>]*Extension="emf"[^>]*\/>/g,
         /<Override[^>]*drawing[^>]*\/>/g,
+        /<Override[^>]*table[^>]*\/>/g,
+        /<Override[^>]*chart[^>]*\/>/g,
       ]
       for (const re of injectPatterns) {
         const matches = tplXml.match(re) ?? []
@@ -932,7 +993,7 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
     return output.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn('[rega-xlsx] failed to preserve template letterhead/footer:', err)
+    console.warn('[rega-xlsx] failed to preserve template formatting:', err)
     return outputBuffer
   }
 }
