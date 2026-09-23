@@ -53,3 +53,55 @@ export function resolveDisbursementLabel(
 ): string {
   return overrides?.[code] ?? DISBURSEMENT_TYPE_DEFAULTS[code] ?? code
 }
+
+// -----------------------------------------------------------------------
+// Main disbursement types (migration 088) — the outer layer that appears
+// on Sheet 2 «البند» + Sheet 3 debit rows of the CPA report. Each sub-type
+// above is assigned to one of these.
+// -----------------------------------------------------------------------
+
+export const DISBURSEMENT_MAIN_TYPE_DEFAULTS: Record<string, string> = {
+  main_construction:    'تكاليف انشائية',
+  main_admin_marketing: 'مصاريف ادارية وتسويقية',
+  main_customer_refund: 'ايداعات عملاء مستردة',
+  main_bank_fees:       'عمولات بنكية',
+  main_other:           'أخرى',
+}
+
+/**
+ * Default sub → main assignment. Consumers should prefer the tenant's
+ * `disbursement_type_main` JSONB, then fall back to this table, then
+ * finally to `main_other` if the sub-code isn't recognised at all.
+ */
+export const DISBURSEMENT_TYPE_MAIN_DEFAULTS: Record<string, string> = {
+  construction:          'main_construction',
+  admin_marketing:       'main_admin_marketing',
+  bank_financing:        'main_other',
+  moh_incentive:         'main_other',
+  unit_seriousness_fees: 'main_other',
+  vat_project_registry:  'main_other',
+  vat_sales_payment:     'main_other',
+  customer_refund:       'main_customer_refund',
+  bank_fees:             'main_bank_fees',
+  other:                 'main_other',
+}
+
+export function resolveMainDisbursementLabel(
+  code: string,
+  overrides: LabelOverrides,
+): string {
+  return overrides?.[code] ?? DISBURSEMENT_MAIN_TYPE_DEFAULTS[code] ?? code
+}
+
+/**
+ * Resolve a sub-type code → its main-type code, using the tenant's
+ * assignment map first, then the shipped default, then `main_other`.
+ */
+export function resolveMainForSub(
+  subCode: string,
+  assignments: Record<string, string> | null | undefined,
+): string {
+  const code = (subCode ?? '').trim()
+  if (!code) return 'main_other'
+  return assignments?.[code] ?? DISBURSEMENT_TYPE_MAIN_DEFAULTS[code] ?? 'main_other'
+}

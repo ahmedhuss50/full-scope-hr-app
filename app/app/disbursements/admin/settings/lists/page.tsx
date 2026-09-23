@@ -13,10 +13,15 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { SharesEditor } from './SharesEditor'
 import { VendorCategoriesEditor, type VendorCategory } from './VendorCategoriesEditor'
 import { LabelListEditor, type LabelRow } from './LabelListEditor'
+import { MainTypesEditor, type MainTypeRow, type SubTypeRow } from './MainTypesEditor'
 import type { DistributionShares } from './actions'
 import {
   DEPOSIT_CATEGORY_DEFAULTS,
   DISBURSEMENT_TYPE_DEFAULTS,
+  DISBURSEMENT_MAIN_TYPE_DEFAULTS,
+  resolveDisbursementLabel,
+  resolveMainDisbursementLabel,
+  resolveMainForSub,
 } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
@@ -45,7 +50,7 @@ export default async function ListsAndPercentagesPage() {
   const [tenantRes, vendorCatsRes] = await Promise.all([
     svc
       .from('tenants')
-      .select('deposit_distribution_shares, deposit_category_labels, disbursement_type_labels, deposit_category_hidden, disbursement_type_hidden')
+      .select('deposit_distribution_shares, deposit_category_labels, disbursement_type_labels, deposit_category_hidden, disbursement_type_hidden, disbursement_main_types, disbursement_main_types_hidden, disbursement_type_main')
       .eq('id', profile.tenant_id as string)
       .maybeSingle(),
     svc
@@ -106,6 +111,44 @@ export default async function ListsAndPercentagesPage() {
       disbursementRows.push({ code, defaultLabel: label, isCustom: true })
     }
   }
+
+  // ---- Main disbursement types (migration 088) ----
+  const mainTypesOverrides = ((tenantRes.data as { disbursement_main_types: Record<string, string> | null } | null)?.disbursement_main_types ?? {}) as Record<string, string>
+  const mainTypesHiddenArr = (((tenantRes.data as { disbursement_main_types_hidden: string[] | null } | null)?.disbursement_main_types_hidden ?? []) as string[])
+  const mainTypesHidden = new Set(mainTypesHiddenArr)
+  const subToMain = ((tenantRes.data as { disbursement_type_main: Record<string, string> | null } | null)?.disbursement_type_main ?? {}) as Record<string, string>
+
+  // Build main-type rows: union of shipped defaults + tenant custom_main_*.
+  const mainAllCodes = new Set<string>([...Object.keys(DISBURSEMENT_MAIN_TYPE_DEFAULTS), ...Object.keys(mainTypesOverrides)])
+  const visibleMainTypes: MainTypeRow[] = []
+  const hiddenMainTypes: MainTypeRow[] = []
+  for (const code of mainAllCodes) {
+    const row: MainTypeRow = {
+      code,
+      label: resolveMainDisbursementLabel(code, mainTypesOverrides),
+      isCustom: code.startsWith('custom_main_'),
+      isHidden: mainTypesHidden.has(code),
+    }
+    if (mainTypesHidden.has(code)) hiddenMainTypes.push(row)
+    else visibleMainTypes.push(row)
+  }
+  // Sort: shipped first in canonical order, then custom_main_* alphabetically.
+  const mainDefaultsOrder = Object.keys(DISBURSEMENT_MAIN_TYPE_DEFAULTS)
+  visibleMainTypes.sort((a, b) => {
+    const aIdx = mainDefaultsOrder.indexOf(a.code)
+    const bIdx = mainDefaultsOrder.indexOf(b.code)
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
+    if (aIdx !== -1) return -1
+    if (bIdx !== -1) return 1
+    return a.label.localeCompare(b.label, 'ar')
+  })
+
+  // Build sub-type rows for the assignment table (only visible sub-types).
+  const subTypeRows: SubTypeRow[] = disbursementRows.map((r) => ({
+    code: r.code,
+    label: resolveDisbursementLabel(r.code, disbursementLabelOverrides),
+    currentMain: resolveMainForSub(r.code, subToMain),
+  }))
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto" dir="rtl">
@@ -169,13 +212,30 @@ export default async function ListsAndPercentagesPage() {
       {/* Disbursement types — editable labels (codes fixed) */}
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
         <div>
-          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف (نوع الصرف)</h2>
+          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف الفرعية (نوع الصرف)</h2>
           <p className="text-xs text-slate-500 mt-1">
-            القائمة التي يستخدمها الذكاء الاصطناعي لتصنيف سندات الصرف تلقائيًا. يمكن إعادة التسمية —
-            الأكواد تبقى ثابتة لضمان دقة التصنيف الآلي.
+            القائمة التفصيلية التي يستخدمها الذكاء الاصطناعي لتصنيف سندات الصرف تلقائيًا.
+            كل نوع فرعي مرتبط بنوع رئيسي واحد أدناه — وهو الذي يظهر في تقارير REGA.
           </p>
         </div>
         <LabelListEditor kind="disbursement" rows={disbursementRows} overrides={disbursementLabelOverrides} />
+      </section>
+
+      {/* Main disbursement types (mig 088) — editable + sub → main mapping */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
+        <div>
+          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف الرئيسية</h2>
+          <p className="text-xs text-slate-500 mt-1">
+            الأنواع الرئيسية هي ما يظهر فعليًا في عمود «البند» بورقة (2) وثائق الصرف
+            وأسطر «العمليات المالية» بورقة (3) من نموذج المحاسب القانوني. كل نوع فرعي
+            (من القائمة أعلاه) يُعيَّن إلى نوع رئيسي واحد — عيّنها من الجدول أدناه.
+          </p>
+        </div>
+        <MainTypesEditor
+          mainTypes={visibleMainTypes}
+          hiddenMainTypes={hiddenMainTypes}
+          subTypes={subTypeRows}
+        />
       </section>
     </div>
   )

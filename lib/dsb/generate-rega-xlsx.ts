@@ -26,6 +26,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as XLSX from 'xlsx'
 import { createSupabaseService } from '@/lib/supabase/server'
+import {
+  DISBURSEMENT_MAIN_TYPE_DEFAULTS,
+  resolveMainDisbursementLabel,
+  resolveMainForSub,
+} from '@/lib/dsb/category-labels'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1038,10 +1043,23 @@ export async function generateAccountantWorkbookXlsx(
   }
   const { data: tenantRow } = await svc
     .from('tenants')
-    .select('name, accountant_office_name, accountant_signer_name, accountant_signer_email, accountant_signer_phone')
+    .select('name, accountant_office_name, accountant_signer_name, accountant_signer_email, accountant_signer_phone, disbursement_main_types, disbursement_type_main')
     .eq('id', project.tenant_id)
     .maybeSingle()
-  const tenant = tenantRow as { accountant_office_name: string | null; accountant_signer_name: string | null; accountant_signer_email: string | null; accountant_signer_phone: string | null } | null
+  const tenant = tenantRow as {
+    accountant_office_name: string | null
+    accountant_signer_name: string | null
+    accountant_signer_email: string | null
+    accountant_signer_phone: string | null
+    disbursement_main_types: Record<string, string> | null
+    disbursement_type_main: Record<string, string> | null
+  } | null
+  // Main-type maps (migration 088). Fall back to shipped defaults if the
+  // tenant hasn't customised anything. Used to resolve Sheet 2 «البند» and
+  // Sheet 3 debit buckets from a case's disbursement_type_code.
+  const mainTypeLabels = tenant?.disbursement_main_types ?? DISBURSEMENT_MAIN_TYPE_DEFAULTS
+  const subToMainMap = tenant?.disbursement_type_main ?? {}
+  const labelForMainCode = (mainCode: string) => resolveMainDisbursementLabel(mainCode, mainTypeLabels)
 
   let developerName: string | null = null
   if (project.developer_id) {
@@ -1294,14 +1312,23 @@ export async function generateAccountantWorkbookXlsx(
       const acctRole  = c.paid_from_account_id ? (acctRoleById.get(c.paid_from_account_id) ?? null) : null
 
       // --- Column C: البند (nawa'a al-sarf) --------------------------------
-      // Priority: explicit disbursement_type_code → account role → 'أخرى'.
-      // A signed case that came in through the construction account is
-      // construction even if the AI never tagged it — the account role is
-      // usually a reliable proxy.
+      // Two-tier lookup (migration 088):
+      //   sub_code (disbursement_type_code) → main_code → main_label
+      // If the case has no explicit sub-code, fall back to inferring from
+      // the paid-from account's role. Custom sub-types roll up to whichever
+      // main-type the owner assigned in القوائم والنسب.
       const typeCode  = (c.extracted_fields as { disbursement_type_code?: string } | null)?.disbursement_type_code ?? ''
-      const typeLabel = mapDisbursementTypeToAr(typeCode) !== 'أخرى'
-        ? mapDisbursementTypeToAr(typeCode)
-        : mapAccountRoleToItemLabel(acctRole)
+      let mainCode: string
+      if (typeCode) {
+        mainCode = resolveMainForSub(typeCode, subToMainMap)
+      } else if (acctRole === 'construction') {
+        mainCode = 'main_construction'
+      } else if (acctRole === 'admin_marketing') {
+        mainCode = 'main_admin_marketing'
+      } else {
+        mainCode = 'main_other'
+      }
+      const typeLabel = labelForMainCode(mainCode)
 
       // --- Column F: اسم المستفيد ------------------------------------------
       // Priority: extracted_fields.beneficiary_name_ar → linked vendor name.

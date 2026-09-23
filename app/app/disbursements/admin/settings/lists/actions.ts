@@ -416,6 +416,211 @@ export async function restoreDefaultLabel(
 }
 
 // ---------------------------------------------------------------------------
+// Main disbursement types (migration 088) — the outer layer that populates
+// Sheet 2 «البند» + Sheet 3 debit rows of the CPA report. Owner CRUD.
+// ---------------------------------------------------------------------------
+
+const MAIN_TYPE_DEFAULT_CODES = [
+  'main_construction',
+  'main_admin_marketing',
+  'main_customer_refund',
+  'main_bank_fees',
+  'main_other',
+] as const
+
+/**
+ * Add a new custom main disbursement type. Custom codes get a `custom_main_`
+ * prefix + 6-char random slug so they don't collide with the shipped defaults.
+ */
+export async function addMainDisbursementType(
+  input: { label_ar: string },
+): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const label = (input.label_ar ?? '').trim()
+  if (!label) return { ok: false, error: 'اسم النوع الرئيسي مطلوب.' }
+  if (label.length > 80) return { ok: false, error: 'الاسم طويل جدًا (بحد أقصى 80 حرفًا).' }
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select('disbursement_main_types')
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as { disbursement_main_types: Record<string, string> | null } | null)?.disbursement_main_types ?? {}) as Record<string, string>
+
+  // Reject duplicate labels (case-insensitive, trimmed).
+  const norm = label.replace(/\s+/g, ' ').toLowerCase()
+  for (const [, v] of Object.entries(current)) {
+    if (String(v).replace(/\s+/g, ' ').toLowerCase() === norm) {
+      return { ok: false, error: 'يوجد نوع رئيسي بنفس الاسم.' }
+    }
+  }
+
+  // Generate a stable custom code.
+  const slug = Math.random().toString(36).slice(2, 8)
+  const code = `custom_main_${slug}`
+  const next = { ...current, [code]: label }
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ disbursement_main_types: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true, code }
+}
+
+/** Rename a main type (shipped OR custom). */
+export async function renameMainDisbursementType(
+  input: { code: string; label_ar: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const code = (input.code ?? '').trim()
+  const label = (input.label_ar ?? '').trim()
+  if (!code || !label) return { ok: false, error: 'الرمز والاسم مطلوبان.' }
+  if (label.length > 80) return { ok: false, error: 'الاسم طويل جدًا.' }
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select('disbursement_main_types')
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as { disbursement_main_types: Record<string, string> | null } | null)?.disbursement_main_types ?? {}) as Record<string, string>
+  const next = { ...current, [code]: label }
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ disbursement_main_types: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+/**
+ * Delete a main disbursement type.
+ *   • custom_main_* codes → removed from the labels JSONB
+ *   • shipped defaults    → added to disbursement_main_types_hidden array
+ * Any sub-type mapped to this main gets reassigned to main_other automatically.
+ */
+export async function deleteMainDisbursementType(
+  input: { code: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const code = (input.code ?? '').trim()
+  if (!code) return { ok: false, error: 'الرمز مطلوب.' }
+  if (code === 'main_other') return { ok: false, error: 'لا يمكن حذف «أخرى» — تُستخدم كنوع افتراضي.' }
+
+  const isCustom = code.startsWith('custom_main_')
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select('disbursement_main_types, disbursement_main_types_hidden, disbursement_type_main')
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const labels = ((t as { disbursement_main_types: Record<string, string> | null } | null)?.disbursement_main_types ?? {}) as Record<string, string>
+  const hidden = (((t as { disbursement_main_types_hidden: string[] | null } | null)?.disbursement_main_types_hidden ?? []) as string[])
+  const mapping = ((t as { disbursement_type_main: Record<string, string> | null } | null)?.disbursement_type_main ?? {}) as Record<string, string>
+
+  const nextLabels = { ...labels }
+  const nextHidden = [...hidden]
+  if (isCustom) {
+    delete nextLabels[code]
+  } else if (MAIN_TYPE_DEFAULT_CODES.includes(code as typeof MAIN_TYPE_DEFAULT_CODES[number])) {
+    if (!nextHidden.includes(code)) nextHidden.push(code)
+  } else {
+    return { ok: false, error: 'رمز غير معروف.' }
+  }
+
+  // Reassign any sub-types that pointed at this main → main_other.
+  const nextMapping: Record<string, string> = {}
+  for (const [subCode, mainCode] of Object.entries(mapping)) {
+    nextMapping[subCode] = mainCode === code ? 'main_other' : mainCode
+  }
+
+  const { error } = await svc
+    .from('tenants')
+    .update({
+      disbursement_main_types: nextLabels,
+      disbursement_main_types_hidden: nextHidden,
+      disbursement_type_main: nextMapping,
+    })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+/** Un-hide a previously deleted default main type. */
+export async function restoreMainDisbursementType(
+  input: { code: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const code = (input.code ?? '').trim()
+  if (!code) return { ok: false, error: 'الرمز مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select('disbursement_main_types_hidden')
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = (((t as { disbursement_main_types_hidden: string[] | null } | null)?.disbursement_main_types_hidden ?? []) as string[])
+  const next = current.filter((c) => c !== code)
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ disbursement_main_types_hidden: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+/**
+ * Assign a sub-type to a main-type. Pass main_code = null to clear the
+ * assignment (sub-type falls back to main_other at read time).
+ */
+export async function assignSubToMainDisbursement(
+  input: { sub_code: string; main_code: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const guard = await resolveOwner()
+  if ('error' in guard) return { ok: false, error: guard.error }
+  const subCode = (input.sub_code ?? '').trim()
+  const mainCode = (input.main_code ?? '').trim() || null
+  if (!subCode) return { ok: false, error: 'الرمز الفرعي مطلوب.' }
+
+  const svc = createSupabaseService()
+  const { data: t } = await svc
+    .from('tenants')
+    .select('disbursement_type_main')
+    .eq('id', guard.tenantId)
+    .maybeSingle()
+  const current = ((t as { disbursement_type_main: Record<string, string> | null } | null)?.disbursement_type_main ?? {}) as Record<string, string>
+  const next = { ...current }
+  if (mainCode) next[subCode] = mainCode
+  else delete next[subCode]
+
+  const { error } = await svc
+    .from('tenants')
+    .update({ disbursement_type_main: next })
+    .eq('id', guard.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/settings/lists')
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Vendor / service-provider categories — CRUD
 // ---------------------------------------------------------------------------
 
