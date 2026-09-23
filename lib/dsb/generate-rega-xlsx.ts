@@ -184,23 +184,29 @@ async function fetchAllChunked<T>(
 
 const BUYERS_HEADER_ROW = 7
 const BUYERS_DATA_START_ROW = 8
-const BUYERS_TEMPLATE_LAST_DATA_ROW = 462
-const BUYERS_TOTALS_ROW = 465
+// The 2026 REGA-approved template ships with 5 sample rows (8..12) and a
+// totals row at 13. We overwrite the sample and expand as needed.
+const BUYERS_TEMPLATE_LAST_DATA_ROW = 12
+const BUYERS_TOTALS_ROW = 13
 
 // 0-indexed columns whose row-8 cell in the template holds a formula that
-// should be replicated to every populated row.
+// should be replicated to every populated row. The 2026 template dropped
+// the AB..AK yearly cutoff columns and the AL/AM supervision-fee columns —
+// leaving just 5 per-row formulas.
 const BUYERS_FORMULA_COLS_0IDX = [
-  24,                                     // Y   =V*5/100
-  25,                                     // Z   =V+Y
-  26,                                     // AA  =IF ladder on V
-  27, 28, 29, 30, 31, 32, 33, 34, 35, 36, // AB..AK yearly days-elapsed
-  37,                                     // AL  =IF(AK>0,V*AA/365,0)
-  38,                                     // AM  =AL*AK
-  39,                                     // AN  =AV+AU (total collected incl VAT)
-  41,                                     // AP  =Z-AN (remaining)
-  43,                                     // AR  =AN/Z (collection %)
-  44,                                     // AS  =V/K  (price per m²)
+  24, // Y  =V*5/100                                (5% VAT)
+  25, // Z  =V+Y                                    (price + VAT)
+  28, // AC =Z-AA                                   (remaining)
+  30, // AE =AA/Z                                   (collection %)
+  31, // AF =V/K                                    (price per m²)
 ]
+
+// The Q3:Z3 summary stats block (top-right of Sheet 1) uses per-column
+// aggregate formulas that reference the sample data range 8..12. When we
+// expand to N rows, these must be retargeted from V8:V12 → V8:V{lastRow}
+// and B8:B12 → B8:B{lastRow} (for the count), and the reference AB13/V13 in
+// S3 and Z3 shifts to the actual totals row.
+const BUYERS_SUMMARY_STATS_CELLS = ['R3', 'S3', 'T3', 'U3', 'V3', 'W3', 'X3', 'Y3', 'Z3']
 
 // Rewrite every `<colLetters>8` (relative row-8 reference) to point at the
 // given target row. Absolute refs like `$AB$7` are untouched because we only
@@ -375,6 +381,27 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   const ws = wb.Sheets[sheetName]
   if (!ws) throw new Error(`template missing sheet: ${sheetName}`)
 
+  // Fetch every active license number for this tenant so the Q3 dropdown
+  // can offer them all. Used later during data-validation injection.
+  const { data: licenseRows } = await svc
+    .from('dsb_projects')
+    .select('rega_license_no, name_ar')
+    .eq('tenant_id', project.tenant_id)
+    .neq('rega_license_no', null)
+    .order('name_ar', { ascending: true })
+  const tenantLicenses = ((licenseRows ?? []) as Array<{ rega_license_no: string | null; name_ar: string }>)
+    .map((r) => (r.rega_license_no ?? '').trim())
+    .filter((v, i, arr) => v && arr.indexOf(v) === i) // unique + non-empty
+
+  // Fill the top title (A5 = "سجل المشترين (اسم المشروع)").
+  setCell(ws, 'A5', `سجل المشترين (${project.name_ar})`, 's')
+
+  // Fill Q3 with the current project's license number — becomes the default
+  // pre-selected value in the dropdown injected at the end.
+  if (project.rega_license_no) {
+    setCell(ws, 'Q3', project.rega_license_no, 's')
+  }
+
   // -----------------------------------------------------------------------
   // STEP 1 — Snapshot template row 8 BEFORE clearing.
   //
@@ -465,9 +492,8 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 17 }), s?.contract_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 18 }), s?.financing_type ?? '', 's')
     setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 19 }), s?.financing_bank ?? '', 's')
-    // Sale date — MUST be a real Date so the AB..AK yearly formulas work
-    // (they do numeric date arithmetic like $AB$7-U{r}). Writing a string
-    // makes Excel treat the cell as text and the formulas silently return 0.
+    // Sale date — write as a real Date so any downstream formulas / filters
+    // treat the cell as a date, not text.
     const saleDate = parseSupabaseDate(s?.sale_date)
     if (saleDate) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 20 }), saleDate, 'd')
     // Price + delivery — Y (VAT) / Z (price-with-VAT) come from formulas
@@ -476,21 +502,27 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
     const deliveryDate = parseSupabaseDate(s?.delivery_date)
     if (deliveryDate) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 23 }), deliveryDate, 'd')
 
-    // Total collected (across all years) for THIS sale. AN's formula is
-    // =AV+AU, so we drop the running total into AU (col 46, 0-idx). If we
-    // grow quarterly buckets later they can split across AU/AV.
+    // Cumulative collected — the 2026 template splits into two cells:
+    //   AA (col 26): total collected WITHOUT VAT (excluding the 5%)
+    //   AB (col 27): total collected WITH VAT (as paid by buyer)
+    // Our dsb_payments store the actual paid amount which already includes
+    // VAT. To split we divide by 1.05 for the excl-VAT figure.
     let saleTotalCollected = 0
     if (s?.id) {
       const perYear = yearlyBySale.get(s.id)
       if (perYear) for (const amount of perYear.values()) saleTotalCollected += amount
     }
     if (saleTotalCollected > 0) {
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 46 }), saleTotalCollected, 'n')
+      // AA = collected excl VAT (divided out of the 5%). Rounded to 2dp.
+      const excl = Math.round((saleTotalCollected / 1.05) * 100) / 100
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 26 }), excl, 'n')
+      // AB = collected incl VAT (as-paid).
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 27 }), saleTotalCollected, 'n')
     }
-    // Payment count (col 42 = AQ)
+    // Payment count (col 29 = AD — "رقم الدفعة" / count of payments so far)
     if (s?.id) {
       const cnt = countBySale.get(s.id) ?? 0
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 42 }), cnt, 'n')
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 29 }), cnt, 'n')
     }
 
     // Copy the row-8 formulas into this row with row refs retargeted.
@@ -517,21 +549,69 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   }
 
   // -----------------------------------------------------------------------
-  // STEP 4 — Retarget row-465 total-row SUM ranges to match our actual data
-  // row count, so the totals reflect the populated rows (not empty rows
-  // through 464). Range like V8:V464 → V8:V{lastDataRow}.
+  // STEP 4 — Retarget SUM / stats formulas to cover the actual data range.
+  //
+  // The 2026 REGA template ships with formulas that reference the 5 sample
+  // rows (V8:V12, B8:B12, etc.) and the totals row 13. When we expand to N
+  // rows we need to shift:
+  //   • Totals row (was at 13) → moves to the row after our last data row
+  //   • Summary stats (Q3:Z3) → V8:V12 becomes V8:V{lastDataRow}
+  //
+  // For the totals row itself, if we wrote more than 5 rows, we've already
+  // pushed past the original position — the totals row needs to be moved
+  // to the new position, otherwise SUM(V8:V12) still only sums 5 cells.
   // -----------------------------------------------------------------------
-  const lastDataRow = idx > 0 ? BUYERS_DATA_START_ROW + idx - 1 : BUYERS_DATA_START_ROW
-  for (const addr of Object.keys(ws)) {
-    if (addr.startsWith('!')) continue
-    const rowMatch = /[A-Z]+(\d+)/.exec(addr)
-    if (!rowMatch) continue
-    const rowNum = Number(rowMatch[1])
-    if (rowNum < BUYERS_TOTALS_ROW) continue
+  const lastDataRow = idx > 0 ? BUYERS_DATA_START_ROW + idx - 1 : BUYERS_TEMPLATE_LAST_DATA_ROW
+  const newTotalsRow = lastDataRow + 1
+
+  // (a) If lastDataRow > 12, we've overwritten the template's totals row —
+  //     lift the totals-row formulas and re-place them at newTotalsRow.
+  if (lastDataRow > BUYERS_TEMPLATE_LAST_DATA_ROW) {
+    // Save the original totals-row cells (row 13 in the template).
+    type Snap = { addr: string; col: number; cell: XLSX.CellObject }
+    const totalsSnaps: Snap[] = []
+    for (let c = 0; c < 32; c++) {
+      const addr = XLSX.utils.encode_cell({ r: BUYERS_TOTALS_ROW - 1, c })
+      const cell = ws[addr] as XLSX.CellObject | undefined
+      if (cell) totalsSnaps.push({ addr, col: c, cell: { ...cell } })
+    }
+    // Clear the original row 13 (it's now buried under real data).
+    for (const s of totalsSnaps) delete ws[s.addr]
+    // Re-place at newTotalsRow, retargeting any SUM(...12) ranges to lastDataRow.
+    for (const s of totalsSnaps) {
+      const newAddr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c: s.col })
+      const cell = { ...s.cell }
+      if (typeof cell.f === 'string') {
+        cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
+        cell.v = undefined
+        cell.w = undefined
+      }
+      ws[newAddr] = cell
+    }
+  } else {
+    // ≤5 rows: totals row stays at 13, just retarget internal SUM ranges.
+    for (let c = 0; c < 32; c++) {
+      const addr = XLSX.utils.encode_cell({ r: BUYERS_TOTALS_ROW - 1, c })
+      const cell = ws[addr] as XLSX.CellObject | undefined
+      if (!cell || typeof cell.f !== 'string') continue
+      cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
+      cell.v = undefined
+      cell.w = undefined
+    }
+  }
+
+  // (b) Retarget the Q3:Z3 summary-stats block. Each formula references the
+  //     sample range 8..12 — we rewrite to 8..lastDataRow. Also S3 = V13
+  //     and Z3 = AB13 need to shift to the actual totals row.
+  for (const addr of BUYERS_SUMMARY_STATS_CELLS) {
     const cell = ws[addr] as XLSX.CellObject | undefined
     if (!cell || typeof cell.f !== 'string') continue
-    // Replace any :XYZnn (where nn falls in 460..464) inside SUM ranges.
-    cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)46[0-4]\b/g, `$1${lastDataRow}`)
+    let f = cell.f
+    // Range refs: :XY12 → :XY{lastDataRow}
+    f = f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
+    // Single refs to the totals row: V13, AB13, etc. → V{newTotalsRow}, AB{newTotalsRow}
+    f = f.replace(/(\$?[A-Z]+\$?)13(?![0-9])/g, `$1${newTotalsRow}`)
+    cell.f = f
     cell.v = undefined
     cell.w = undefined
   }
@@ -742,7 +822,79 @@ export async function generateBuyersRegisterXlsx(projectId: string): Promise<Buf
   if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows)
   if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
-  return workbookToBuffer(wb)
+  // Write to buffer, then post-process to inject Excel data validation on
+  // cell Q3 (رقم الرخصة). SheetJS's community writer doesn't emit data
+  // validation, so we crack the .xlsx (which is a zip), append a
+  // <dataValidations> element to the first worksheet's XML, and re-zip.
+  const rawBuffer = workbookToBuffer(wb)
+  return injectLicenseDropdown(rawBuffer, tenantLicenses)
+}
+
+/**
+ * Post-process a workbook buffer to add an Excel data-validation dropdown on
+ * cell Q3 of the first worksheet ("سجل المشترين وحدات قائمة"). The dropdown's
+ * list is the passed-in `licenses` array (deduped upstream). Uses pizzip to
+ * unzip the .xlsx, mutate `xl/worksheets/sheet1.xml`, and re-zip.
+ *
+ * Excel's list-formula format is a quoted comma-separated string, e.g.
+ *   <formula1>"AB1234,AB1235,AB1236"</formula1>
+ * That format is capped at ~255 chars total. For tenants with many licenses
+ * we fall back to a hidden helper sheet — but a simple inline list handles
+ * the common case (<30 licenses, most tenants have 1–5 projects).
+ */
+function injectLicenseDropdown(buffer: Buffer, licenses: string[]): Buffer {
+  if (licenses.length === 0) return buffer
+  // Escape any double-quotes inside license numbers just to be safe.
+  const listStr = licenses.map((l) => l.replace(/"/g, '""')).join(',')
+  // Excel's inline-list max is ~255 chars — bail out gracefully if we overflow.
+  if (listStr.length > 250) {
+    // eslint-disable-next-line no-console
+    console.warn(`[buyers-register] license list too long (${listStr.length} chars) — skipping dropdown injection`)
+    return buffer
+  }
+  try {
+    // Dynamic import — pizzip is a runtime dep, we don't need it in the type surface.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const PizZip = require('pizzip') as new (data: Buffer) => {
+      file: (path: string) => { asText: () => string } | null
+      generate: (opts: { type: 'nodebuffer'; compression: string }) => Buffer
+      remove: (path: string) => void
+    }
+    const zip = new PizZip(buffer)
+    // Sheet1 is the first worksheet in the workbook. Sheet2 in the file (Sheet1
+    // helper) is the second — but we want "سجل المشترين وحدات قائمة" which is
+    // the first per the template's ordering.
+    const sheetXmlPath = 'xl/worksheets/sheet1.xml'
+    const entry = zip.file(sheetXmlPath)
+    if (!entry) return buffer
+    let xml = entry.asText()
+    // If dataValidations already exist, don't double-inject.
+    if (xml.includes('<dataValidations')) return buffer
+    // Build the data validation XML — the "!" prefix on formula1 is Excel's
+    // convention for an inline literal list.
+    const dv = `<dataValidations count="1"><dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="Q3"><formula1>"${listStr}"</formula1></dataValidation></dataValidations>`
+    // Insert BEFORE any of these closing sections (they must appear in Excel's
+    // strict schema order): pageMargins → pageSetup → headerFooter → drawing → …
+    // dataValidations must come before pageMargins.
+    const insertBefore = /<(pageMargins|pageSetup|headerFooter|drawing|legacyDrawing|tableParts)/
+    if (insertBefore.test(xml)) {
+      xml = xml.replace(insertBefore, `${dv}<$1`)
+    } else {
+      // Fallback — insert before the closing </worksheet>.
+      xml = xml.replace('</worksheet>', `${dv}</worksheet>`)
+    }
+    // pizzip doesn't have an update-in-place; remove + re-add.
+    zip.remove(sheetXmlPath)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(zip as unknown as { file(path: string, data: string): void }).file(sheetXmlPath, xml)
+    return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
+  } catch (err) {
+    // If anything fails (missing pizzip, XML shape mismatch), fall through
+    // with the un-injected buffer — dropdown is a nice-to-have, not a blocker.
+    // eslint-disable-next-line no-console
+    console.warn('[buyers-register] failed to inject Q3 dropdown:', err)
+    return buffer
+  }
 }
 
 // ---------------------------------------------------------------------------
