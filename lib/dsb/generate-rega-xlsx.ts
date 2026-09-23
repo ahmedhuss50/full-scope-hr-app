@@ -845,30 +845,33 @@ export async function generateBuyersRegisterXlsx(
 }
 
 /**
- * Preserve the template's full formatting on the output buffer.
+ * Preserve the template's letterhead + footer graphics on the output buffer.
  *
- * SheetJS's community writer preserves cell values + formulas but strips
- * many things Excel needs for pixel-perfect rendering:
- *   • oddHeader/oddFooter graphics (letterhead + footer PNGs)
- *   • Excel Table definitions (xl/tables/*.xml — referenced by structured
- *     formulas like Table19[[#This Row],[عدد]])
- *   • Theme colors + fonts (xl/theme/*.xml)
- *   • Sheet-level tableParts + drawing r:id references
- *   • Custom column widths, mergeCells, dataValidations
- *   • Page setup: margins, print area, orientation, scaling
- *   • Freeze panes and sheet views
+ * SheetJS's community writer strips oddHeader/oddFooter graphics + their
+ * backing drawings and media entries on round-trip. Because REGA templates
+ * ship with a mandatory letterhead (top) and footer (bottom) as embedded
+ * PNGs referenced via Excel's `&G` code, dropping them makes the output
+ * non-compliant.
  *
- * The fix: for each sheet, take the TEMPLATE's original sheet XML (which
- * has all those elements intact) and splice in only the <sheetData> block
- * from SheetJS's output. This gives 100% formatting fidelity because every
- * worksheet-level element (cols, mergeCells, pageSetup, headerFooter,
- * drawing, tableParts, sheetProtection, sheetViews) comes from the
- * template verbatim — only the actual cell values change.
+ * The fix: after SheetJS writes the file, open both the template and the
+ * output as zips (via pizzip), then copy from the template into the output:
+ *   • xl/media/*                    — the actual PNG bytes (letterhead + footer)
+ *   • xl/drawings/*                 — drawing XML + VML for header/footer refs
+ *   • xl/drawings/_rels/*.rels     — drawing → media relationships
+ *   • xl/worksheets/_rels/*.rels   — sheet → drawing relationships
+ *   • [Content_Types].xml           — MIME declarations for image + drawing types
  *
- * We also copy all supporting binary assets: media (PNGs), drawings (VML
- * + XML), theme, and Excel Tables. Styles.xml is preserved from SheetJS's
- * output because its cell `s=` indices reference it — replacing would
- * mispaint every cell.
+ * NOT copied (intentionally):
+ *   • xl/tables/*.xml — Excel Table definitions reference dxfId indices in
+ *     styles.xml. Since we keep SheetJS's styles.xml (cell s= refs need it),
+ *     the table dxfIds would be broken → Excel throws "we found a problem".
+ *   • xl/styles.xml   — cell s= indices in the sheet XML reference this;
+ *     replacing with template's version would mispaint every cell.
+ *   • xl/theme/*.xml  — safe to copy but not needed for letterhead fidelity.
+ *
+ * The oddHeader/oddFooter `&G` markers in each sheet's XML are text and
+ * SheetJS preserves them, so we don't touch sheet XMLs at all — no splice,
+ * no dimension update, nothing. That's what made this reliable.
  */
 function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buffer {
   try {
@@ -886,23 +889,13 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
     const template = new PizZip(templateBuf)
     const output = new PizZip(outputBuffer)
 
-    // ---------------------------------------------------------------------
-    // STEP 1 — Copy binary + non-cell-XML assets verbatim from template.
-    //
-    // These are things SheetJS either strips entirely or normalises in a
-    // way that loses formatting fidelity. Styles.xml is deliberately NOT
-    // copied — cell style refs in the output would break.
-    // ---------------------------------------------------------------------
+    // Copy asset directories verbatim from template → output. Kept to the
+    // minimum safe set for letterhead + footer + column widths.
     const assetPrefixes = [
       'xl/media/',
       'xl/drawings/',
       'xl/drawings/_rels/',
       'xl/worksheets/_rels/',
-      'xl/tables/',
-      'xl/tables/_rels/',
-      'xl/theme/',
-      'xl/charts/',
-      'xl/charts/_rels/',
     ]
     for (const path of Object.keys(template.files)) {
       const entry = template.files[path]
@@ -914,53 +907,7 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
       ;(output as any).file(path, bytes)
     }
 
-    // ---------------------------------------------------------------------
-    // STEP 2 — Splice <sheetData> from output into each template sheet XML.
-    //
-    // The template's sheet XML is what Excel opens with all formatting
-    // intact. We keep everything from the template except the <sheetData>
-    // block, which we replace with SheetJS's output (containing our
-    // fresh cell values + formulas).
-    // ---------------------------------------------------------------------
-    const sheetDataRegex = /<sheetData\b[^>]*>[\s\S]*?<\/sheetData>|<sheetData\b[^>]*\/>/
-    const dimensionRegex = /<dimension\s+ref="[^"]*"\s*\/>/
-
-    for (const path of Object.keys(template.files)) {
-      if (!path.startsWith('xl/worksheets/sheet') || !path.endsWith('.xml')) continue
-      if (path.includes('/_rels/')) continue
-
-      const tplSheet = template.file(path) as { asText: () => string } | null
-      const outSheet = output.file(path) as { asText: () => string } | null
-      if (!tplSheet || !outSheet) continue
-
-      const tplXml = tplSheet.asText()
-      const outXml = outSheet.asText()
-
-      // Extract SheetJS's <sheetData>...</sheetData> block (has our cells).
-      const outSheetDataMatch = outXml.match(sheetDataRegex)
-      if (!outSheetDataMatch) continue
-      const outSheetData = outSheetDataMatch[0]
-
-      // Extract SheetJS's <dimension ref="..."/> so we can update the
-      // template's dimension to match the actual data range.
-      const outDimMatch = outXml.match(dimensionRegex)
-      const outDim = outDimMatch ? outDimMatch[0] : null
-
-      // Splice into template XML: replace template's <sheetData> block +
-      // <dimension> ref with output's versions. Everything else (cols,
-      // mergeCells, pageSetup, headerFooter, drawing, tableParts) stays.
-      let merged = tplXml.replace(sheetDataRegex, outSheetData)
-      if (outDim) merged = merged.replace(dimensionRegex, outDim)
-
-      output.remove(path)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(output as any).file(path, merged)
-    }
-
-    // ---------------------------------------------------------------------
-    // STEP 3 — Merge [Content_Types].xml so Excel recognises the copied
-    // media / drawing / table types.
-    // ---------------------------------------------------------------------
+    // Merge [Content_Types].xml — add image + drawing MIME types if missing.
     const ctPath = '[Content_Types].xml'
     const outCt = output.file(ctPath) as { asText: () => string } | null
     const tplCt = template.file(ctPath) as { asText: () => string } | null
@@ -974,8 +921,6 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
         /<Default[^>]*Extension="vml"[^>]*\/>/g,
         /<Default[^>]*Extension="emf"[^>]*\/>/g,
         /<Override[^>]*drawing[^>]*\/>/g,
-        /<Override[^>]*table[^>]*\/>/g,
-        /<Override[^>]*chart[^>]*\/>/g,
       ]
       for (const re of injectPatterns) {
         const matches = tplXml.match(re) ?? []
@@ -993,7 +938,7 @@ function preserveTemplateAssets(outputBuffer: Buffer, templatePath: string): Buf
     return output.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn('[rega-xlsx] failed to preserve template formatting:', err)
+    console.warn('[rega-xlsx] failed to preserve template letterhead:', err)
     return outputBuffer
   }
 }
