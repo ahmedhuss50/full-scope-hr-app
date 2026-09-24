@@ -67,12 +67,12 @@ type AuditRow = {
     | null
 }
 
-export function single<T>(maybe: T | T[] | null | undefined): T | null {
+function single<T>(maybe: T | T[] | null | undefined): T | null {
   if (!maybe) return null
   return Array.isArray(maybe) ? (maybe[0] ?? null) : maybe
 }
 
-export function fmtSar(amount: number | null): string {
+function fmtSar(amount: number | null): string {
   if (amount == null) return '—'
   try {
     return new Intl.NumberFormat('ar-SA', {
@@ -83,7 +83,7 @@ export function fmtSar(amount: number | null): string {
   }
 }
 
-export function timeAgoAr(s: string | null): string {
+function timeAgoAr(s: string | null): string {
   if (!s) return '—'
   const then = new Date(s).getTime()
   if (Number.isNaN(then)) return s
@@ -98,7 +98,7 @@ export function timeAgoAr(s: string | null): string {
   return fmtDate(s)
 }
 
-export function roleLabelAr(role: string | null): string {
+function roleLabelAr(role: string | null): string {
   if (role === 'employee') return 'الموظف'
   if (role === 'supervisor') return 'السوبرفايزر'
   if (role === 'owner') return 'المدير'
