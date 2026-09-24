@@ -141,31 +141,24 @@ function getCellFormulaTag(inner: string): string | null {
 // value + output's formula (if any).
 // -----------------------------------------------------------------------
 
-function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
-  // Start from template's attributes (preserves s= style ref + any other
-  // formatting attributes), else fall back to output's if template lacks
-  // this cell (should never happen — this fn is only called when both have it).
-  const baseAttrs = tplCell ? tplCell.attrs : outCell.attrs
-
-  // Figure out the value + type + formula from output.
+/**
+ * Normalise an output cell's type + inner XML so Excel accepts it.
+ * Shared by mergeCellXml (cell exists in both template + output) and
+ * buildNewCell (cell only in output, past template's data range).
+ *
+ * Returns { finalType, finalInner } — caller composes with base attrs.
+ */
+function normalizeOutputCell(outCell: ParsedCell): { finalType: string | null; finalInner: string } {
   const outType = attr(outCell.attrs, 't')
   const outFTag = getCellFormulaTag(outCell.inner)
   const outVal  = getCellValue(outCell.inner)
   const outIsMatch = /<is>[\s\S]*?<\/is>/.exec(outCell.inner)
 
-  // Type normalisation. SheetJS often emits `t="str"` for string values,
-  // but Excel treats `t="str"` as INVALID unless accompanied by a <f>
-  // (it means "string cached from a formula"). Without <f>, Excel throws
-  // "we found a problem with some content".
-  //
-  // Fix: if type is 'str' but there's no formula, convert to 'inlineStr'
-  // with <is><t>value</t></is>. Also handles the case where output has
-  // no `t=` attribute but the value is clearly a string (Arabic text etc).
   let finalType: string | null = outType
   let finalInner = ''
 
   if (outFTag) {
-    // Formula cell — keep as-is (t="str" is valid HERE).
+    // Formula cell — t="str" IS valid here (cached string result).
     finalInner += outFTag
     if (outVal !== null) finalInner += `<v>${outVal}</v>`
   } else if (outIsMatch) {
@@ -173,38 +166,36 @@ function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
     finalType = 'inlineStr'
     finalInner = outIsMatch[0]
   } else if (outVal !== null) {
-    // Value cell. Determine if it should be numeric or string.
     const isNumeric = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(outVal.trim())
     if (outType === 's') {
-      // Shared string reference — keep the index.
       finalType = 's'
       finalInner = `<v>${outVal}</v>`
-    } else if (outType === 'b') {
-      // Boolean
-      finalType = 'b'
-      finalInner = `<v>${outVal}</v>`
-    } else if (outType === 'e') {
-      // Error
-      finalType = 'e'
+    } else if (outType === 'b' || outType === 'e') {
+      finalType = outType
       finalInner = `<v>${outVal}</v>`
     } else if (outType === 'str' && !isNumeric) {
-      // Invalid: t="str" without <f>. Convert to inlineStr.
+      // 🔴 Invalid: t="str" without <f>. Convert to inlineStr.
       finalType = 'inlineStr'
       finalInner = `<is><t xml:space="preserve">${escapeXml(outVal)}</t></is>`
     } else if (isNumeric) {
-      // Numeric — no type attr needed.
       finalType = null
       finalInner = `<v>${outVal}</v>`
     } else {
-      // Fallback: treat as inline string.
       finalType = 'inlineStr'
       finalInner = `<is><t xml:space="preserve">${escapeXml(outVal)}</t></is>`
     }
+  } else if (outType === 'str') {
+    // t="str" with no <v> and no <f> — malformed. Strip the type.
+    finalType = null
   }
 
-  // Apply the final type.
-  const attrs = setAttr(baseAttrs, 't', finalType)
+  return { finalType, finalInner }
+}
 
+function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
+  const baseAttrs = tplCell ? tplCell.attrs : outCell.attrs
+  const { finalType, finalInner } = normalizeOutputCell(outCell)
+  const attrs = setAttr(baseAttrs, 't', finalType)
   if (!finalInner) return `<c${attrs}/>`
   return `<c${attrs}>${finalInner}</c>`
 }
@@ -216,12 +207,20 @@ function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
 // -----------------------------------------------------------------------
 
 function buildNewCell(outCell: ParsedCell, styleRef: string | null): string {
+  // Start from output's attrs, then inherit style from template's reference
+  // row if the output cell has no s= of its own.
   let attrs = outCell.attrs
   if (styleRef && !attr(attrs, 's')) {
     attrs = setAttr(attrs, 's', styleRef)
   }
-  if (outCell.isSelfClose) return `<c${attrs}/>`
-  return `<c${attrs}>${outCell.inner}</c>`
+  // 🔴 CRITICAL: apply the SAME type-normalisation as mergeCellXml, otherwise
+  // every new cell (buyer rows past the template's sample data) keeps
+  // SheetJS's invalid t="str"-without-<f> format and Excel throws
+  // "we found a problem with some content".
+  const { finalType, finalInner } = normalizeOutputCell(outCell)
+  attrs = setAttr(attrs, 't', finalType)
+  if (!finalInner) return `<c${attrs}/>`
+  return `<c${attrs}>${finalInner}</c>`
 }
 
 // -----------------------------------------------------------------------
