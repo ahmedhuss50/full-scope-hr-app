@@ -588,6 +588,14 @@ export async function generateBuyersRegisterXlsx(
     // Clear the original row 13 (it's now buried under real data).
     for (const s of totalsSnaps) delete ws[s.addr]
     // Re-place at newTotalsRow, retargeting any SUM(...12) ranges to lastDataRow.
+    //
+    // 🔴 CRITICAL: direct assignment `ws[newAddr] = cell` does NOT extend
+    // the sheet's !ref range. SheetJS's writer only emits cells inside
+    // !ref, so newly-placed cells past the last-known range get silently
+    // dropped → totals row disappears from output → no المجموع anywhere.
+    //
+    // Fix: after placing all totals cells, explicitly extend !ref to cover
+    // newTotalsRow across all 32 columns.
     for (const s of totalsSnaps) {
       const newAddr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c: s.col })
       const cell = { ...s.cell }
@@ -598,6 +606,12 @@ export async function generateBuyersRegisterXlsx(
       }
       ws[newAddr] = cell
     }
+    // Extend !ref so the writer emits the new totals row.
+    const currentRef = ws['!ref'] ?? 'A1'
+    const range = XLSX.utils.decode_range(currentRef)
+    if (newTotalsRow - 1 > range.e.r) range.e.r = newTotalsRow - 1
+    if (31 > range.e.c) range.e.c = 31  // cover column AF
+    ws['!ref'] = XLSX.utils.encode_range(range)
   } else {
     // ≤5 rows: totals row stays at 13, just retarget internal SUM ranges.
     for (let c = 0; c < 32; c++) {
