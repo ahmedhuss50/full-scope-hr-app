@@ -413,7 +413,7 @@ export default async function DisbursementsDashboardPage({
   }
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto" dir="rtl">
+    <div className="space-y-5 max-w-[1600px] mx-auto" dir="rtl">
 
       {/* 1. Page header -----------------------------------------------------*/}
       <header className="flex items-start justify-between gap-4 flex-wrap">
