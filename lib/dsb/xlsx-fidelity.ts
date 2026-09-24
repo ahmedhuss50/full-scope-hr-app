@@ -505,5 +505,66 @@ export function mergeIntoTemplate(
     template.file('xl/calcChain.xml', outCalcChain.asText())
   }
 
+  // ---- Strip Excel Tables entirely ----
+  //
+  // Why: Excel Tables (xl/tables/*.xml) reference `dxfId="16"` etc — indices
+  // into <dxfs> in styles.xml. The template's dxfs exist in the TEMPLATE's
+  // styles.xml, but we keep OUTPUT's styles.xml (cell s= refs need it).
+  // So the table dxfIds point at nothing → Excel throws "we found a problem"
+  // and offers to repair. Also, table `ref="A2:L196"` may not match the
+  // actual data range after our merge, breaking the auto-filter.
+  //
+  // Tables are auto-filter + structured refs (Table19[[#This Row],[عدد]]).
+  // Losing them means users can't click the filter arrows, but formulas
+  // that reference table columns still compute — Excel converts them to
+  // absolute cell refs on open. All styling, letterhead, formulas, and
+  // cell formatting are preserved. Only the auto-filter buttons vanish.
+  //
+  // We strip: (a) tableParts references from every sheet, (b) all
+  // xl/tables/*.xml files, (c) table Overrides from [Content_Types].xml,
+  // (d) table rels from xl/worksheets/_rels/*.rels.
+  const stripped: string[] = []
+  for (const p of Object.keys(template.files)) {
+    if (p.startsWith('xl/tables/') && p.endsWith('.xml')) {
+      template.remove(p)
+      stripped.push(p)
+    }
+    if (p.startsWith('xl/tables/_rels/')) {
+      template.remove(p)
+    }
+  }
+  // Remove tableParts elements from each sheet XML.
+  for (const p of Object.keys(template.files)) {
+    if (!p.startsWith('xl/worksheets/sheet') || !p.endsWith('.xml')) continue
+    if (p.includes('/_rels/')) continue
+    const shX = template.file(p)?.asText()
+    if (!shX) continue
+    const cleaned = shX.replace(/<tableParts\b[^>]*>[\s\S]*?<\/tableParts>|<tableParts\b[^>]*\/>/g, '')
+    if (cleaned !== shX) {
+      template.remove(p)
+      template.file(p, cleaned)
+    }
+  }
+  // Remove table rels from every sheet's _rels file.
+  for (const p of Object.keys(template.files)) {
+    if (!p.startsWith('xl/worksheets/_rels/') || !p.endsWith('.rels')) continue
+    const relX = template.file(p)?.asText()
+    if (!relX) continue
+    const cleaned = relX.replace(/<Relationship\b[^>]*Type="[^"]*\/table"[^/]*\/>/g, '')
+    if (cleaned !== relX) {
+      template.remove(p)
+      template.file(p, cleaned)
+    }
+  }
+  // Remove table Override entries from [Content_Types].xml.
+  const ctFinal = template.file('[Content_Types].xml')?.asText()
+  if (ctFinal) {
+    const ctCleaned = ctFinal.replace(/<Override\b[^>]*table\+xml[^/]*\/>/g, '')
+    if (ctCleaned !== ctFinal) {
+      template.remove('[Content_Types].xml')
+      template.file('[Content_Types].xml', ctCleaned)
+    }
+  }
+
   return template.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
 }
