@@ -64,7 +64,10 @@ const PizZip = require('pizzip') as typeof PizZipType
 // -----------------------------------------------------------------------
 
 const CELL_TAG_RE = /<c\b([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g
-const ROW_TAG_RE  = /<row\b([^>]*?)>([\s\S]*?)<\/row>/g
+// Match paired <row>...</row> only — the negative lookbehind (?<!\/) prevents
+// matching self-closing <row .../> which would greedily span across many rows
+// and capture the trailing `/` into the attrs group.
+const ROW_TAG_RE  = /<row\b([^>]*?)(?<!\/)>([\s\S]*?)<\/row>/g
 
 function attr(attrs: string, name: string): string | null {
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)
@@ -308,14 +311,29 @@ function rebuildSheetData(
 ): string {
   // Collect all rows we'll emit. Row attributes come from template first,
   // then output for rows the template didn't have.
+  //
+  // IMPORTANT: capture BOTH self-closing <row .../> and paired <row>...</row>.
+  // The template can have thousands of empty self-closing rows past its
+  // sample data. Our old regex only matched paired rows, so:
+  //   1. Self-closing template rows didn't get their attrs captured
+  //   2. Paired-row regex greedily crossed self-closing rows, capturing
+  //      the trailing `/` into `attrs` → emitted as `<row .../>cells</row>`
+  //      which Excel rejects as "mismatched tag".
+  //
+  // Fix: match EITHER form. Strip any trailing `/` from captured attrs
+  // defensively — attrs must never end with `/` because we always emit
+  // as paired open/close.
   const templateRowAttrs = new Map<number, string>()
   const outputRowAttrs = new Map<number, string>()
 
+  const ROW_ANY = /<row\b([^>]*?)(?:\/>|>[\s\S]*?<\/row>)/g
   for (const [src, target] of [[templateSheetXml, templateRowAttrs], [outputSheetXml, outputRowAttrs]] as const) {
     let m: RegExpExecArray | null
-    const re = new RegExp(ROW_TAG_RE.source, 'g')
+    const re = new RegExp(ROW_ANY.source, 'g')
     while ((m = re.exec(src)) !== null) {
-      const rowAttrs = m[1] ?? ''
+      let rowAttrs = m[1] ?? ''
+      // Strip any trailing `/` (from self-closing tags) and normalize whitespace.
+      rowAttrs = rowAttrs.replace(/\s*\/\s*$/, '')
       const r = Number(attr(rowAttrs, 'r') ?? '0')
       if (r) target.set(r, rowAttrs)
     }
