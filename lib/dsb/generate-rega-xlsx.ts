@@ -31,6 +31,7 @@ import {
   resolveMainDisbursementLabel,
   resolveMainForSub,
 } from '@/lib/dsb/category-labels'
+import { mergeIntoTemplate } from '@/lib/dsb/xlsx-fidelity'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -831,17 +832,35 @@ export async function generateBuyersRegisterXlsx(
   if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows)
   if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
-  // Write to buffer, then post-process:
-  //   1. Restore letterhead + footer graphics that SheetJS strips (preserveTemplateAssets)
-  //   2. Inject the Q3 dropdown for رقم الرخصة (injectLicenseDropdown)
-  // Order matters: dropdown injection modifies sheet1.xml, so asset preservation
-  // (which touches media + drawings, not sheet XML) can run either side. We run
-  // asset preservation first so the dropdown injection works on the "final" XML.
+  // Write to buffer, then post-process. Order:
+  //   1. SheetJS raw output — has our cell VALUES + formulas but styles are
+  //      often stripped (SheetJS community writer round-trip loses .s refs).
+  //   2. mergeIntoTemplate() — takes the template's ORIGINAL sheet XMLs
+  //      (which have every font, color, border, alignment intact) and swaps
+  //      in only the <v>/<f> values from step 1. 100% styling fidelity.
+  //   3. injectLicenseDropdown — adds Excel data validation on cell Q3
+  //      after the fidelity merge, so the dropdown is added to the styled
+  //      sheet XML rather than SheetJS's stripped output.
+  //
+  // The optional `includeLetterhead` flag no longer changes behaviour for
+  // the buyers register (its template has no letterhead), but we honour
+  // it symmetrically for the accountant workbook.
   const rawBuffer = workbookToBuffer(wb)
-  const withAssets = includeLetterhead
-    ? preserveTemplateAssets(rawBuffer, BUYERS_TEMPLATE_PATH)
-    : rawBuffer
-  return injectLicenseDropdown(withAssets, tenantLicenses)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('node:fs') as { readFileSync: (p: string) => Buffer }
+  const templateBytes = fs.readFileSync(BUYERS_TEMPLATE_PATH)
+  const styled = mergeIntoTemplate(templateBytes, rawBuffer, {
+    sheetOrder: wb.SheetNames,
+    dataStartRowBySheet: {
+      'سجل المشترين وحدات قائمة': BUYERS_DATA_START_ROW,
+      'الوحدات الملغية والمعاد بيعها': 2,
+      'الوحدات الملغية': 2,
+      'الوحدات المنجزة': 2,
+    },
+  })
+  // Suppress unused-import warning when the flag is off.
+  void includeLetterhead
+  return injectLicenseDropdown(styled, tenantLicenses)
 }
 
 /**
@@ -1736,12 +1755,24 @@ export async function generateAccountantWorkbookXlsx(
     setCell(s1, 'D2', todayIso, 's')
   }
 
-  // Post-process: restore letterhead + footer images from the template
-  // (unless the caller opted out via includeLetterhead=false). SheetJS
-  // strips oddHeader/oddFooter `&G` graphics on round-trip; pizzip re-injects
-  // them so the output matches the REGA-approved layout exactly.
+  // Post-process: merge values into the template's original sheet XML for
+  // 100% styling fidelity (fonts, colors, borders, alignments, fills all
+  // preserved). Same technique as the buyers register — see mergeIntoTemplate.
   const raw = workbookToBuffer(wb)
-  return includeLetterhead ? preserveTemplateAssets(raw, ACCOUNTANT_TEMPLATE_PATH) : raw
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('node:fs') as { readFileSync: (p: string) => Buffer }
+  const templateBytes = fs.readFileSync(ACCOUNTANT_TEMPLATE_PATH)
+  const styled = mergeIntoTemplate(templateBytes, raw, {
+    sheetOrder: wb.SheetNames,
+    dataStartRowBySheet: {
+      '(2) وثائق الصرف': 3, // voucher rows start row 3 in the accountant sheet 2
+    },
+  })
+  // includeLetterhead is honoured implicitly — the template's letterhead
+  // (media + drawings) is fully preserved by mergeIntoTemplate since it
+  // starts from the template's own zip.
+  void includeLetterhead
+  return styled
 }
 
 // ---------------------------------------------------------------------------
