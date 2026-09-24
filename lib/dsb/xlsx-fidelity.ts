@@ -473,11 +473,29 @@ export function mergeIntoTemplate(
         merged.set(addr, buildNewCell(outCell, styleRef))
       }
     }
-    // Include template-only cells (styling / labels the output didn't write).
+    // Include template-only cells (styling / labels the output didn't write)
+    // — BUT only for rows where the output has other cells too. If the
+    // ENTIRE row is missing from output, that means SheetJS deliberately
+    // deleted the row (e.g. we moved the totals row from 13 → 463 when
+    // there are many data rows). Keeping template-only cells for a deleted
+    // row would resurrect the pre-move totals row in its old position.
+    //
+    // Example: template row 13 has 'المجموع' + 5 SUM formulas. Our
+    // generator moves those to row 463 (after 453 buyer rows). SheetJS
+    // output has ZERO cells in row 13. If we blindly keep template-only
+    // cells, the sheet ends up with totals at BOTH row 13 (stale, wrong
+    // formulas =SUM(V8:V12)) AND row 463 (correct, retargeted).
+    const outputRowNums = new Set<number>()
+    for (const addr of outCells.keys()) {
+      const r = rowOf(addr)
+      if (r) outputRowNums.add(r)
+    }
     for (const [addr, tplCell] of tplCells) {
-      if (!merged.has(addr)) {
-        merged.set(addr, tplCell.isSelfClose ? `<c${tplCell.attrs}/>` : `<c${tplCell.attrs}>${tplCell.inner}</c>`)
-      }
+      if (merged.has(addr)) continue
+      // Only carry template-only cells forward if the row is still alive
+      // in output. If the whole row was deleted, drop the row entirely.
+      if (!outputRowNums.has(rowOf(addr))) continue
+      merged.set(addr, tplCell.isSelfClose ? `<c${tplCell.attrs}/>` : `<c${tplCell.attrs}>${tplCell.inner}</c>`)
     }
 
     // Rebuild <sheetData>.
