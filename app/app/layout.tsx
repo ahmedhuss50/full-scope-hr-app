@@ -107,6 +107,38 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     return actual / budget > 1.0
   }).length
 
+  // -- Sidebar project cascade (DSB module only) --------------------------
+  // The cascade under المشاريع lists the user's accessible projects. We
+  // preload here so the sidebar stays a client component without needing
+  // its own fetch. Cheap: at most tenant-size for owners, scoped for
+  // supervisors/employees. Skipped for roles with no DSB access to avoid
+  // the round-trip on every non-DSB page.
+  const dsbRole = (profile.dsb_role as string | null) ?? null
+  let sidebarProjects: { id: string; name_ar: string }[] = []
+  if (dsbRole && ['employee', 'supervisor', 'owner'].includes(dsbRole)) {
+    const { assignedProjectIds } = await import('@/lib/dsb/access')
+    const allowedIds = await assignedProjectIds({
+      svc,
+      tenantId,
+      userId: profile.id as string,
+      dsbRole,
+    })
+    let projQuery = svc
+      .from('dsb_projects')
+      .select('id, name_ar')
+      .eq('tenant_id', tenantId)
+      .order('name_ar', { ascending: true })
+      .limit(50)
+    if (allowedIds !== null) {
+      projQuery = projQuery.in(
+        'id',
+        allowedIds.length > 0 ? allowedIds : ['00000000-0000-0000-0000-000000000000'],
+      )
+    }
+    const { data: projRows } = await projQuery
+    sidebarProjects = (projRows ?? []) as { id: string; name_ar: string }[]
+  }
+
   const counts: SidebarCounts = {
     applications:        appsCount.count ?? 0,
     onboarding:          onboardingCount.count ?? 0,
@@ -135,6 +167,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             email: user.email ?? null,
             dsb_role: (profile.dsb_role as 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer' | null) ?? null,
           }}
+          dsbProjects={sidebarProjects}
         />
         <div className="flex-1 min-w-0 flex flex-col">
           <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">

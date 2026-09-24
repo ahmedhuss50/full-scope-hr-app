@@ -122,7 +122,7 @@ const DSB_GROUPS: DsbNavGroup[] = [
   {
     title: 'البيانات',
     items: [
-      { href: '/app/disbursements/admin',                label: 'المشاريع', icon: FolderKanban },
+      { href: '/app/disbursements/admin/projects',       label: 'المشاريع', icon: FolderKanban },
       { href: '/app/disbursements/admin/lists/payments', label: 'الدفعات',   icon: Wallet, ownerOnly: true },
     ],
   },
@@ -153,6 +153,18 @@ function isActive(pathname: string, href: string) {
   if (hrefPath === '/app/crm')            return pathname === '/app/crm'
   if (hrefPath === '/app/escrow')         return pathname === '/app/escrow' || /^\/app\/escrow\/[^/]+$/.test(pathname)
   if (hrefPath === '/app/disbursements')  return pathname === '/app/disbursements'
+  // The old "الإدارة" landing page still lives at /admin. Now that the
+  // dedicated projects list lives at /admin/projects, keep that landing
+  // item highlighted ONLY on its own routes — not on /admin/projects*,
+  // /admin/settings*, /admin/lists*, etc. — since each of those has its
+  // own nav item.
+  if (hrefPath === '/app/disbursements/admin') {
+    if (pathname === '/app/disbursements/admin') return true
+    if (pathname.startsWith('/app/disbursements/admin/projects')) return false
+    if (pathname.startsWith('/app/disbursements/admin/settings')) return false
+    if (pathname.startsWith('/app/disbursements/admin/lists')) return false
+    return pathname.startsWith('/app/disbursements/admin/')
+  }
   return pathname === hrefPath || pathname.startsWith(hrefPath + '/')
 }
 
@@ -167,7 +179,20 @@ function moduleFor(pathname: string): 'hr' | 'crm' | 'accounting' | 'dms' | 'esc
   return 'picker'
 }
 
-export function Sidebar({ counts, user }: { counts: SidebarCounts; user: SidebarUser }) {
+export function Sidebar({
+  counts,
+  user,
+  dsbProjects = [],
+}: {
+  counts: SidebarCounts
+  user: SidebarUser
+  /**
+   * Projects the user can see in the disbursements module. Preloaded by
+   * AppLayout so the sidebar can render a cascade under المشاريع without
+   * its own fetch. Empty for non-DSB roles / non-DSB pages.
+   */
+  dsbProjects?: { id: string; name_ar: string }[]
+}) {
   const pathname = usePathname() ?? '/app'
   const { t } = useLocale()
   const currentModule = moduleFor(pathname)
@@ -330,20 +355,66 @@ export function Sidebar({ counts, user }: { counts: SidebarCounts; user: Sidebar
                         </div>
                       )
                     }
+                    // Projects nav gets a cascade of the user's projects
+                    // whenever they're inside any /projects* route. Rendering
+                    // the disclosure only when on that route keeps the rail
+                    // quiet everywhere else.
+                    const isProjectsItem = item.href === '/app/disbursements/admin/projects'
+                    const showCascade =
+                      isProjectsItem &&
+                      pathname.startsWith('/app/disbursements/admin/projects')
+                    // Match the currently-open project by its id in the URL.
+                    const activeProjectId = showCascade
+                      ? (pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null)
+                      : null
                     return (
-                      <Link
-                        key={`${group.title}-${item.href}-${item.label}`}
-                        href={item.href}
-                        aria-current={active ? 'page' : undefined}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                          active
-                            ? 'bg-teal-50 text-teal-600'
-                            : 'text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
-                        <span className="flex-1 truncate">{item.label}</span>
-                      </Link>
+                      <div key={`${group.title}-${item.href}-${item.label}`}>
+                        <Link
+                          href={item.href}
+                          aria-current={active ? 'page' : undefined}
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                            active
+                              ? 'bg-teal-50 text-teal-600'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Icon className={`w-5 h-5 shrink-0 ${active ? 'text-teal-600' : 'text-slate-500'}`} aria-hidden="true" />
+                          <span className="flex-1 truncate">{item.label}</span>
+                        </Link>
+                        {showCascade && dsbProjects.length > 0 && (
+                          <div className="mt-1 ps-8 pe-1 space-y-0.5 border-s border-slate-100 ms-5">
+                            {dsbProjects.slice(0, 15).map((proj) => {
+                              const projActive = activeProjectId === proj.id
+                              const short = proj.name_ar.length > 20
+                                ? proj.name_ar.slice(0, 20) + '…'
+                                : proj.name_ar
+                              return (
+                                <Link
+                                  key={proj.id}
+                                  href={`/app/disbursements/admin/projects/${proj.id}`}
+                                  aria-current={projActive ? 'page' : undefined}
+                                  className={`block ps-3 pe-2 py-1.5 rounded-md text-xs truncate transition ${
+                                    projActive
+                                      ? 'bg-teal-50 text-teal-600 font-semibold'
+                                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                                  }`}
+                                  title={proj.name_ar}
+                                >
+                                  {short}
+                                </Link>
+                              )
+                            })}
+                            {dsbProjects.length > 15 && (
+                              <Link
+                                href="/app/disbursements/admin/projects"
+                                className="block ps-3 pe-2 py-1.5 rounded-md text-xs text-teal-600 hover:bg-slate-50 font-semibold"
+                              >
+                                عرض الكل ←
+                              </Link>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
