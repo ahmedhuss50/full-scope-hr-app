@@ -595,45 +595,59 @@ export async function generateBuyersRegisterXlsx(
   const lastDataRow = idx > 0 ? BUYERS_DATA_START_ROW + idx - 1 : BUYERS_TEMPLATE_LAST_DATA_ROW
   const newTotalsRow = lastDataRow + 1
 
-  // (a) If lastDataRow > 12, we've overwritten the template's totals row —
-  //     use the PRE-BUYER snapshot (totalsRowSnapshot from step 1b) to
-  //     place pristine totals cells at newTotalsRow. Never trust row 13
-  //     here because it holds buyer #6's data by now.
-  if (lastDataRow > BUYERS_TEMPLATE_LAST_DATA_ROW) {
-    // Place totals cells at newTotalsRow, retargeting SUM(...12) → SUM(...lastDataRow).
-    for (const s of totalsRowSnapshot) {
-      const newAddr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c: s.col })
-      const cell = { ...s.cell }
-      if (typeof cell.f === 'string') {
-        cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
-        cell.v = undefined
-        cell.w = undefined
-      }
-      ws[newAddr] = cell
-    }
-    // Extend !ref so SheetJS's writer emits the new totals row (direct
-    // assignment doesn't update !ref; without extending, cells past the
-    // last data row get silently dropped).
+  // -----------------------------------------------------------------------
+  // Place the totals row DETERMINISTICALLY at lastDataRow + 1.
+  //
+  // This runs UNCONDITIONALLY — no matter how many buyers we wrote (0, 5,
+  // 100, or 5000). Structure is hardcoded so it doesn't depend on the
+  // template's row 13 cells surviving any prior operations.
+  //
+  //   A{n}: 'المجموع'  (label)
+  //   V{n}: =SUM(V8:V{lastDataRow})   (price before VAT)
+  //   Y{n}: =SUM(Y8:Y{lastDataRow})   (5% VAT)
+  //   Z{n}: =SUM(Z8:Z{lastDataRow})   (price + VAT)
+  //   AA{n}: =SUM(AA8:AA{lastDataRow}) (cumulative collected excl VAT)
+  //   AB{n}: =SUM(AB8:AB{lastDataRow}) (cumulative collected incl VAT)
+  //   AC{n}: =SUM(AC8:AC{lastDataRow}) (remaining)
+  //
+  // Style refs are inherited from the pre-buyer snapshot of row 13 (styles
+  // survive across cell overwrites because setCell preserves .s), falling
+  // back to no style if snapshot didn't capture that column.
+  // -----------------------------------------------------------------------
+  const styleFor = (col: number): unknown | undefined => {
+    const snap = totalsRowSnapshot.find((s) => s.col === col)
+    return snap ? (snap.cell as { s?: unknown }).s : undefined
+  }
+  const totalsSpec: Array<{ col: number; label?: string; formula?: string }> = [
+    { col: 0,  label: 'المجموع' },                           // A
+    { col: 21, formula: `SUM(V8:V${lastDataRow})` },         // V
+    { col: 24, formula: `SUM(Y8:Y${lastDataRow})` },         // Y
+    { col: 25, formula: `SUM(Z8:Z${lastDataRow})` },         // Z
+    { col: 26, formula: `SUM(AA8:AA${lastDataRow})` },       // AA
+    { col: 27, formula: `SUM(AB8:AB${lastDataRow})` },       // AB
+    { col: 28, formula: `SUM(AC8:AC${lastDataRow})` },       // AC
+  ]
+  for (const spec of totalsSpec) {
+    const addr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c: spec.col })
+    const s = styleFor(spec.col)
+    const cell: XLSX.CellObject = spec.label
+      ? { t: 's', v: spec.label }
+      : { t: 'n', f: spec.formula! }
+    if (s !== undefined) (cell as { s?: unknown }).s = s
+    ws[addr] = cell
+  }
+  // Extend !ref so SheetJS emits the new totals row (direct assignment
+  // doesn't touch !ref; cells past the current range get silently dropped).
+  {
     const currentRef = ws['!ref'] ?? 'A1'
     const range = XLSX.utils.decode_range(currentRef)
     if (newTotalsRow - 1 > range.e.r) range.e.r = newTotalsRow - 1
     if (31 > range.e.c) range.e.c = 31 // cover column AF
     ws['!ref'] = XLSX.utils.encode_range(range)
-  } else {
-    // ≤5 rows: totals row stays at 13. Restore from snapshot (we cleared
-    // it during step 2) and retarget SUM(...12) → SUM(...lastDataRow).
-    for (const s of totalsRowSnapshot) {
-      const addr = XLSX.utils.encode_cell({ r: TOTALS_ROW_R0, c: s.col })
-      const cell = { ...s.cell }
-      if (typeof cell.f === 'string') {
-        cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
-        cell.v = undefined
-        cell.w = undefined
-      }
-      ws[addr] = cell
-    }
-    // Then run the existing retarget pass — no-op after the fresh
-    // placement above, but kept for defensive symmetry.
+  }
+  // Legacy no-op retarget pass (kept for defensive symmetry with older
+  // template versions that had SUM-13 refs floating around).
+  if (lastDataRow <= BUYERS_TEMPLATE_LAST_DATA_ROW) {
     for (let c = 0; c < 32; c++) {
       const addr = XLSX.utils.encode_cell({ r: BUYERS_TOTALS_ROW - 1, c })
       const cell = ws[addr] as XLSX.CellObject | undefined
