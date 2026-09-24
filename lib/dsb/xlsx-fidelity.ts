@@ -142,32 +142,71 @@ function getCellFormulaTag(inner: string): string | null {
 // -----------------------------------------------------------------------
 
 function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
-  // Start from template's attributes if available (preserves s= and any
-  // other formatting attributes), else use output's.
+  // Start from template's attributes (preserves s= style ref + any other
+  // formatting attributes), else fall back to output's if template lacks
+  // this cell (should never happen — this fn is only called when both have it).
   const baseAttrs = tplCell ? tplCell.attrs : outCell.attrs
-  // Use output's type — SheetJS may have changed 's' (shared string index)
-  // to 'inlineStr' or vice versa depending on how the value was written.
-  const outType = attr(outCell.attrs, 't')
-  let attrs = baseAttrs
-  if (outType) {
-    attrs = setAttr(attrs, 't', outType)
-  } else {
-    // No type in output = numeric or formula-computed; drop template's t.
-    attrs = setAttr(attrs, 't', null)
-  }
 
-  // Assemble inner: formula (if any) + value.
+  // Figure out the value + type + formula from output.
+  const outType = attr(outCell.attrs, 't')
   const outFTag = getCellFormulaTag(outCell.inner)
   const outVal  = getCellValue(outCell.inner)
-  let inner = ''
-  if (outFTag) inner += outFTag
-  if (outVal !== null) inner += `<v>${outVal}</v>`
-  // Include inline string (t="inlineStr") <is> content if present.
-  const isMatch = /<is>[\s\S]*?<\/is>/.exec(outCell.inner)
-  if (isMatch) inner += isMatch[0]
+  const outIsMatch = /<is>[\s\S]*?<\/is>/.exec(outCell.inner)
 
-  if (!inner) return `<c${attrs}/>`
-  return `<c${attrs}>${inner}</c>`
+  // Type normalisation. SheetJS often emits `t="str"` for string values,
+  // but Excel treats `t="str"` as INVALID unless accompanied by a <f>
+  // (it means "string cached from a formula"). Without <f>, Excel throws
+  // "we found a problem with some content".
+  //
+  // Fix: if type is 'str' but there's no formula, convert to 'inlineStr'
+  // with <is><t>value</t></is>. Also handles the case where output has
+  // no `t=` attribute but the value is clearly a string (Arabic text etc).
+  let finalType: string | null = outType
+  let finalInner = ''
+
+  if (outFTag) {
+    // Formula cell — keep as-is (t="str" is valid HERE).
+    finalInner += outFTag
+    if (outVal !== null) finalInner += `<v>${outVal}</v>`
+  } else if (outIsMatch) {
+    // Already inline-string format.
+    finalType = 'inlineStr'
+    finalInner = outIsMatch[0]
+  } else if (outVal !== null) {
+    // Value cell. Determine if it should be numeric or string.
+    const isNumeric = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(outVal.trim())
+    if (outType === 's') {
+      // Shared string reference — keep the index.
+      finalType = 's'
+      finalInner = `<v>${outVal}</v>`
+    } else if (outType === 'b') {
+      // Boolean
+      finalType = 'b'
+      finalInner = `<v>${outVal}</v>`
+    } else if (outType === 'e') {
+      // Error
+      finalType = 'e'
+      finalInner = `<v>${outVal}</v>`
+    } else if (outType === 'str' && !isNumeric) {
+      // Invalid: t="str" without <f>. Convert to inlineStr.
+      finalType = 'inlineStr'
+      finalInner = `<is><t xml:space="preserve">${escapeXml(outVal)}</t></is>`
+    } else if (isNumeric) {
+      // Numeric — no type attr needed.
+      finalType = null
+      finalInner = `<v>${outVal}</v>`
+    } else {
+      // Fallback: treat as inline string.
+      finalType = 'inlineStr'
+      finalInner = `<is><t xml:space="preserve">${escapeXml(outVal)}</t></is>`
+    }
+  }
+
+  // Apply the final type.
+  const attrs = setAttr(baseAttrs, 't', finalType)
+
+  if (!finalInner) return `<c${attrs}/>`
+  return `<c${attrs}>${finalInner}</c>`
 }
 
 // -----------------------------------------------------------------------
