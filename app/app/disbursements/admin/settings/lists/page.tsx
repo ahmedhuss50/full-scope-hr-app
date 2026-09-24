@@ -143,12 +143,30 @@ export default async function ListsAndPercentagesPage() {
     return a.label.localeCompare(b.label, 'ar')
   })
 
-  // Build sub-type rows for the assignment table (only visible sub-types).
+  // Build sub-type rows for the unified editor. Include isCustom + isHidden
+  // so the editor renders the right pill and picks the right server action
+  // (createCustomLabel vs restoreDefaultLabel).
   const subTypeRows: SubTypeRow[] = disbursementRows.map((r) => ({
     code: r.code,
     label: resolveDisbursementLabel(r.code, disbursementLabelOverrides),
+    isCustom: !!r.isCustom,
+    isHidden: false,
     currentMain: resolveMainForSub(r.code, subToMain),
   }))
+  // Also surface hidden default sub-types so the owner can restore them.
+  const hiddenSubTypeRows: SubTypeRow[] = []
+  const disbursementDefaultCodes = ['construction', 'admin_marketing', 'bank_financing', 'moh_incentive', 'unit_seriousness_fees', 'vat_project_registry', 'vat_sales_payment', 'other']
+  for (const code of disbursementDefaultCodes) {
+    if (disbursementHidden.has(code)) {
+      hiddenSubTypeRows.push({
+        code,
+        label: resolveDisbursementLabel(code, disbursementLabelOverrides),
+        isCustom: false,
+        isHidden: true,
+        currentMain: null,
+      })
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto" dir="rtl">
@@ -209,32 +227,21 @@ export default async function ListsAndPercentagesPage() {
         <LabelListEditor kind="deposit" rows={depositRows} overrides={depositLabelOverrides} />
       </section>
 
-      {/* Disbursement types — editable labels (codes fixed) */}
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
+      {/* Disbursement types — UNIFIED main + sub in one card (mig 088) */}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
         <div>
-          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف الفرعية (نوع الصرف)</h2>
+          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف</h2>
           <p className="text-xs text-slate-500 mt-1">
-            القائمة التفصيلية التي يستخدمها الذكاء الاصطناعي لتصنيف سندات الصرف تلقائيًا.
-            كل نوع فرعي مرتبط بنوع رئيسي واحد أدناه — وهو الذي يظهر في تقارير REGA.
-          </p>
-        </div>
-        <LabelListEditor kind="disbursement" rows={disbursementRows} overrides={disbursementLabelOverrides} />
-      </section>
-
-      {/* Main disbursement types (mig 088) — editable + sub → main mapping */}
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-3">
-        <div>
-          <h2 className="serif font-bold text-base text-slate-900">أنواع الصرف الرئيسية</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            الأنواع الرئيسية هي ما يظهر فعليًا في عمود «البند» بورقة (2) وثائق الصرف
-            وأسطر «العمليات المالية» بورقة (3) من نموذج المحاسب القانوني. كل نوع فرعي
-            (من القائمة أعلاه) يُعيَّن إلى نوع رئيسي واحد — عيّنها من الجدول أدناه.
+            الهرمية على مستويين: <strong>الأنواع الرئيسية</strong> (تظهر في تقارير REGA)
+            و <strong>الأنواع الفرعية</strong> (يستخدمها الذكاء الاصطناعي للتصنيف التلقائي).
+            كل نوع فرعي مرتبط بنوع رئيسي واحد — يمكنك إضافة وحذف وتعديل الاثنين من هنا.
           </p>
         </div>
         <MainTypesEditor
           mainTypes={visibleMainTypes}
           hiddenMainTypes={hiddenMainTypes}
           subTypes={subTypeRows}
+          hiddenSubTypes={hiddenSubTypeRows}
         />
       </section>
     </div>
