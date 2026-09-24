@@ -496,13 +496,44 @@ export function mergeIntoTemplate(
     template.file(path, newXml)
   }
 
-  // ---- Take output's calcChain if present (formula dependency graph) ----
-  // Excel regenerates this on open, so it's OK either way; we take output's
-  // to match the sheet content.
-  const outCalcChain = output.file('xl/calcChain.xml')
-  if (outCalcChain) {
-    template.remove('xl/calcChain.xml')
-    template.file('xl/calcChain.xml', outCalcChain.asText())
+  // ---- Strip calcChain.xml entirely ----
+  //
+  // calcChain.xml is Excel's cached formula-dependency graph. It's an
+  // optional performance hint — Excel rebuilds it automatically the first
+  // time it opens the file (or when you save). It's not needed for
+  // correctness.
+  //
+  // BUT if any entry references a cell or formula that Excel can't
+  // reconcile with the merged sheet content, Excel throws "we found a
+  // problem with some content — Removed Records: Formula from
+  // /xl/calcChain.xml part". This was the last remaining source of the
+  // repair dialog after the tables strip fix.
+  //
+  // Both template's and output's calcChains were stale relative to our
+  // merged sheet content (we swap values, add new rows, remove tables).
+  // Neither is reliable. Simplest safe fix: strip calcChain entirely.
+  // Excel regenerates on first open with zero user impact.
+  template.remove('xl/calcChain.xml')
+  // Also remove the Override + Relationship for calcChain so Excel doesn't
+  // look for a file that isn't there.
+  const ctForCalc = template.file('[Content_Types].xml')?.asText()
+  if (ctForCalc) {
+    const cleaned = ctForCalc.replace(/<Override\b[^>]*calcChain[^/]*\/>/g, '')
+    if (cleaned !== ctForCalc) {
+      template.remove('[Content_Types].xml')
+      template.file('[Content_Types].xml', cleaned)
+    }
+  }
+  const wbRels = template.file('xl/_rels/workbook.xml.rels')?.asText()
+  if (wbRels) {
+    const cleaned = wbRels.replace(
+      /<Relationship\b[^>]*Type="[^"]*\/relationships\/calcChain"[^>]*\/>/g,
+      '',
+    )
+    if (cleaned !== wbRels) {
+      template.remove('xl/_rels/workbook.xml.rels')
+      template.file('xl/_rels/workbook.xml.rels', cleaned)
+    }
   }
 
   // ---- Strip Excel Tables entirely ----
