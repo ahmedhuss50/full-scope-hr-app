@@ -1,13 +1,42 @@
+/**
+ * Disbursements — Owner / Supervisor / Employee dashboard
+ * ----------------------------------------------------------------------------
+ * v1 of the redesigned dashboard. Replaces the old kanban view with a
+ * vertically-stacked, KPI-first layout modelled on the off-plan-sales.onrender
+ * reference. Keeps the existing teal + slate palette, RTL layout, and reuses
+ * the existing auth / project-scope preamble.
+ *
+ * Sections (top → bottom):
+ *   1. Page header with date-range pill filter
+ *   2. Five KPI cards
+ *   3. Compliance breach banners (only when tripped)
+ *   4. Two-column mid: "في انتظاري" queue + "مؤشرات الالتزام النظامي"
+ *   5. Projects summary table
+ *   6. Latest operations table (audit log)
+ *
+ * NOTE for future edit: the spec referenced `dsb_case_audit` but the actual
+ * table in this codebase is `dsb_audit_log`. Renamed here — grep the file for
+ * TODO comments before iterating.
+ */
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { FileText, Plus, Settings, LayoutDashboard, Activity, UploadCloud, ArrowRightCircle, RotateCcw, CheckCircle2, XCircle, Move } from 'lucide-react'
-import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
-import { CaseFiltersBar } from './CaseFiltersBar'
+import {
+  Plus, Settings, LayoutDashboard, Activity, ArrowRightCircle,
+  RotateCcw, CheckCircle2, XCircle, Move, UploadCloud, FileText,
+  Inbox, ArrowLeft, CircleDollarSign,
+} from 'lucide-react'
+import { fmtDate } from '@/lib/dsb/datetime'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
-import { ProjectComplianceSummary } from './ProjectComplianceSummary'
+import { DashboardDateRange } from './DashboardDateRange'
+import { DismissibleBanner } from './DismissibleBanner'
 
 export const dynamic = 'force-dynamic'
+
+// ---------------------------------------------------------------------------
+// Types & shared helpers (kept from previous version so peer files that
+// import them keep compiling).
+// ---------------------------------------------------------------------------
 
 type ProjectLite = { id: string; code: string; name_ar: string; assigned_employee_id?: string | null }
 type DeveloperLite = { id: string; company_name_ar: string }
@@ -21,8 +50,6 @@ type CaseRow = {
   submitted_at: string | null
   signed_at: string | null
   created_at: string
-  // JSONB blob from AI extraction. We only pluck beneficiary_name_ar for
-  // the kanban card display; the full shape is defined elsewhere.
   extracted_fields: { beneficiary_name_ar?: string | null } | null
   project: ProjectLite | ProjectLite[] | null
   developer: DeveloperLite | DeveloperLite[] | null
@@ -34,23 +61,29 @@ type AuditRow = {
   from_status: string | null
   to_status: string | null
   occurred_at: string
-  case: { id: string; case_number: string; project: { name_ar: string } | { name_ar: string }[] | null } | { id: string; case_number: string; project: { name_ar: string } | { name_ar: string }[] | null }[] | null
+  case:
+    | { id: string; case_number: string; status?: string | null; project: { name_ar: string } | { name_ar: string }[] | null; developer?: { company_name_ar: string } | { company_name_ar: string }[] | null }
+    | Array<{ id: string; case_number: string; status?: string | null; project: { name_ar: string } | { name_ar: string }[] | null; developer?: { company_name_ar: string } | { company_name_ar: string }[] | null }>
+    | null
 }
 
-function single<T>(maybe: T | T[] | null | undefined): T | null {
+export function single<T>(maybe: T | T[] | null | undefined): T | null {
   if (!maybe) return null
   return Array.isArray(maybe) ? (maybe[0] ?? null) : maybe
 }
 
-function fmtSar(amount: number | null): string {
+export function fmtSar(amount: number | null): string {
   if (amount == null) return '—'
   try {
-    return new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 }).format(amount)
+    return new Intl.NumberFormat('ar-SA', {
+      style: 'currency', currency: 'SAR', maximumFractionDigits: 0,
+    }).format(amount)
   } catch {
     return `${amount} ر.س`
   }
 }
-function timeAgoAr(s: string | null): string {
+
+export function timeAgoAr(s: string | null): string {
   if (!s) return '—'
   const then = new Date(s).getTime()
   if (Number.isNaN(then)) return s
@@ -65,86 +98,71 @@ function timeAgoAr(s: string | null): string {
   return fmtDate(s)
 }
 
-function roleLabelAr(role: string | null): string {
+export function roleLabelAr(role: string | null): string {
   if (role === 'employee') return 'الموظف'
   if (role === 'supervisor') return 'السوبرفايزر'
   if (role === 'owner') return 'المدير'
   return '—'
 }
 
-const PIPELINE_COLUMNS: {
-  key: 'with_employee' | 'with_supervisor' | 'with_owner' | 'signed' | 'sent_back_to_developer'
-  title: string
-  headCls: string
-}[] = [
-  { key: 'with_employee',          title: 'بانتظار الموظف',         headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'with_supervisor',        title: 'بانتظار السوبرفايزر',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'with_owner',             title: 'بانتظار مدير المراجعة',    headCls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  { key: 'signed',                 title: 'جاهزة للتسليم',            headCls: 'bg-green-50 text-green-800 border-green-200' },
-  { key: 'sent_back_to_developer', title: 'أعيدت إلى المطور',        headCls: 'bg-red-50 text-red-800 border-red-200' },
-]
+// ---------------------------------------------------------------------------
+// Compliance constants (mirror ProjectComplianceSummary.tsx)
+// ---------------------------------------------------------------------------
+const SHARE_CONSTRUCTION = 0.76
+const SHARE_ADMIN        = 0.20
+const SHARE_ESCROW       = 0.04
 
-type EventDescriptor = {
-  Icon: typeof FileText
-  iconCls: string
-  label: string
-}
+// ---------------------------------------------------------------------------
+// Date-range helpers
+// ---------------------------------------------------------------------------
+type RangeKey = 'month' | 'quarter' | 'year' | 'custom'
 
-function describeEvent(event: string, toStatus: string | null): EventDescriptor {
-  if (event === 'uploaded') {
-    return { Icon: UploadCloud, iconCls: 'text-teal-600 bg-teal-50', label: 'تم رفع وثيقة صرف جديدة' }
-  }
-  if (event === 'employee_approved') {
-    return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد الموظف وأرسل للسوبرفايزر' }
-  }
-  if (event === 'supervisor_approved') {
-    return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل إلى مدير المراجعة' }
-  }
-  if (event === 'sent_back') {
-    return { Icon: RotateCcw, iconCls: 'text-red-700 bg-red-50', label: 'أعيدت إلى المطور' }
-  }
-  if (event === 'signed') {
-    return { Icon: CheckCircle2, iconCls: 'text-green-700 bg-green-50', label: 'وقّع المدير نهائيًا' }
-  }
-  if (event === 'cancelled') {
-    return { Icon: XCircle, iconCls: 'text-slate-500 bg-slate-100', label: 'أُلغي الطلب' }
-  }
-  if (event === 'manual_move') {
-    if (toStatus === 'with_supervisor') {
-      return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد الموظف وأرسل للسوبرفايزر' }
-    }
-    if (toStatus === 'with_owner') {
-      return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'اعتمد السوبرفايزر وأرسل إلى مدير المراجعة' }
-    }
-    if (toStatus === 'sent_back_to_developer') {
-      return { Icon: RotateCcw, iconCls: 'text-red-700 bg-red-50', label: 'أعيدت إلى المطور' }
-    }
-    if (toStatus === 'signed') {
-      return { Icon: CheckCircle2, iconCls: 'text-green-700 bg-green-50', label: 'وقّع المدير نهائيًا' }
-    }
-    return { Icon: Move, iconCls: 'text-slate-600 bg-slate-100', label: 'تم نقل الطلب يدويًا' }
-  }
-  return { Icon: Activity, iconCls: 'text-slate-600 bg-slate-100', label: event }
-}
-
-function startOfMonthIso(): string {
+function resolveRange(
+  range: RangeKey,
+  customFrom: string | null,
+  customTo: string | null,
+): { fromIso: string; toIso: string; fromDate: string; toDate: string; label: string } {
   const now = new Date()
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0)).toISOString()
+  const y = now.getUTCFullYear()
+  const m = now.getUTCMonth()
+  let from: Date, to: Date, label: string
+  if (range === 'month') {
+    from = new Date(Date.UTC(y, m, 1))
+    to   = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59))
+    label = 'هذا الشهر'
+  } else if (range === 'year') {
+    from = new Date(Date.UTC(y, 0, 1))
+    to   = new Date(Date.UTC(y, 11, 31, 23, 59, 59))
+    label = 'السنة'
+  } else if (range === 'custom' && (customFrom || customTo)) {
+    from = customFrom ? new Date(`${customFrom}T00:00:00Z`) : new Date(Date.UTC(y, 0, 1))
+    to   = customTo   ? new Date(`${customTo}T23:59:59Z`)   : new Date(Date.UTC(y, 11, 31, 23, 59, 59))
+    label = 'مخصّص'
+  } else {
+    // default: current quarter
+    const qStart = Math.floor(m / 3) * 3
+    from = new Date(Date.UTC(y, qStart, 1))
+    to   = new Date(Date.UTC(y, qStart + 3, 0, 23, 59, 59))
+    label = 'هذا الربع'
+  }
+  return {
+    fromIso: from.toISOString(),
+    toIso:   to.toISOString(),
+    fromDate: from.toISOString().slice(0, 10),
+    toDate:   to.toISOString().slice(0, 10),
+    label,
+  }
 }
 
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 export default async function DisbursementsDashboardPage({
   searchParams,
 }: {
-  searchParams?: {
-    client?: string
-    project?: string
-    employee?: string
-    status?: string
-    from?: string
-    to?: string
-    q?: string
-  }
+  searchParams?: { range?: string; from?: string; to?: string }
 }) {
+  // ---- Auth + role resolution (kept verbatim from previous version) ------
   const supabase = createSupabaseServer()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -158,133 +176,117 @@ export default async function DisbursementsDashboardPage({
   if (!profile) redirect('/login')
 
   const dsbRole = (profile.dsb_role as string | null) ?? null
-  // Developers (clients) belong in /developer, not the staff dashboard.
-  // Redirect them directly instead of going through /app (which would just
-  // bounce back here and cause ERR_TOO_MANY_REDIRECTS).
   if (dsbRole === 'developer') redirect('/developer')
-  // Open to every internal role — including viewer (read-only) and deliverer
-  // (read + deliver). Write actions are gated separately at the action layer.
   if (!dsbRole || !['employee', 'supervisor', 'owner', 'viewer', 'deliverer'].includes(dsbRole)) {
     redirect('/login')
   }
-
   const tenantId = profile.tenant_id as string
   const userId = profile.id as string
   const fullName = (profile.full_name as string | null) ?? null
 
-  const allowedProjectIds = await assignedProjectIds({
-    svc,
-    tenantId,
-    userId,
-    dsbRole,
-  })
+  const allowedProjectIds = await assignedProjectIds({ svc, tenantId, userId, dsbRole })
 
-  const monthStart = startOfMonthIso()
-  // For avg cycle: signed in the last 30 days.
-  const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  // ---- Parse date range from URL -----------------------------------------
+  const rangeKeyRaw = (searchParams?.range ?? 'quarter').trim() as RangeKey
+  const rangeKey: RangeKey = (['month', 'quarter', 'year', 'custom'] as const).includes(rangeKeyRaw as never)
+    ? rangeKeyRaw
+    : 'quarter'
+  const { fromIso, toIso, fromDate, toDate, label: rangeLabel } = resolveRange(
+    rangeKey,
+    (searchParams?.from ?? '').trim() || null,
+    (searchParams?.to   ?? '').trim() || null,
+  )
 
+  // "بانتظاري" — status the current user should action.
   const myInboxStatus =
-    dsbRole === 'employee' ? 'with_employee' :
+    dsbRole === 'employee'   ? 'with_employee'   :
     dsbRole === 'supervisor' ? 'with_supervisor' :
-    dsbRole === 'owner' ? 'with_owner' :
+    dsbRole === 'owner'      ? 'with_owner'      :
     null
 
-  // ---------- Filter values from URL (CaseFiltersBar writes these) ----------
-  const f = searchParams ?? {}
-  const fClient   = (f.client   ?? '').trim() || null
-  const fProject  = (f.project  ?? '').trim() || null
-  const fEmployee = (f.employee ?? '').trim() || null
-  const fStatus   = (f.status   ?? '').trim() || null
-  const fFrom     = (f.from     ?? '').trim() || null
-  const fTo       = (f.to       ?? '').trim() || null
-  const fQ        = (f.q        ?? '').trim() || null
-
-  // If filtering by assigned employee, we must first resolve the projects
-  // assigned to them — assignment lives on dsb_projects, not on dsb_cases.
-  // Project assignment is the UNION of:
-  //   * legacy dsb_projects.assigned_employee_id (single pointer), and
-  //   * dsb_project_employees junction (many-to-many, the new model).
-  let projectIdsForEmployee: string[] | null = null
-  if (fEmployee) {
-    const [legacyRes, junctionRes] = await Promise.all([
-      svc
-        .from('dsb_projects')
-        .select('id')
-        .eq('tenant_id', tenantId)
-        .eq('assigned_employee_id', fEmployee),
-      svc
-        .from('dsb_project_employees')
-        .select('project_id')
-        .eq('tenant_id', tenantId)
-        .eq('user_id', fEmployee),
-    ])
-    const fromLegacy = ((legacyRes.data ?? []) as { id: string }[]).map((p) => p.id)
-    const fromJunction = ((junctionRes.data ?? []) as { project_id: string }[]).map((p) => p.project_id)
-    projectIdsForEmployee = Array.from(new Set([...fromLegacy, ...fromJunction]))
-    // If they have no projects, no cases will match — short-circuit later.
-  }
-
-  // Pre-compute the current user's project IDs (junction + legacy) once.
-  // Used by the my-inbox count below, and by the dashboard's "in my queue"
-  // filter for employees.
-  const myProjectIds: string[] = await (async () => {
-    const [legacyRes, junctionRes] = await Promise.all([
-      svc
-        .from('dsb_projects')
-        .select('id')
-        .eq('tenant_id', tenantId)
-        .eq('assigned_employee_id', userId),
-      svc
-        .from('dsb_project_employees')
-        .select('project_id')
-        .eq('tenant_id', tenantId)
-        .eq('user_id', userId),
-    ])
-    const fromLegacy = ((legacyRes.data ?? []) as { id: string }[]).map((p) => p.id)
-    const fromJunction = ((junctionRes.data ?? []) as { project_id: string }[]).map((p) => p.project_id)
-    return Array.from(new Set([...fromLegacy, ...fromJunction]))
-  })()
-
-  // ---------- Dropdown options for the filter bar ----------
-  const [clientOptsRes, projectOptsRes, employeeOptsRes] = await Promise.all([
-    svc
-      .from('dsb_developers')
-      .select('id, company_name_ar')
-      .eq('tenant_id', tenantId)
-      .order('company_name_ar', { ascending: true }),
-    svc
-      .from('dsb_projects')
-      .select('id, code, name_ar, developer_id')
-      .eq('tenant_id', tenantId)
-      .order('code', { ascending: true }),
-    svc
-      .from('users')
-      .select('id, full_name')
-      .eq('tenant_id', tenantId)
-      .in('dsb_role', ['employee', 'supervisor', 'owner', 'deliverer'])
-      .order('full_name', { ascending: true }),
-  ])
-  const clientOptions = ((clientOptsRes.data ?? []) as Array<{ id: string; company_name_ar: string }>)
-    .map((c) => ({ id: c.id, label: c.company_name_ar }))
-  const projectOptions = ((projectOptsRes.data ?? []) as Array<{ id: string; code: string; name_ar: string; developer_id: string | null }>)
-    .map((p) => ({ id: p.id, label: `${p.code} — ${p.name_ar}`, developer_id: p.developer_id }))
-  const employeeOptions = ((employeeOptsRes.data ?? []) as Array<{ id: string; full_name: string | null }>)
-    .map((u) => ({ id: u.id, label: u.full_name ?? '—' }))
-
-  // For employee role, my-inbox needs filtering by assigned_employee_id on project.
-  // Run all queries in parallel.
+  // ---- Batch all queries in parallel -------------------------------------
+  // Each entry is either a Supabase query or an inline async fn so we can
+  // still layer applyProjectScope + role-aware filters inline.
   const [
-    casesRes,
-    activeCountRes,
-    signedThisMonthCountRes,
-    sentBackCountRes,
-    myInboxAllRes, // employee inbox count needs a list filter; supervisor/owner just need a head count
-    avgCycleRes,
+    projectsRes,
+    unitsRes,
+    unitSalesRes,
+    paymentsRes,
+    spentRes,
+    myInboxCasesRes,
     auditRes,
   ] = await Promise.all([
+    // Projects the user can see (name / code / license). NOTE: for
+    // `dsb_projects` the scope column is `id`, not `project_id`.
+    (() => {
+      let q = svc
+        .from('dsb_projects')
+        .select('id, code, name_ar, rega_license_no')
+        .eq('tenant_id', tenantId)
+        .order('code', { ascending: true })
+      q = applyProjectScope(q, allowedProjectIds, 'id')
+      return q
+    })(),
+
+    // Units in accessible projects
+    (() => {
+      let q = svc
+        .from('dsb_project_units')
+        .select('id, project_id')
+        .eq('tenant_id', tenantId)
+      q = applyProjectScope(q, allowedProjectIds)
+      return q.limit(10000)
+    })(),
+
+    // Unit sales — used to derive "sold" count and total sold contract
+    // value. `dsb_unit_sales` has no project_id column, so scoping happens
+    // in code: we only aggregate rows whose unit_id is in the units query
+    // (which IS already scoped). Active sales only, mirroring
+    // ProjectComplianceSummary.
+    svc
+      .from('dsb_unit_sales')
+      .select('unit_id, price_with_vat_sar, price_before_tax_sar, sale_status')
+      .eq('tenant_id', tenantId)
+      .eq('sale_status', 'active')
+      .limit(10000),
+
+    // Buyer collections in date range → المحصّل
+    (() => {
+      let q = svc
+        .from('dsb_payments')
+        .select('project_id, amount_sar, payment_date, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('deposit_category', 'buyer_collection')
+        // Filter by payment_date if present, else created_at. We fetch a wide
+        // window (from ≤ payment_date ≤ to) and let the DB do the filtering.
+        // TODO(v2): confirm which of payment_date / created_at is the source
+        // of truth in production data.
+        .gte('payment_date', fromDate)
+        .lte('payment_date', toDate)
+      q = applyProjectScope(q, allowedProjectIds)
+      return q.limit(10000)
+    })(),
+
+    // Spent (paid) cases in date range → المصروف + admin/construction split
+    (() => {
+      let q = svc
+        .from('dsb_cases')
+        .select('project_id, amount_sar, status, signed_at, voucher_date, is_historical, extracted_fields')
+        .eq('tenant_id', tenantId)
+        .in('status', ['signed', 'delivered'])
+      q = applyProjectScope(q, allowedProjectIds)
+      // Use signed_at as the primary spend date. Historical cases predate the
+      // app so are excluded from range totals — they'll show under the
+      // per-project totals if we ever surface those.
+      // TODO(v2): union with voucher_date for is_historical=true rows.
+      return q.gte('signed_at', fromIso).lte('signed_at', toIso).limit(10000)
+    })(),
+
+    // "بانتظاري" — cases the current user must action (all-time, not
+    // date-scoped: an approval doesn't stop being an approval outside a
+    // quarter boundary).
     (async () => {
-      // Build the cases query with all active filters applied. We layer them
-      // on a base query because Supabase's PostgREST builder is chainable.
+      if (!myInboxStatus) return { data: [] as CaseRow[] }
       let q = svc
         .from('dsb_cases')
         .select(
@@ -293,394 +295,594 @@ export default async function DisbursementsDashboardPage({
            developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar)`,
         )
         .eq('tenant_id', tenantId)
-      if (fClient) q = q.eq('developer_id', fClient)
-      if (fProject) q = q.eq('project_id', fProject)
-      if (fStatus) q = q.eq('status', fStatus)
-      if (fFrom) q = q.gte('submitted_at', `${fFrom}T00:00:00+03`)
-      if (fTo) q = q.lte('submitted_at', `${fTo}T23:59:59+03`)
-      if (fQ) {
-        // Universal search — spans identifiers + recipient + JSONB fields.
-        const qStr = fQ
-        q = q.or(
-          [
-            `case_number.ilike.%${qStr}%`,
-            `voucher_number_text.ilike.%${qStr}%`,
-            `recipient_name.ilike.%${qStr}%`,
-            `recipient_phone.ilike.%${qStr}%`,
-            `recipient_id_number.ilike.%${qStr}%`,
-            `notes.ilike.%${qStr}%`,
-            `extracted_fields->>beneficiary_name_ar.ilike.%${qStr}%`,
-            `extracted_fields->>buyer_name_ar.ilike.%${qStr}%`,
-            `extracted_fields->>buyer_id_number.ilike.%${qStr}%`,
-            `extracted_fields->>invoice_number.ilike.%${qStr}%`,
-            `extracted_fields->>contract_number.ilike.%${qStr}%`,
-            `extracted_fields->>unit_number.ilike.%${qStr}%`,
-          ].join(','),
-        )
-      }
-      if (projectIdsForEmployee !== null) {
-        if (projectIdsForEmployee.length === 0) {
-          // Employee filter active but they own zero projects → no matches.
-          return { data: [], error: null } as { data: unknown[]; error: null }
-        }
-        q = q.in('project_id', projectIdsForEmployee)
-      }
-      // RBAC: scoped users only see their assigned projects.
-      q = applyProjectScope(q, allowedProjectIds)
-      return q
-        .order('submitted_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .limit(500)
-    })(),
-    svc
-      .from('dsb_cases')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId)
-      .in('status', ['with_employee', 'with_supervisor', 'with_owner']),
-    // "موقّعة هذا الشهر" — counts cases SIGNED this month, regardless of
-    // whether they were subsequently delivered. The filter is on signed_at,
-    // not status, so a case that's signed→delivered in the same month still
-    // counts exactly once.
-    svc
-      .from('dsb_cases')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId)
-      .in('status', ['signed', 'delivered'])
-      .gte('signed_at', monthStart),
-    svc
-      .from('dsb_cases')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId)
-      .eq('status', 'sent_back_to_developer'),
-    (async () => {
-      if (!myInboxStatus) return { count: 0 } as { count: number }
-      if (dsbRole === 'employee') {
-        // My inbox for an employee = cases in `with_employee` status whose
-        // project is in MY assigned set (junction ∪ legacy single pointer).
-        // If I'm not on any project, the count is 0 without querying.
-        if (myProjectIds.length === 0) return { count: 0 }
-        const { count } = await svc
-          .from('dsb_cases')
-          .select('id', { count: 'exact', head: true })
-          .eq('tenant_id', tenantId)
-          .eq('status', myInboxStatus)
-          .in('project_id', myProjectIds)
-        return { count: count ?? 0 }
-      }
-      const { count } = await svc
-        .from('dsb_cases')
-        .select('id', { count: 'exact', head: true })
-        .eq('tenant_id', tenantId)
         .eq('status', myInboxStatus)
-      return { count: count ?? 0 }
+      q = applyProjectScope(q, allowedProjectIds)
+      const res = await q.order('submitted_at', { ascending: false, nullsFirst: false }).limit(200)
+      return { data: (res.data ?? []) as CaseRow[] }
     })(),
-    // Avg-cycle = avg(signed_at − created_at) for cases signed in the last
-    // 30 days. Includes delivered too — a delivered case was signed first
-    // and its cycle time is still valid data.
-    svc
-      .from('dsb_cases')
-      .select('created_at, signed_at')
-      .eq('tenant_id', tenantId)
-      .in('status', ['signed', 'delivered'])
-      .gte('signed_at', thirtyDaysAgoIso)
-      .limit(500),
+
+    // Latest 10 audit events for "آخر العمليات"
     svc
       .from('dsb_audit_log')
       .select(
         `id, event, from_status, to_status, occurred_at,
-         case:dsb_cases!dsb_audit_log_case_id_fkey(id, case_number, project:dsb_projects!dsb_cases_project_id_fkey(name_ar))`,
+         case:dsb_cases!dsb_audit_log_case_id_fkey(
+           id, case_number, status,
+           project:dsb_projects!dsb_cases_project_id_fkey(name_ar),
+           developer:dsb_developers!dsb_cases_developer_id_fkey(company_name_ar)
+         )`,
       )
       .eq('tenant_id', tenantId)
       .order('occurred_at', { ascending: false })
       .limit(10),
   ])
 
-  const cases = (casesRes.data ?? []) as CaseRow[]
-  const activeCount = activeCountRes.count ?? 0
-  const signedThisMonthCount = signedThisMonthCountRes.count ?? 0
-  const sentBackCount = sentBackCountRes.count ?? 0
-  const myInboxCount = myInboxAllRes.count ?? 0
-
-  // Average days to sign over last 30 days of signed cases.
-  let avgCycleLabel = '—'
-  const cyc = (avgCycleRes.data ?? []) as Array<{ created_at: string | null; signed_at: string | null }>
-  const diffs: number[] = []
-  for (const r of cyc) {
-    if (r.created_at && r.signed_at) {
-      const a = new Date(r.created_at).getTime()
-      const b = new Date(r.signed_at).getTime()
-      if (!Number.isNaN(a) && !Number.isNaN(b) && b >= a) {
-        diffs.push((b - a) / (1000 * 60 * 60 * 24))
-      }
-    }
-  }
-  if (diffs.length > 0) {
-    const avg = diffs.reduce((s, x) => s + x, 0) / diffs.length
-    // Format with Arabic-Indic digits via Intl.
-    try {
-      avgCycleLabel = new Intl.NumberFormat('ar-SA', { maximumFractionDigits: 1 }).format(avg)
-    } catch {
-      avgCycleLabel = avg.toFixed(1)
-    }
-  }
-
-  // Group cases by status for the kanban.
-  const byStatus = new Map<string, CaseRow[]>()
-  for (const col of PIPELINE_COLUMNS) byStatus.set(col.key, [])
-  for (const c of cases) {
-    const bucket = byStatus.get(c.status)
-    if (bucket) bucket.push(c)
-  }
-  // Trim signed to 10 most recent.
-  const signedAll = byStatus.get('signed') ?? []
-  byStatus.set('signed', signedAll.slice(0, 10))
-
+  const projects = (projectsRes.data ?? []) as Array<{
+    id: string; code: string; name_ar: string; rega_license_no: string | null
+  }>
+  const units = (unitsRes.data ?? []) as Array<{ id: string; project_id: string }>
+  const unitSales = (unitSalesRes.data ?? []) as Array<{
+    unit_id: string; price_with_vat_sar: number | null; price_before_tax_sar: number | null
+  }>
+  const payments = (paymentsRes.data ?? []) as Array<{
+    project_id: string | null; amount_sar: number | null
+  }>
+  const spent = (spentRes.data ?? []) as Array<{
+    project_id: string | null; amount_sar: number | null
+    extracted_fields: { disbursement_type_code?: string | null } | null
+  }>
+  const myInboxCases = myInboxCasesRes.data
   const audit = (auditRes.data ?? []) as AuditRow[]
 
+  // ---- Aggregate per-project + totals ------------------------------------
+  const unitCountByProject = new Map<string, number>()
+  const unitToProject = new Map<string, string>()
+  for (const u of units) {
+    unitCountByProject.set(u.project_id, (unitCountByProject.get(u.project_id) ?? 0) + 1)
+    unitToProject.set(u.id, u.project_id)
+  }
+  const soldCountByProject = new Map<string, number>()
+  const soldValueByProject = new Map<string, number>()
+  let totalSoldValue = 0
+  let totalSoldCount = 0
+  for (const s of unitSales) {
+    const pid = unitToProject.get(s.unit_id)
+    if (!pid) continue
+    soldCountByProject.set(pid, (soldCountByProject.get(pid) ?? 0) + 1)
+    const price = Number(s.price_with_vat_sar ?? s.price_before_tax_sar ?? 0)
+    soldValueByProject.set(pid, (soldValueByProject.get(pid) ?? 0) + price)
+    totalSoldValue += price
+    totalSoldCount += 1
+  }
+
+  const collectedByProject = new Map<string, number>()
+  let totalCollected = 0
+  for (const p of payments) {
+    if (!p.project_id) continue
+    const amt = Number(p.amount_sar || 0)
+    collectedByProject.set(p.project_id, (collectedByProject.get(p.project_id) ?? 0) + amt)
+    totalCollected += amt
+  }
+
+  const spentByProject = new Map<string, number>()
+  const spentAdminByProject = new Map<string, number>()
+  const spentConstructionByProject = new Map<string, number>()
+  let totalSpent = 0
+  let totalAdminSpent = 0
+  let totalConstructionSpent = 0
+  for (const c of spent) {
+    if (!c.project_id) continue
+    const amt = Number(c.amount_sar || 0)
+    spentByProject.set(c.project_id, (spentByProject.get(c.project_id) ?? 0) + amt)
+    totalSpent += amt
+    const type = c.extracted_fields?.disbursement_type_code ?? null
+    if (type === 'admin_marketing') {
+      spentAdminByProject.set(c.project_id, (spentAdminByProject.get(c.project_id) ?? 0) + amt)
+      totalAdminSpent += amt
+    } else if (type === 'construction') {
+      spentConstructionByProject.set(c.project_id, (spentConstructionByProject.get(c.project_id) ?? 0) + amt)
+      totalConstructionSpent += amt
+    }
+  }
+
+  const totalUnits    = units.length
+  const totalSoldPct  = totalUnits > 0 ? Math.round((totalSoldCount / totalUnits) * 100) : 0
+  const escrowBalance = totalCollected - totalSpent
+  const myInboxCount  = myInboxCases.length
+
+  // ---- Compliance ratios (tenant-wide, on collected in range) ------------
+  const adminRatio        = totalCollected > 0 ? totalAdminSpent / totalCollected : 0
+  const constructionRatio = totalCollected > 0 ? totalConstructionSpent / totalCollected : 0
+  const escrowRatio       = totalCollected > 0 ? escrowBalance / totalCollected : 0
+
+  const breachAdmin        = totalCollected > 0 && adminRatio > SHARE_ADMIN
+  const breachConstruction = totalCollected > 0 && constructionRatio > SHARE_CONSTRUCTION
+  const breachEscrow       = totalCollected > 0 && escrowRatio < SHARE_ESCROW
+
+  // ---- Group myInbox cases by type for the queue panel -------------------
+  // We split by "requires signature" vs "requires review" using status +
+  // extracted flags. For owner this is the classic توقيع bucket; supervisor
+  // and employee just see مراجعة.
+  const inboxBuckets: Array<{ key: string; label: string; items: CaseRow[] }> = []
+  if (myInboxCases.length > 0) {
+    if (dsbRole === 'owner') {
+      inboxBuckets.push({ key: 'sign', label: 'بانتظار التوقيع', items: myInboxCases })
+    } else {
+      inboxBuckets.push({ key: 'review', label: 'بانتظار المراجعة', items: myInboxCases })
+    }
+  }
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
-      {/* Welcome header */}
+    <div className="space-y-5 max-w-7xl mx-auto" dir="rtl">
+
+      {/* 1. Page header -----------------------------------------------------*/}
       <header className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+        <div className="space-y-1.5">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-teal-700">
             <LayoutDashboard className="w-4 h-4" aria-hidden="true" />
             الصرف
           </div>
-          <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
-            {fullName ? `مرحبًا، ${fullName}` : 'مرحبًا بك'}
+          <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
+            لوحة المتابعة
           </h1>
-          <p className="text-sm text-slate-600">نظرة عامة على سندات الصرف</p>
+          <p className="text-xs text-slate-500">
+            {rangeLabel} · {fmtDate(fromIso)} — {fmtDate(toIso)}
+            {' · '}
+            {fullName ? `${fullName} (${roleLabelAr(dsbRole)})` : roleLabelAr(dsbRole)}
+          </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Link
-            href="/app/disbursements/new"
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold shadow-sm hover:bg-teal-700 transition"
-          >
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            سند صرف جديد
-          </Link>
-          <Link
-            href="/app/disbursements/admin"
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition"
-          >
-            <Settings className="w-4 h-4" aria-hidden="true" />
-            إدارة
-          </Link>
+        <div className="flex flex-col items-end gap-2">
+          <DashboardDateRange active={rangeKey} from={searchParams?.from ?? null} to={searchParams?.to ?? null} />
+          <div className="flex items-center gap-2">
+            <Link
+              href="/app/disbursements/new"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+              سند جديد
+            </Link>
+            <Link
+              href="/app/disbursements/admin"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition"
+            >
+              <Settings className="w-3.5 h-3.5" aria-hidden="true" />
+              إدارة
+            </Link>
+          </div>
         </div>
       </header>
 
-      {/* Filters — URL-driven; affects the cases query above and the
-          inline-kanban / list below. KPIs stay tenant-wide for context. */}
-      <CaseFiltersBar
-        clients={clientOptions}
-        projects={projectOptions}
-        employees={employeeOptions}
-      />
-
-      {/* KPI strip */}
+      {/* 2. Five KPI cards --------------------------------------------------*/}
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KpiCard
-          label="في صندوقي"
-          value={String(myInboxCount)}
-          hint={roleLabelAr(dsbRole)}
+        <Kpi
+          label="الوحدات"
+          value={fmtInt(totalUnits)}
+          caption={`مباعة ${fmtInt(totalSoldCount)} · ${totalSoldPct}٪`}
         />
-        <KpiCard label="إجمالي النشطة" value={String(activeCount)} />
-        <KpiCard label="جاهزة للتسليم هذا الشهر" value={String(signedThisMonthCount)} />
-        <KpiCard
-          label="أعيدت إلى المطور"
-          value={String(sentBackCount)}
-          tone={sentBackCount > 0 ? 'red' : 'default'}
+        <Kpi
+          label="المحصّل"
+          value={fmtSar(totalCollected)}
+          caption={`من ${fmtSar(totalSoldValue)}`}
         />
-        <KpiCard label="متوسط الزمن للتوقيع (يوم)" value={avgCycleLabel} />
+        <Kpi
+          label="المصروف"
+          value={fmtSar(totalSpent)}
+          tone={totalSpent > totalCollected && totalCollected > 0 ? 'red' : 'default'}
+          caption={totalCollected > 0
+            ? `${Math.round((totalSpent / totalCollected) * 100)}٪ من المحصّل`
+            : '—'}
+        />
+        <Kpi
+          label="حساب الضمان"
+          value={fmtSar(escrowBalance)}
+          tone={escrowBalance < 0 ? 'red' : 'default'}
+          caption={totalCollected > 0
+            ? `${Math.round(escrowRatio * 100)}٪ من المحصّل`
+            : '—'}
+        />
+        <Kpi
+          label="بانتظاري"
+          value={fmtInt(myInboxCount)}
+          tone={myInboxCount > 0 ? 'green' : 'default'}
+          caption={roleLabelAr(dsbRole)}
+        />
       </section>
 
-      {/* Compliance overview — owner only. Alerts banner when any project
-          violates the 20% admin / 76% construction / net-cash caps, plus a
-          per-project performance table with inline progress bars and status
-          pills. Sits right under the KPI strip so it's the first thing the
-          owner sees after login. */}
-      {dsbRole === 'owner' && (
-        <ProjectComplianceSummary
-          tenantId={tenantId}
-          projectIds={projectOptions.map((p) => p.id)}
-        />
+      {/* 3. Compliance breach banners --------------------------------------*/}
+      {(breachConstruction || breachEscrow || breachAdmin) && (
+        <section className="space-y-2">
+          {breachConstruction && (
+            <DismissibleBanner
+              tone="red"
+              title="تجاوز سقف المصاريف الإنشائية"
+              message={`المصروف الإنشائي ${Math.round(constructionRatio * 100)}٪ من المحصّل — يتجاوز الحد المسموح ${Math.round(SHARE_CONSTRUCTION * 100)}٪.`}
+            />
+          )}
+          {breachEscrow && (
+            <DismissibleBanner
+              tone="amber"
+              title="الرصيد دون مبلغ الحفظ"
+              message={`رصيد حساب الضمان ${Math.round(escrowRatio * 100)}٪ من المحصّل — أقل من الحد الأدنى ${Math.round(SHARE_ESCROW * 100)}٪.`}
+            />
+          )}
+          {breachAdmin && (
+            <DismissibleBanner
+              tone="red"
+              title="تجاوز سقف المصاريف الإدارية والتسويقية"
+              message={`المصروف الإداري ${Math.round(adminRatio * 100)}٪ من المحصّل — يتجاوز الحد المسموح ${Math.round(SHARE_ADMIN * 100)}٪.`}
+            />
+          )}
+        </section>
       )}
 
-      {/* Kanban + Activity feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Kanban */}
-        <section className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-slate-100">
-            <h2 className="serif font-bold text-lg text-slate-900">مسار السندات</h2>
-            <Link
-              href="/app/disbursements/board"
-              className="inline-flex items-center text-xs font-semibold text-teal-700 hover:text-teal-800"
-            >
-              عرض اللوحة الكاملة ←
-            </Link>
-          </div>
-          <div className="p-3 sm:p-4">
-            {cases.length === 0 ? (
-              <div className="text-center text-sm text-slate-500 py-10">
-                لا يوجد سندات بعد.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
-                {PIPELINE_COLUMNS.map((col) => {
-                  const items = byStatus.get(col.key) ?? []
-                  return (
-                    <div
-                      key={col.key}
-                      className="flex flex-col bg-slate-50/60 border border-slate-200 rounded-xl overflow-hidden min-h-[160px]"
-                    >
-                      <div className={`flex items-center justify-between gap-2 px-3 py-2 border-b ${col.headCls}`}>
-                        <div className="text-xs font-bold truncate">{col.title}</div>
-                        <span className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full bg-white/70 text-[11px] font-bold font-mono">
-                          {items.length}
-                        </span>
-                      </div>
-                      <div className="p-2 space-y-2 flex-1">
-                        {items.length === 0 ? (
-                          <div className="text-center text-xs text-slate-400 py-6">—</div>
-                        ) : (
-                          items.map((c) => {
-                            const proj = single(c.project)
-                            const dev = single(c.developer)
-                            return (
-                              <Link
-                                key={c.id}
-                                href={`/app/disbursements/${c.id}`}
-                                className="block bg-white rounded-lg border border-slate-200 p-2.5 hover:border-teal-300 hover:shadow-sm transition"
-                              >
-                                <div className="flex items-center gap-2 mb-0.5">
-                                  <span className="font-mono text-[11px] text-slate-500 truncate">
-                                    {c.case_number}
-                                  </span>
-                                </div>
-                                {proj && (
-                                  <div className="text-[11px] text-slate-500 truncate">
-                                    <span className="font-mono">{proj.code}</span>
-                                    <span className="text-slate-400"> · </span>
-                                    <span>{proj.name_ar}</span>
-                                  </div>
-                                )}
-                                {dev && (
-                                  <div className="text-[11px] text-slate-400 truncate">
-                                    {dev.company_name_ar}
-                                  </div>
-                                )}
-                                {c.voucher_number_text && (
-                                  <div className="text-xs text-slate-600 truncate mt-0.5">
-                                    سند {c.voucher_number_text}
-                                  </div>
-                                )}
-                                {c.extracted_fields?.beneficiary_name_ar && (
-                                  <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                                    المستفيد: {c.extracted_fields.beneficiary_name_ar}
-                                  </div>
-                                )}
-                                <div className="text-sm font-bold text-slate-900 mt-1">
-                                  {fmtSar(c.amount_sar)}
-                                </div>
-                                <div className="text-[11px] text-slate-400 mt-0.5">
-                                  {fmtDateTime(c.submitted_at ?? c.created_at)}
-                                </div>
-                              </Link>
-                            )
-                          })
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+      {/* 4. Two-column mid: inbox queue + compliance indicators -------------*/}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left: inbox queue */}
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Inbox className="w-4 h-4 text-teal-700" aria-hidden="true" />
+              <h2 className="serif font-bold text-base text-slate-900">في انتظاري</h2>
+              <span className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full bg-teal-50 text-teal-700 text-[11px] font-bold font-mono">
+                {myInboxCount}
+              </span>
+            </div>
+            {myInboxStatus && (
+              <Link
+                href={`/app/disbursements/board?status=${myInboxStatus}`}
+                className="text-xs font-semibold text-teal-700 hover:text-teal-900 inline-flex items-center gap-1"
+              >
+                فتح اللوحة الكاملة
+                <ArrowLeft className="w-3 h-3" aria-hidden="true" />
+              </Link>
             )}
           </div>
-        </section>
-
-        {/* Activity feed */}
-        <aside className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-slate-100">
-            <Activity className="w-4 h-4 text-slate-500" aria-hidden="true" />
-            <h2 className="serif font-bold text-lg text-slate-900">النشاط الأخير</h2>
-          </div>
-          {audit.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-slate-500">
-              لا يوجد نشاط حديث.
+          {!myInboxStatus ? (
+            <div className="p-6 text-center text-sm text-slate-500">
+              لا يوجد صندوق واردات لدورك.
+            </div>
+          ) : inboxBuckets.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500">
+              لا يوجد ما ينتظر إجراءك.
             </div>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {audit.map((a) => {
-                const c = single(a.case)
-                const proj = c ? single(c.project) : null
-                const ev = describeEvent(a.event, a.to_status)
-                const EvIcon = ev.Icon
+              {inboxBuckets.map((b) => {
+                const sum = b.items.reduce((s, x) => s + Number(x.amount_sar || 0), 0)
                 return (
-                  <li key={a.id} className="px-4 sm:px-5 py-3">
-                    <div className="flex items-start gap-3">
-                      <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full shrink-0 ${ev.iconCls}`}>
-                        <EvIcon className="w-4 h-4" aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-900 truncate">
-                          {ev.label}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                          {c ? (
-                            <Link
-                              href={`/app/disbursements/${c.id}`}
-                              className="font-mono text-teal-700 hover:text-teal-800"
-                            >
-                              {c.case_number}
-                            </Link>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                          {proj && (
-                            <>
-                              <span className="text-slate-300">·</span>
-                              <span className="truncate">{proj.name_ar}</span>
-                            </>
-                          )}
-                          <span className="text-slate-300">·</span>
-                          <span>{timeAgoAr(a.occurred_at)}</span>
-                        </div>
+                  <li key={b.key} className="px-4 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-slate-900">{b.label}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        {b.items.length} سند · إجمالي {fmtSar(sum)}
                       </div>
                     </div>
+                    <Link
+                      href={`/app/disbursements/board?status=${myInboxStatus}`}
+                      className="text-xs font-semibold text-teal-700 hover:text-teal-900 whitespace-nowrap"
+                    >
+                      فتح ←
+                    </Link>
                   </li>
                 )
               })}
             </ul>
           )}
-        </aside>
+        </div>
+
+        {/* Right: compliance ratios */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
+            <CircleDollarSign className="w-4 h-4 text-teal-700" aria-hidden="true" />
+            <h2 className="serif font-bold text-base text-slate-900">مؤشرات الالتزام النظامي</h2>
+          </div>
+          <div className="p-4 space-y-3">
+            <RatioRow
+              label={`سقف المصاريف الإدارية (${Math.round(SHARE_ADMIN * 100)}٪)`}
+              ratio={adminRatio}
+              threshold={SHARE_ADMIN}
+              direction="cap"
+            />
+            <RatioRow
+              label={`حساب الحفظ (${Math.round(SHARE_ESCROW * 100)}٪)`}
+              ratio={escrowRatio}
+              threshold={SHARE_ESCROW}
+              direction="floor"
+            />
+            <RatioRow
+              label={`سقف المصاريف الإنشائية (${Math.round(SHARE_CONSTRUCTION * 100)}٪)`}
+              ratio={constructionRatio}
+              threshold={SHARE_CONSTRUCTION}
+              direction="cap"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* 5. Projects summary table -----------------------------------------*/}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+          <h2 className="serif font-bold text-base text-slate-900">
+            ملخص المشاريع ({projects.length})
+          </h2>
+        </div>
+        {projects.length === 0 ? (
+          <div className="p-6 text-center text-sm text-slate-500">لا توجد مشاريع.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-right">
+                <tr>
+                  <Th>المشروع</Th>
+                  <Th>الوحدات</Th>
+                  <Th>مباعة</Th>
+                  <Th>المحصّل</Th>
+                  <Th>المنصرف</Th>
+                  <Th>الرصيد</Th>
+                  <Th>الحالة</Th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {projects.map((p) => {
+                  const nUnits = unitCountByProject.get(p.id) ?? 0
+                  const nSold  = soldCountByProject.get(p.id) ?? 0
+                  const soldPct = nUnits > 0 ? Math.round((nSold / nUnits) * 100) : 0
+                  const collected = collectedByProject.get(p.id) ?? 0
+                  const spentP    = spentByProject.get(p.id) ?? 0
+                  const spentAdmin = spentAdminByProject.get(p.id) ?? 0
+                  const spentCon   = spentConstructionByProject.get(p.id) ?? 0
+                  const balance   = collected - spentP
+                  const pill = projectStatusPill({
+                    collected, spentAdmin, spentCon,
+                  })
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-50/70">
+                      <Td>
+                        <Link
+                          href={`/app/disbursements/admin/projects/${p.id}`}
+                          className="font-semibold text-slate-900 hover:text-teal-800 hover:underline"
+                        >
+                          {p.name_ar}
+                        </Link>
+                        <div className="text-[11px] text-slate-500 mt-0.5" dir="ltr">
+                          {p.rega_license_no ? `# ${p.rega_license_no}` : p.code}
+                        </div>
+                        {/* Sales-progress bar under project name */}
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <div className="h-1.5 w-24 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className="h-full bg-teal-500"
+                              style={{ width: `${Math.min(100, soldPct)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-[10px] text-slate-500">
+                            {soldPct}٪
+                          </span>
+                        </div>
+                      </Td>
+                      <Td><span className="font-mono">{fmtInt(nUnits)}</span></Td>
+                      <Td><span className="font-mono">{fmtInt(nSold)}</span></Td>
+                      <Td><span className="font-mono text-emerald-700">{fmtSar(collected)}</span></Td>
+                      <Td><span className="font-mono text-amber-700">{fmtSar(spentP)}</span></Td>
+                      <Td>
+                        <span className={`font-mono ${balance < 0 ? 'text-red-700' : 'text-slate-700'}`}>
+                          {fmtSar(balance)}
+                        </span>
+                      </Td>
+                      <Td>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${pill.cls}`}
+                        >
+                          {pill.label}
+                        </span>
+                      </Td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* 6. Latest operations ----------------------------------------------*/}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
+          <Activity className="w-4 h-4 text-slate-500" aria-hidden="true" />
+          <h2 className="serif font-bold text-base text-slate-900">آخر العمليات</h2>
+        </div>
+        {audit.length === 0 ? (
+          <div className="p-6 text-center text-sm text-slate-500">لا يوجد نشاط حديث.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-right">
+                <tr>
+                  <Th>العملية</Th>
+                  <Th>الطرف (المستفيد)</Th>
+                  <Th>المشروع</Th>
+                  <Th>التاريخ</Th>
+                  <Th>الحالة</Th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {audit.map((a) => {
+                  const c = single(a.case)
+                  const proj = c ? single(c.project) : null
+                  const dev  = c ? single(c.developer) : null
+                  const ev = describeEvent(a.event, a.to_status)
+                  const EvIcon = ev.Icon
+                  const statusPill = caseStatusPill(a.to_status ?? c?.status ?? null)
+                  return (
+                    <tr key={a.id} className="hover:bg-slate-50/70">
+                      <Td>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full shrink-0 ${ev.iconCls}`}>
+                            <EvIcon className="w-3 h-3" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-slate-900 truncate">{ev.label}</div>
+                            {c && (
+                              <Link
+                                href={`/app/disbursements/${c.id}`}
+                                className="font-mono text-[11px] text-teal-700 hover:text-teal-800"
+                              >
+                                {c.case_number}
+                              </Link>
+                            )}
+                          </div>
+                        </div>
+                      </Td>
+                      <Td>{dev?.company_name_ar ?? '—'}</Td>
+                      <Td>{proj?.name_ar ?? '—'}</Td>
+                      <Td><span className="text-slate-600">{timeAgoAr(a.occurred_at)}</span></Td>
+                      <Td>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ring-1 ring-inset ${statusPill.cls}`}
+                        >
+                          {statusPill.label}
+                        </span>
+                      </Td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Small subcomponents & helpers
+// ---------------------------------------------------------------------------
+
+function fmtInt(n: number): string {
+  try {
+    return new Intl.NumberFormat('ar-SA', { maximumFractionDigits: 0 }).format(n)
+  } catch {
+    return String(n)
+  }
+}
+
+function Kpi({
+  label, value, caption, tone = 'default',
+}: {
+  label: string
+  value: string
+  caption?: string
+  tone?: 'default' | 'red' | 'green'
+}) {
+  const valueCls =
+    tone === 'red' ? 'text-red-700' :
+    tone === 'green' ? 'text-emerald-700' :
+    'text-slate-900'
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4">
+      <div className="text-[11px] text-slate-500 font-semibold mb-1 truncate">{label}</div>
+      <div className={`text-[24px] leading-none font-semibold truncate ${valueCls}`}>{value}</div>
+      {caption && (
+        <div className="text-[11px] text-slate-500 mt-1.5 truncate">{caption}</div>
+      )}
+    </div>
+  )
+}
+
+function RatioRow({
+  label, ratio, threshold, direction,
+}: {
+  label: string
+  ratio: number             // 0..1+
+  threshold: number         // 0..1
+  direction: 'cap' | 'floor' // cap = ratio should stay ≤ threshold; floor = ≥
+}) {
+  const pct = Math.max(0, Math.min(1, ratio))
+  const okCap  = direction === 'cap'   && ratio <= threshold
+  const okFlr  = direction === 'floor' && ratio >= threshold
+  const okay = okCap || okFlr
+  const nearCap = direction === 'cap' && ratio > threshold * 0.8 && ratio <= threshold
+  const barCls =
+    okay && !nearCap ? 'bg-emerald-500' :
+    nearCap          ? 'bg-amber-500'   :
+    'bg-red-500'
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-xs text-slate-700">{label}</div>
+        <div className={`text-xs font-mono ${okay ? 'text-slate-700' : 'text-red-700 font-bold'}`}>
+          {Math.round(ratio * 100)}٪
+        </div>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+        <div className={`h-full ${barCls}`} style={{ width: `${Math.round(pct * 100)}%` }} />
       </div>
     </div>
   )
 }
 
-function KpiCard({
-  label,
-  value,
-  hint,
-  tone = 'default',
+function projectStatusPill({
+  collected, spentAdmin, spentCon,
 }: {
-  label: string
-  value: string
-  hint?: string
-  tone?: 'default' | 'red'
-}) {
-  const tones = {
-    default: 'bg-white border-slate-200',
-    red: 'bg-red-50 border-red-200',
+  collected: number
+  spentAdmin: number
+  spentCon: number
+}): { cls: string; label: string } {
+  if (collected <= 0) {
+    return { cls: 'bg-slate-100 text-slate-600 ring-slate-200', label: 'لا بيانات' }
   }
-  const valueCls = tone === 'red' ? 'text-red-800' : 'text-slate-900'
+  if (spentCon > collected * SHARE_CONSTRUCTION) {
+    return { cls: 'bg-red-50 text-red-800 ring-red-200', label: 'تجاوز إنشائي' }
+  }
+  if (spentAdmin > collected * SHARE_ADMIN) {
+    return { cls: 'bg-amber-50 text-amber-800 ring-amber-200', label: 'تجاوز إداري' }
+  }
+  return { cls: 'bg-emerald-50 text-emerald-800 ring-emerald-200', label: 'منتظم' }
+}
+
+function caseStatusPill(status: string | null): { cls: string; label: string } {
+  switch (status) {
+    case 'with_employee':          return { cls: 'bg-amber-50 text-amber-800 ring-amber-200',   label: 'الموظف' }
+    case 'with_supervisor':        return { cls: 'bg-amber-50 text-amber-800 ring-amber-200',   label: 'السوبرفايزر' }
+    case 'with_owner':             return { cls: 'bg-amber-50 text-amber-800 ring-amber-200',   label: 'المدير' }
+    case 'signed':                 return { cls: 'bg-emerald-50 text-emerald-800 ring-emerald-200', label: 'موقّعة' }
+    case 'delivered':              return { cls: 'bg-emerald-50 text-emerald-800 ring-emerald-200', label: 'مسلمة' }
+    case 'sent_back_to_developer': return { cls: 'bg-red-50 text-red-800 ring-red-200',         label: 'مُرحّل للمطور' }
+    case 'cancelled':              return { cls: 'bg-slate-100 text-slate-700 ring-slate-200',  label: 'ملغى' }
+    default:                       return { cls: 'bg-slate-100 text-slate-700 ring-slate-200',  label: status ?? '—' }
+  }
+}
+
+// ---- Audit-event descriptor (kept from previous version) -----------------
+
+type EventDescriptor = { Icon: typeof FileText; iconCls: string; label: string }
+
+function describeEvent(event: string, toStatus: string | null): EventDescriptor {
+  if (event === 'uploaded')            return { Icon: UploadCloud,      iconCls: 'text-teal-600 bg-teal-50',     label: 'رفع وثيقة صرف جديدة' }
+  if (event === 'employee_approved')   return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50',   label: 'اعتماد الموظف' }
+  if (event === 'supervisor_approved') return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50',   label: 'اعتماد السوبرفايزر' }
+  if (event === 'sent_back')           return { Icon: RotateCcw,        iconCls: 'text-red-700 bg-red-50',       label: 'إعادة إلى المطور' }
+  if (event === 'signed')              return { Icon: CheckCircle2,     iconCls: 'text-green-700 bg-green-50',   label: 'توقيع المدير' }
+  if (event === 'cancelled')           return { Icon: XCircle,          iconCls: 'text-slate-500 bg-slate-100',  label: 'إلغاء الطلب' }
+  if (event === 'manual_move') {
+    if (toStatus === 'with_supervisor')        return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'نقل إلى السوبرفايزر' }
+    if (toStatus === 'with_owner')             return { Icon: ArrowRightCircle, iconCls: 'text-amber-700 bg-amber-50', label: 'نقل إلى المدير' }
+    if (toStatus === 'sent_back_to_developer') return { Icon: RotateCcw,        iconCls: 'text-red-700 bg-red-50',     label: 'إرجاع إلى المطور' }
+    if (toStatus === 'signed')                 return { Icon: CheckCircle2,     iconCls: 'text-green-700 bg-green-50', label: 'توقيع نهائي' }
+    return { Icon: Move, iconCls: 'text-slate-600 bg-slate-100', label: 'نقل يدوي' }
+  }
+  return { Icon: Activity, iconCls: 'text-slate-600 bg-slate-100', label: event }
+}
+
+// ---- Table cell primitives (align with ProjectComplianceSummary) ---------
+function Th({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`border rounded-xl p-4 ${tones[tone]}`}>
-      <div className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1 truncate">{label}</div>
-      <div className={`text-2xl font-bold truncate ${valueCls}`}>{value}</div>
-      {hint && (
-        <div className="text-[11px] text-slate-500 mt-1 truncate">{hint}</div>
-      )}
-    </div>
+    <th className="px-3 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+      {children}
+    </th>
   )
+}
+function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <td className={`px-3 py-2.5 text-sm text-slate-700 align-top ${className}`}>{children}</td>
 }
