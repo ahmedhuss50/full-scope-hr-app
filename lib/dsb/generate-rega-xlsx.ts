@@ -444,12 +444,33 @@ export async function generateBuyersRegisterXlsx(
   }
 
   // -----------------------------------------------------------------------
-  // STEP 2 — Clear the sample data rows below the header (455 Ayal Alasala
-  // rows we must not ship to other tenants). Row 465 (totals) and rows past
-  // it (bank reconciliation notes) are LEFT INTACT — their formulas
-  // reference V8:V464 etc. and we retarget those ranges in step 4.
+  // STEP 1b — Snapshot the totals row (row 13) BEFORE clearing / writing.
+  //
+  // 🔴 CRITICAL: with >5 buyers, buyer #6 lands at row 13 and overwrites
+  // the template's totals ('المجموع' + SUM formulas). If we wait until
+  // after buyer writes to snapshot row 13, we capture the buyer's data
+  // instead of the totals. Then the 'relocation' step moves buyer data
+  // to newTotalsRow, and the real totals are lost forever.
+  //
+  // Take an early snapshot so we always have the pristine totals cells,
+  // regardless of how many buyers overwrite row 13 later.
   // -----------------------------------------------------------------------
-  clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TEMPLATE_LAST_DATA_ROW, 1, 49)
+  type TotalsCellSnap = { col: number; cell: XLSX.CellObject }
+  const totalsRowSnapshot: TotalsCellSnap[] = []
+  const TOTALS_ROW_R0 = BUYERS_TOTALS_ROW - 1
+  for (let c = 0; c < 32; c++) {
+    const addr = XLSX.utils.encode_cell({ r: TOTALS_ROW_R0, c })
+    const cell = ws[addr] as XLSX.CellObject | undefined
+    if (cell) totalsRowSnapshot.push({ col: c, cell: { ...cell } })
+  }
+
+  // -----------------------------------------------------------------------
+  // STEP 2 — Clear the sample data rows below the header. The 2026 REGA
+  // template ships with 5 sample buyers at rows 8-12 + a totals row at
+  // row 13. We clear BOTH rows 8-12 AND row 13 (totals will be re-placed
+  // fresh at the end using totalsRowSnapshot above).
+  // -----------------------------------------------------------------------
+  clearCellsRange(ws, BUYERS_DATA_START_ROW, BUYERS_TOTALS_ROW, 1, 49)
 
   // -----------------------------------------------------------------------
   // STEP 3 — Populate one row per unit ROUTED to sheet 1 (وحدات قائمة).
@@ -575,28 +596,12 @@ export async function generateBuyersRegisterXlsx(
   const newTotalsRow = lastDataRow + 1
 
   // (a) If lastDataRow > 12, we've overwritten the template's totals row —
-  //     lift the totals-row formulas and re-place them at newTotalsRow.
+  //     use the PRE-BUYER snapshot (totalsRowSnapshot from step 1b) to
+  //     place pristine totals cells at newTotalsRow. Never trust row 13
+  //     here because it holds buyer #6's data by now.
   if (lastDataRow > BUYERS_TEMPLATE_LAST_DATA_ROW) {
-    // Save the original totals-row cells (row 13 in the template).
-    type Snap = { addr: string; col: number; cell: XLSX.CellObject }
-    const totalsSnaps: Snap[] = []
-    for (let c = 0; c < 32; c++) {
-      const addr = XLSX.utils.encode_cell({ r: BUYERS_TOTALS_ROW - 1, c })
-      const cell = ws[addr] as XLSX.CellObject | undefined
-      if (cell) totalsSnaps.push({ addr, col: c, cell: { ...cell } })
-    }
-    // Clear the original row 13 (it's now buried under real data).
-    for (const s of totalsSnaps) delete ws[s.addr]
-    // Re-place at newTotalsRow, retargeting any SUM(...12) ranges to lastDataRow.
-    //
-    // 🔴 CRITICAL: direct assignment `ws[newAddr] = cell` does NOT extend
-    // the sheet's !ref range. SheetJS's writer only emits cells inside
-    // !ref, so newly-placed cells past the last-known range get silently
-    // dropped → totals row disappears from output → no المجموع anywhere.
-    //
-    // Fix: after placing all totals cells, explicitly extend !ref to cover
-    // newTotalsRow across all 32 columns.
-    for (const s of totalsSnaps) {
+    // Place totals cells at newTotalsRow, retargeting SUM(...12) → SUM(...lastDataRow).
+    for (const s of totalsRowSnapshot) {
       const newAddr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c: s.col })
       const cell = { ...s.cell }
       if (typeof cell.f === 'string') {
@@ -606,14 +611,29 @@ export async function generateBuyersRegisterXlsx(
       }
       ws[newAddr] = cell
     }
-    // Extend !ref so the writer emits the new totals row.
+    // Extend !ref so SheetJS's writer emits the new totals row (direct
+    // assignment doesn't update !ref; without extending, cells past the
+    // last data row get silently dropped).
     const currentRef = ws['!ref'] ?? 'A1'
     const range = XLSX.utils.decode_range(currentRef)
     if (newTotalsRow - 1 > range.e.r) range.e.r = newTotalsRow - 1
-    if (31 > range.e.c) range.e.c = 31  // cover column AF
+    if (31 > range.e.c) range.e.c = 31 // cover column AF
     ws['!ref'] = XLSX.utils.encode_range(range)
   } else {
-    // ≤5 rows: totals row stays at 13, just retarget internal SUM ranges.
+    // ≤5 rows: totals row stays at 13. Restore from snapshot (we cleared
+    // it during step 2) and retarget SUM(...12) → SUM(...lastDataRow).
+    for (const s of totalsRowSnapshot) {
+      const addr = XLSX.utils.encode_cell({ r: TOTALS_ROW_R0, c: s.col })
+      const cell = { ...s.cell }
+      if (typeof cell.f === 'string') {
+        cell.f = cell.f.replace(/(:\$?[A-Z]+\$?)12(?![0-9])/g, `$1${lastDataRow}`)
+        cell.v = undefined
+        cell.w = undefined
+      }
+      ws[addr] = cell
+    }
+    // Then run the existing retarget pass — no-op after the fresh
+    // placement above, but kept for defensive symmetry.
     for (let c = 0; c < 32; c++) {
       const addr = XLSX.utils.encode_cell({ r: BUYERS_TOTALS_ROW - 1, c })
       const cell = ws[addr] as XLSX.CellObject | undefined
