@@ -546,11 +546,21 @@ export function mergeIntoTemplate(
     }
   }
   // Remove table rels from every sheet's _rels file.
+  //
+  // A Relationship element looks like:
+  //   <Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table6.xml"/>
+  //
+  // Our previous regex used [^/]* between the Type and the closing />, which
+  // failed because ../tables/table6.xml has forward slashes. Match on the
+  // full Type="…/relationships/table" first, then any non-> characters, then />.
   for (const p of Object.keys(template.files)) {
     if (!p.startsWith('xl/worksheets/_rels/') || !p.endsWith('.rels')) continue
     const relX = template.file(p)?.asText()
     if (!relX) continue
-    const cleaned = relX.replace(/<Relationship\b[^>]*Type="[^"]*\/table"[^/]*\/>/g, '')
+    const cleaned = relX.replace(
+      /<Relationship\b[^>]*Type="[^"]*\/relationships\/table"[^>]*\/>/g,
+      '',
+    )
     if (cleaned !== relX) {
       template.remove(p)
       template.file(p, cleaned)
