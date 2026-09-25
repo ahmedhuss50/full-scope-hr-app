@@ -20,7 +20,6 @@ import {
   Activity, Clock, PieChart, Layers, ShieldCheck,
 } from 'lucide-react'
 import { Breadcrumb } from './Breadcrumb'
-import { ProjectChipNav } from './ProjectChipNav'
 import {
   resolveMainForSub,
   resolveMainDisbursementLabel,
@@ -301,7 +300,7 @@ export async function ProjectOverviewV2({ projectId, tenantId, dsbRole, project 
         )}
       </header>
 
-      <ProjectChipNav projectId={projectId} active="overview" />
+      {/* Chip nav is rendered by the project layout — no need here. */}
 
       {/* Quick actions strip */}
       <section className="flex flex-wrap gap-2">
