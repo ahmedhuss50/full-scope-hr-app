@@ -361,26 +361,40 @@ function rebuildSheetData(
     })
   }
 
-  // Emit rows in numeric order. Include EMPTY rows the template had
-  // custom heights on (e.g. spacer rows) — dropping them loses the
-  // template's row-height styling.
+  // Emit rows in numeric order. Row-attr priority:
+  //   1. For rows that have CELLS in the merged output: prefer OUTPUT's
+  //      attrs (SheetJS wrote them based on ws['!rows']). Otherwise the
+  //      template's row-13 totals-row height gets applied to whichever
+  //      buyer happens to land at row 13, and template's row-23 note-row
+  //      styling gets applied to whichever buyer lands at row 23.
+  //   2. For rows the OUTPUT didn't emit at all: use TEMPLATE's attrs
+  //      (this preserves spacer rows like main-sheet rows 4 & 6).
+  //   3. Only emit an EMPTY row from template if it carries a real styling
+  //      hint (ht, customHeight, style, hidden) AND it's outside the
+  //      output's data range. Otherwise template rows 14-22 (empty in
+  //      template, past where we place totals) would leak through.
   const rowSet = new Set<number>(cellsByRow.keys())
+  const outputMaxRow = outputRowAttrs.size > 0 ? Math.max(...outputRowAttrs.keys()) : 0
   for (const r of templateRowAttrs.keys()) {
-    // Only preserve template rows that carry a custom height/style. A bare
-    // row attr like just `r="4"` isn't worth emitting empty.
+    if (rowSet.has(r)) continue // already emitted with cells
+    if (outputRowAttrs.has(r)) continue // output touched this row (maybe zero-cells) — respect that
+    // Preserve template-only rows only when they're OUTSIDE output's used
+    // range (so they don't fight with buyer data) AND they carry styling.
+    if (r > outputMaxRow) continue
     const a = templateRowAttrs.get(r)!
-    if (/\b(ht|customHeight|s=|customFormat|hidden|thickTop|thickBot)\b/.test(a)) {
+    if (/\b(ht|customHeight|hidden)\b/.test(a)) {
       rowSet.add(r)
     }
   }
   const rows = Array.from(rowSet).sort((a, b) => a - b)
   const parts: string[] = ['<sheetData>']
   for (const r of rows) {
-    let rowAttrs = templateRowAttrs.get(r) ?? outputRowAttrs.get(r) ?? ` r="${r}"`
+    // Prefer OUTPUT'S row attrs when output emitted the row — this stops
+    // template's row-13/23 special styling from bleeding onto buyer rows.
+    let rowAttrs = outputRowAttrs.get(r) ?? templateRowAttrs.get(r) ?? ` r="${r}"`
     if (!attr(rowAttrs, 'r')) rowAttrs += ` r="${r}"`
     const cellsInRow = cellsByRow.get(r) ?? []
     if (cellsInRow.length === 0) {
-      // Empty row — self-close.
       parts.push(`<row${rowAttrs}/>`)
     } else {
       parts.push(`<row${rowAttrs}>${cellsInRow.join('')}</row>`)
@@ -433,6 +447,14 @@ export function mergeIntoTemplate(
     dataStartRowBySheet?: Record<string, number>
     /** Sheet names (as they appear in xl/workbook.xml order) — sheet1 is index 0 */
     sheetOrder?: string[]
+    /**
+     * Per-sheet: template rows whose cells should be IGNORED during merge.
+     * Use for rows where the template had special content (a totals row, a
+     * note row) that the generator has REPLACED with regular data. Without
+     * this, buyer data at those rows inherits the template's totals-row or
+     * note-row cell styling — visible as tall dark bands mid-data.
+     */
+    stripTemplateRowsBySheet?: Record<string, number[]>
   } = {},
 ): Buffer {
   const template = new PizZip(templateBuf)
@@ -463,6 +485,7 @@ export function mergeIntoTemplate(
 
   const dataStartBySheet = opts.dataStartRowBySheet ?? {}
   const sheetOrder = opts.sheetOrder ?? []
+  const stripBySheet = opts.stripTemplateRowsBySheet ?? {}
 
   for (const path of sheetPaths) {
     const tplXml = template.file(path)?.asText()
@@ -473,9 +496,19 @@ export function mergeIntoTemplate(
     const sheetIdx = Number(/sheet(\d+)\.xml$/.exec(path)?.[1] ?? '0') - 1
     const sheetName = sheetOrder[sheetIdx] ?? ''
     const dataStartRow = dataStartBySheet[sheetName] ?? 0
+    const stripRows = new Set(stripBySheet[sheetName] ?? [])
 
     const tplCells = parseCells(tplXml)
     const outCells = parseCells(outXml)
+
+    // Strip template cells at specified rows so buyer data at those rows
+    // flows through buildNewCell (using reference-row styling) instead of
+    // mergeCellXml (inheriting the template row's special styling).
+    if (stripRows.size > 0) {
+      for (const addr of Array.from(tplCells.keys())) {
+        if (stripRows.has(rowOf(addr))) tplCells.delete(addr)
+      }
+    }
 
     // Find the template's reference row for style inheritance.
     const refRow = dataStartRow ? findTemplateReferenceRow(tplXml, dataStartRow) : null

@@ -1148,6 +1148,13 @@ export async function generateBuyersRegisterXlsx(
       'الوحدات الملغية': 2,
       'الوحدات المنجزة': 2,
     },
+    // Template's row 13 = totals row (tall dark styling), row 23 = note row
+    // (merged full-width). Buyer #6 and buyer #16 land on these rows if we
+    // have enough buyers — without stripping, they inherit the special
+    // styling and produce visible bands in the middle of the data.
+    stripTemplateRowsBySheet: {
+      'سجل المشترين وحدات قائمة': [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+    },
   })
   // Suppress unused-import warning when the flag is off.
   void includeLetterhead
