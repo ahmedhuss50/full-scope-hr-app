@@ -361,14 +361,30 @@ function rebuildSheetData(
     })
   }
 
-  // Emit rows in numeric order.
-  const rows = Array.from(cellsByRow.keys()).sort((a, b) => a - b)
+  // Emit rows in numeric order. Include EMPTY rows the template had
+  // custom heights on (e.g. spacer rows) — dropping them loses the
+  // template's row-height styling.
+  const rowSet = new Set<number>(cellsByRow.keys())
+  for (const r of templateRowAttrs.keys()) {
+    // Only preserve template rows that carry a custom height/style. A bare
+    // row attr like just `r="4"` isn't worth emitting empty.
+    const a = templateRowAttrs.get(r)!
+    if (/\b(ht|customHeight|s=|customFormat|hidden|thickTop|thickBot)\b/.test(a)) {
+      rowSet.add(r)
+    }
+  }
+  const rows = Array.from(rowSet).sort((a, b) => a - b)
   const parts: string[] = ['<sheetData>']
   for (const r of rows) {
     let rowAttrs = templateRowAttrs.get(r) ?? outputRowAttrs.get(r) ?? ` r="${r}"`
     if (!attr(rowAttrs, 'r')) rowAttrs += ` r="${r}"`
-    const cellsXml = cellsByRow.get(r)!.join('')
-    parts.push(`<row${rowAttrs}>${cellsXml}</row>`)
+    const cellsInRow = cellsByRow.get(r) ?? []
+    if (cellsInRow.length === 0) {
+      // Empty row — self-close.
+      parts.push(`<row${rowAttrs}/>`)
+    } else {
+      parts.push(`<row${rowAttrs}>${cellsInRow.join('')}</row>`)
+    }
   }
   parts.push('</sheetData>')
   return parts.join('')

@@ -835,6 +835,7 @@ export async function generateBuyersRegisterXlsx(
     sheet: XLSX.WorkSheet,
     rows: Array<{ u: typeof units[number]; s: SaleLite; label: string }>,
     noteText: string,
+    noteRowGapFromTotals = 3,  // resold sheet has note at row 11 (gap=4), cancelled at row 10 (gap=3)
   ) {
     // Snapshot row 2 for formula/style replication then clear rows 2..200.
     const templateRow2 = new Map<number, TemplateCellSnapshot>()
@@ -938,9 +939,10 @@ export async function generateBuyersRegisterXlsx(
       setCell(sheet, `X${totalsRow}`, 0, 'n'); (sheet[`X${totalsRow}`] as XLSX.CellObject).f = `SUM(X2:X${lastDataRow})`; delete (sheet[`X${totalsRow}`] as XLSX.CellObject).v
     }
 
-    // Note row — 3 rows below totals in the template (row 10 → totals row 7).
-    // Sits in column A, merged across A:Z (merged range comes from template).
-    const noteRow = totalsRow + 3
+    // Note row — sits in column A, merged across A:Z (merged range comes
+    // from template). Cancelled sheet: row 10 (gap 3). Resold sheet: row 11
+    // (gap 4). Caller specifies via noteRowGapFromTotals.
+    const noteRow = totalsRow + noteRowGapFromTotals
     setCell(sheet, `A${noteRow}`, noteText, 's')
 
     // Extend !ref so SheetJS emits the totals + note rows.
@@ -1117,8 +1119,8 @@ export async function generateBuyersRegisterXlsx(
   const wsResold    = wb.Sheets['الوحدات الملغية والمعاد بيعها']
   const wsCancelled = wb.Sheets['الوحدات الملغية']
   const wsCompleted = wb.Sheets['الوحدات المنجزة']
-  if (wsResold)    populateShortSheet(wsResold,    resoldRows,        SHORT_SHEET_NOTE_RESOLD)
-  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows, SHORT_SHEET_NOTE_CANCELLED)
+  if (wsResold)    populateShortSheet(wsResold,    resoldRows,        SHORT_SHEET_NOTE_RESOLD,    4)
+  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows, SHORT_SHEET_NOTE_CANCELLED, 3)
   if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
   // Write to buffer, then post-process. Order:
