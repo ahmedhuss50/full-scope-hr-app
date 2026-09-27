@@ -1918,6 +1918,13 @@ export async function generateAccountantWorkbookXlsx(
       [9, 27], [10, 28], [11, 29], [12, 30], [13, 31], [14, 32],
       [15, 33], [16, 34],
     ]
+    // Copy Sheet 1's raw C+D columns into Sheet 4's C+E columns. Template
+    // has these as cross-sheet formulas — overwrite with values so the
+    // output is fully computed (not =Sheet1!C20).
+    for (const [s4r, s1r] of TYPE_ROW_MAP) {
+      setCell(s4, `C${s4r}`, num(s1, `C${s1r}`), 'n')
+      setCell(s4, `E${s4r}`, num(s1, `D${s1r}`), 'n')
+    }
     // Total unit count → C17 (must be computed before D_% cells).
     let c17raw = 0
     for (const [s4r] of TYPE_ROW_MAP) c17raw += num(s4, `C${s4r}`)
