@@ -127,7 +127,11 @@ function parseCells(sheetXml: string): Map<string, ParsedCell> {
 // -----------------------------------------------------------------------
 
 function getCellValue(inner: string): string | null {
-  const m = /<v>([\s\S]*?)<\/v>/.exec(inner)
+  // 🔴 Must allow attributes on <v> — SheetJS writes <v xml:space="preserve">
+  // for any string with leading/trailing whitespace. Old regex only matched
+  // bare <v>...</v>, which dropped every trimmed cell (e.g. "م ", "الحي  ")
+  // to null and made those cells render empty in the merged output.
+  const m = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(inner)
   return m ? m[1] : null
 }
 function getCellFormula(inner: string): string | null {
