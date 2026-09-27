@@ -2036,14 +2036,23 @@ export async function generateAccountantWorkbookXlsx(
     setCell(s5, 'D26', b26 - c26, 'n')
     setCell(s5, 'E26', b26 !== 0 ? c26 / b26 : 0, 'n')
     // B13 = B12 - TODAY() (days until license expiry) — compute as int days
-    const b12str = s5['B12']?.v
-    if (typeof b12str === 'string') {
-      const d = parseSupabaseDate(b12str)
-      if (d) {
-        const days = Math.floor((d.getTime() - Date.now()) / 86400000)
-        setCell(s5, 'B13', days, 'n')
-      }
+    // B12 can arrive as a Date instance (from setCell(...'d')) OR as an ISO
+    // string. Handle both, and always write a value (0 fallback) so the
+    // template formula never survives.
+    const b12v = s5['B12']?.v
+    let expiryMs: number | null = null
+    if (b12v instanceof Date) {
+      expiryMs = b12v.getTime()
+    } else if (typeof b12v === 'string') {
+      const d = parseSupabaseDate(b12v)
+      if (d) expiryMs = d.getTime()
+    } else if (typeof b12v === 'number' && b12v > 25569) {
+      // Excel serial date: days since 1900-01-01 (with leap-year bug).
+      // Convert to JS ms: (serial - 25569) * 86400 * 1000.
+      expiryMs = (b12v - 25569) * 86400 * 1000
     }
+    const days = expiryMs != null ? Math.floor((expiryMs - Date.now()) / 86400000) : 0
+    setCell(s5, 'B13', days, 'n')
     // B17 = B16 - B25*0.05 (surplus after 5% retention), B18 = B17
     const b16 = num(s5, 'B16')
     const b17 = b16 - b25 * 0.05
