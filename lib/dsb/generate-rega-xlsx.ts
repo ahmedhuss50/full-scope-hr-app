@@ -190,6 +190,124 @@ async function fetchAllChunked<T>(
 
 const BUYERS_HEADER_ROW = 7
 const BUYERS_DATA_START_ROW = 8
+
+// -----------------------------------------------------------------------
+// Template static content — cells that must survive round-trip.
+//
+// Root cause: our mergeIntoTemplate uses the output workbook's shared
+// strings table but keeps template row XMLs for cells the output doesn't
+// touch. Template string cells reference OLD SST indexes that map to
+// different strings (or nothing) in the output SST — result: they render
+// as empty in the exported file.
+//
+// Fix: force these cells into the OUTPUT workbook by explicit setCell so
+// they carry output-SST indexes and always resolve to the right string.
+// The exact bytes below match the 2026 REGA template character-for-char
+// (including trailing spaces — REGA validators tokenize on the space).
+// -----------------------------------------------------------------------
+const MAIN_SHEET_HEADER_ROW_7: Record<string, string> = {
+  A: 'م ',
+  B: 'اسم العميل',
+  C: 'نوع الـ ID ( أحوال وطنية ، إقامة ، جواز  ',
+  D: 'رقم الهوية',
+  E: 'الجنسية',
+  F: 'رقم الجوال',
+  G: 'اسم المشروع',
+  H: 'المنطقة',
+  I: 'المدينة',
+  J: 'الحي',
+  K: 'المساحة',
+  L: 'نوع الوحدة',
+  M: 'رقم المنطقة (ZONE)',
+  N: 'رقم الوحدة',
+  O: 'عدد مرات بيع الوحدة',
+  P: 'رقم البلوك',
+  Q: 'رقم العقد',
+  R: 'نوع العقد',
+  S: 'نوع التمويل',
+  T: 'اسم الجهة التمويلية',
+  U: 'تاريخ بيع الوحدة',
+  V: 'سعر الوحدة قبل ضريبة التصرفات العقارية',
+  W: 'حالة التسليم',
+  X: 'تاريخ التسليم',
+  Y: '(5%) ضريبة التصرفات العقارية',
+  Z: 'قيمة الوحدة شاملة ضريبة التصرفات العقارية',
+  AA: 'إجمالي المبالغ المحصل  قيمتها دون الضريبة منذ بداية المشروع',
+  AB: 'إجمالي المبالغ المحصل  قيمتها شامل الضريبة منذ بداية المشروع',
+  AC: 'المبلغ المتبقي من قيمة الوحدة ',
+  AD: 'رقم الدفعة',
+  AE: 'نسبة التحصيل',
+  AF: 'سعر المتر',
+}
+
+// The 3 secondary sheets (الملغية والمعاد بيعها + الملغية) share this 26-col
+// schema. الوحدات المنجزة uses a slightly different 31-col schema below.
+const SHORT_SHEET_HEADER_ROW_1: Record<string, string> = {
+  A: 'م ',
+  B: 'اسم العميل',
+  C: 'نوع المشتري (الغاء /إعادة بيع)',
+  D: 'رقم الهوية',
+  E: 'الجنسية',
+  F: 'نوع الإقامة',
+  G: 'رقم الجوال',
+  H: 'اسم المشروع',
+  I: 'الحي',
+  J: 'المساحة',
+  K: 'نوع الوحدة',
+  L: 'رقم المنطقة (ZONE)',
+  M: 'رقم الوحدة',
+  N: 'رقم البلوك',
+  O: 'رقم العقد',
+  P: 'نوع العقد',
+  Q: 'نوع التمويل',
+  R: 'اسم الجهة التمويلية',
+  S: 'تاريخ بيع الوحدة',
+  T: 'سعر الوحدة قبل ضريبة التصرفات العقارية',
+  U: '(5%) ضريبة التصرفات العقارية',
+  V: 'قيمة الوحدة شاملة ضريبة التصرفات العقارية',
+  W: 'المحصل من بداية المشروع',
+  X: 'المبلغ المتبقي من قيمة الوحدة ',
+  Y: 'نسبة التحصيل',
+  Z: 'سعر المتر',
+}
+
+const COMPLETED_SHEET_HEADER_ROW_1: Record<string, string> = {
+  A: 'م ',
+  B: 'اسم العميل',
+  C: 'نوع المشتري (الغاء /إعادة بيع)',
+  D: 'رقم الهوية',
+  E: 'الجنسية',
+  F: 'نوع الإقامة',
+  G: 'رقم الجوال',
+  H: 'اسم المشروع',
+  I: 'المنطقة',
+  J: 'المدينة',
+  K: 'الحي',
+  L: 'المساحة',
+  M: 'نوع الوحدة',
+  N: 'رقم المنطقة (ZONE)',
+  O: 'رقم الوحدة',
+  P: 'رقم البلوك',
+  Q: 'رقم العقد',
+  R: 'نوع العقد',
+  S: 'نوع التمويل',
+  T: 'اسم الجهة التمويلية',
+  U: 'تاريخ بيع الوحدة',
+  V: 'سعر الوحدة قبل ضريبة التصرفات العقارية',
+  W: 'حالة التسليم',
+  X: 'تاريخ التسليم',
+  Y: '(5%) ضريبة التصرفات العقارية',
+  Z: 'قيمة الوحدة شاملة ضريبة التصرفات العقارية',
+  AA: 'إجمالي المبالغ المحصل  قيمتها دون الضريبة منذ بداية المشروع',
+  AB: 'إجمالي المبالغ المحصل  قيمتها شامل الضريبة منذ بداية المشروع',
+  AC: 'المبلغ المتبقي من قيمة الوحدة ',
+  AD: 'نسبة التحصيل',
+  AE: 'سعر المتر',
+}
+
+const SHORT_SHEET_NOTE_RESOLD    = 'ملاحظة: في هذه الشريحة يتم إضافة المشتري الملغي  باللون الرمادي ويتم إضافة المشتري الجديد باللون الأبيض '
+const SHORT_SHEET_NOTE_CANCELLED = 'ملاحظة: في هذه الشريحة يتم إضافة ا الوحدات الملغية والتي لم يتم إعادة بيعها'
+const COMPLETED_SHEET_NOTE       = 'ملاحظة: في هذه الشريحة يتم إضافة  الوحدات المنجزة وتم صدور خطاب الموافقة على الإنجاز'
 // The 2026 REGA-approved template ships with 5 sample rows (8..12) and a
 // totals row at 13. We overwrite the sample and expand as needed.
 const BUYERS_TEMPLATE_LAST_DATA_ROW = 12
@@ -411,6 +529,25 @@ export async function generateBuyersRegisterXlsx(
   if (project.rega_license_no) {
     setCell(ws, 'Q3', project.rega_license_no, 's')
   }
+
+  // 🔴 Force row-7 headers into the OUTPUT workbook so they carry
+  // output-SST refs. Without this, A7/C7/AC7 (and any other header cell
+  // SheetJS happens to drop on read) come out empty in the merged file.
+  // Overwriting cells that are already present is idempotent — same string,
+  // same result, just a guaranteed-alive SST reference on output side.
+  for (const [colLetter, headerText] of Object.entries(MAIN_SHEET_HEADER_ROW_7)) {
+    setCell(ws, `${colLetter}${BUYERS_HEADER_ROW}`, headerText, 's')
+  }
+
+  // Preserve the two spacer rows the 2026 template uses to separate the
+  // meta block (rows 2-3) from the title (row 5) and the header row (row 7).
+  // SheetJS drops these row heights on round-trip; without them the top of
+  // the sheet looks cramped compared to the original.
+  //   Row 4 = 15.75 pt (blank spacer)
+  //   Row 6 = 3.75  pt (thin gap under title)
+  if (!ws['!rows']) ws['!rows'] = []
+  ws['!rows'][3] = { hpt: 15.75 } // 0-indexed row 3 == excel row 4
+  ws['!rows'][5] = { hpt: 3.75  } // 0-indexed row 5 == excel row 6
 
   // -----------------------------------------------------------------------
   // STEP 1 — Snapshot template row 8 BEFORE clearing.
@@ -692,8 +829,13 @@ export async function generateBuyersRegisterXlsx(
 
   // Shared writer for the "cancelled" + "cancelled_and_resold" tabs
   // (identical 26-col schema). `label` is what goes into column C
-  // (نوع المشتري): "الغاء" or "إعادة بيع".
-  function populateShortSheet(sheet: XLSX.WorkSheet, rows: Array<{ u: typeof units[number]; s: SaleLite; label: string }>) {
+  // (نوع المشتري): "الغاء" or "إعادة بيع". `noteText` is the merged-cell
+  // hint text below the totals row (varies per sheet).
+  function populateShortSheet(
+    sheet: XLSX.WorkSheet,
+    rows: Array<{ u: typeof units[number]; s: SaleLite; label: string }>,
+    noteText: string,
+  ) {
     // Snapshot row 2 for formula/style replication then clear rows 2..200.
     const templateRow2 = new Map<number, TemplateCellSnapshot>()
     for (let c = 0; c < 26; c++) {
@@ -707,6 +849,12 @@ export async function generateBuyersRegisterXlsx(
       templateRow2.set(c, snap)
     }
     clearCellsRange(sheet, 2, 200, 1, 26)
+
+    // 🔴 Force row-1 headers into output workbook (same SST issue as main
+    // sheet — cells we don't touch during round-trip lose their content).
+    for (const [colLetter, headerText] of Object.entries(SHORT_SHEET_HEADER_ROW_1)) {
+      setCell(sheet, `${colLetter}1`, headerText, 's')
+    }
 
     let idx = 0
     for (const { u, s, label } of rows) {
@@ -756,6 +904,32 @@ export async function generateBuyersRegisterXlsx(
         if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
       }
     }
+
+    // Totals row — matches template row 7 when we have ≤5 data rows,
+    // otherwise slides down to row (2 + n_rows) to sit right below the data.
+    // Columns match template: A = 'المجموع', T..X = SUM formulas.
+    const lastDataRow = idx > 0 ? 1 + idx : 6 // 0 rows → totals at row 7 (matches template)
+    const totalsRow   = lastDataRow + 1
+    setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
+    if (idx > 0) {
+      setCell(sheet, `T${totalsRow}`, 0, 'n'); (sheet[`T${totalsRow}`] as XLSX.CellObject).f = `SUM(T2:T${lastDataRow})`; delete (sheet[`T${totalsRow}`] as XLSX.CellObject).v
+      setCell(sheet, `U${totalsRow}`, 0, 'n'); (sheet[`U${totalsRow}`] as XLSX.CellObject).f = `SUM(U2:U${lastDataRow})`; delete (sheet[`U${totalsRow}`] as XLSX.CellObject).v
+      setCell(sheet, `V${totalsRow}`, 0, 'n'); (sheet[`V${totalsRow}`] as XLSX.CellObject).f = `SUM(V2:V${lastDataRow})`; delete (sheet[`V${totalsRow}`] as XLSX.CellObject).v
+      setCell(sheet, `W${totalsRow}`, 0, 'n'); (sheet[`W${totalsRow}`] as XLSX.CellObject).f = `SUM(W2:W${lastDataRow})`; delete (sheet[`W${totalsRow}`] as XLSX.CellObject).v
+      setCell(sheet, `X${totalsRow}`, 0, 'n'); (sheet[`X${totalsRow}`] as XLSX.CellObject).f = `SUM(X2:X${lastDataRow})`; delete (sheet[`X${totalsRow}`] as XLSX.CellObject).v
+    }
+
+    // Note row — 3 rows below totals in the template (row 10 → totals row 7).
+    // Sits in column A, merged across A:Z (merged range comes from template).
+    const noteRow = totalsRow + 3
+    setCell(sheet, `A${noteRow}`, noteText, 's')
+
+    // Extend !ref so SheetJS emits the totals + note rows.
+    const cur = sheet['!ref'] ?? 'A1'
+    const range = XLSX.utils.decode_range(cur)
+    if (noteRow - 1 > range.e.r) range.e.r = noteRow - 1
+    if (25 > range.e.c) range.e.c = 25 // cover column Z
+    sheet['!ref'] = XLSX.utils.encode_range(range)
   }
 
   // Sheet 4 (المنجزة) — 31 columns, distinct layout.
@@ -772,6 +946,11 @@ export async function generateBuyersRegisterXlsx(
       templateRow2.set(c, snap)
     }
     clearCellsRange(sheet, 2, 200, 1, 31)
+
+    // 🔴 Force row-1 headers into output workbook (see SST comment above).
+    for (const [colLetter, headerText] of Object.entries(COMPLETED_SHEET_HEADER_ROW_1)) {
+      setCell(sheet, `${colLetter}1`, headerText, 's')
+    }
 
     let idx = 0
     for (const { u, s } of rows) {
@@ -828,6 +1007,32 @@ export async function generateBuyersRegisterXlsx(
         if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
       }
     }
+
+    // Totals row (matches template's row 7 for ≤5 rows, slides down for more).
+    // 31-col schema: A = 'المجموع', V/Y/Z/AA/AC = SUM formulas per template.
+    const lastDataRow = idx > 0 ? 1 + idx : 6
+    const totalsRow   = lastDataRow + 1
+    setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
+    if (idx > 0) {
+      const putSum = (col: string) => {
+        setCell(sheet, `${col}${totalsRow}`, 0, 'n')
+        const c = sheet[`${col}${totalsRow}`] as XLSX.CellObject
+        c.f = `SUM(${col}2:${col}${lastDataRow})`
+        delete c.v
+      }
+      putSum('V'); putSum('Y'); putSum('Z'); putSum('AA'); putSum('AC')
+    }
+
+    // Note row — 3 rows below totals in the template.
+    const noteRow = totalsRow + 3
+    setCell(sheet, `A${noteRow}`, COMPLETED_SHEET_NOTE, 's')
+
+    // Extend !ref so SheetJS emits everything.
+    const cur = sheet['!ref'] ?? 'A1'
+    const range = XLSX.utils.decode_range(cur)
+    if (noteRow - 1 > range.e.r) range.e.r = noteRow - 1
+    if (30 > range.e.c) range.e.c = 30 // cover column AE
+    sheet['!ref'] = XLSX.utils.encode_range(range)
   }
 
   // Bucket units for the three secondary sheets.
@@ -876,8 +1081,8 @@ export async function generateBuyersRegisterXlsx(
   const wsResold    = wb.Sheets['الوحدات الملغية والمعاد بيعها']
   const wsCancelled = wb.Sheets['الوحدات الملغية']
   const wsCompleted = wb.Sheets['الوحدات المنجزة']
-  if (wsResold)    populateShortSheet(wsResold,    resoldRows)
-  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows)
+  if (wsResold)    populateShortSheet(wsResold,    resoldRows,        SHORT_SHEET_NOTE_RESOLD)
+  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows, SHORT_SHEET_NOTE_CANCELLED)
   if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
 
   // Write to buffer, then post-process. Order:
