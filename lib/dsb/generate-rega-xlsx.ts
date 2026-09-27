@@ -856,6 +856,25 @@ export async function generateBuyersRegisterXlsx(
       setCell(sheet, `${colLetter}1`, headerText, 's')
     }
 
+    // Preserve template rows 2..6 as auto-compute formula slots. Template
+    // ships with 5 empty-but-formula-bearing rows so users get computed
+    // totals as soon as they paste raw values into T/J. Rows we later
+    // overwrite with real buyer data still work — setCell strips .f.
+    for (let r = 2; r <= 6; r++) {
+      setCell(sheet, `A${r}`, r - 1, 'n') // serial 1..5
+      const putF = (col: string, fmla: string) => {
+        setCell(sheet, `${col}${r}`, 0, 'n')
+        const c = sheet[`${col}${r}`] as XLSX.CellObject
+        c.f = fmla; delete c.v
+      }
+      putF('U', `T${r}*5/100`)
+      putF('V', `T${r}+U${r}`)
+      setCell(sheet, `W${r}`, 0, 'n') // collected default
+      putF('X', `V${r}-W${r}`)
+      putF('Y', `W${r}/V${r}`)
+      putF('Z', `T${r}/J${r}`)
+    }
+
     let idx = 0
     for (const { u, s, label } of rows) {
       const rowXlsx = 2 + idx
@@ -950,6 +969,23 @@ export async function generateBuyersRegisterXlsx(
     // 🔴 Force row-1 headers into output workbook (see SST comment above).
     for (const [colLetter, headerText] of Object.entries(COMPLETED_SHEET_HEADER_ROW_1)) {
       setCell(sheet, `${colLetter}1`, headerText, 's')
+    }
+
+    // Preserve template rows 2..6 as auto-compute formula slots (31-col
+    // schema — different columns than the 26-col short sheets).
+    for (let r = 2; r <= 6; r++) {
+      setCell(sheet, `A${r}`, r - 1, 'n') // serial 1..5
+      const putF = (col: string, fmla: string) => {
+        setCell(sheet, `${col}${r}`, 0, 'n')
+        const c = sheet[`${col}${r}`] as XLSX.CellObject
+        c.f = fmla; delete c.v
+      }
+      putF('Y',  `V${r}*5/100`)
+      putF('Z',  `V${r}+Y${r}`)
+      setCell(sheet, `AA${r}`, 0, 'n') // collected default
+      putF('AC', `Z${r}-AA${r}`)
+      putF('AD', `AA${r}/Z${r}`)
+      putF('AE', `V${r}/L${r}`)
     }
 
     let idx = 0
