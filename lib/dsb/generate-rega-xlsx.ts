@@ -1803,6 +1803,286 @@ export async function generateAccountantWorkbookXlsx(
     setCell(s1, 'D2', todayIso, 's')
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // BACKEND COMPUTATION PASS
+  // ─────────────────────────────────────────────────────────────────────────
+  // Compute all 232 formula values from the raw data we just wrote and
+  // OVERWRITE the template's formula cells with hard values. This gives the
+  // accountant a static, auditable snapshot — no dependency on Excel's
+  // formula engine, no cross-sheet reference errors, no dxfId issues, no
+  // Table19 structured-reference gotchas. Values are frozen at report time.
+  //
+  // Reads values back from the workbook (as we just wrote them), computes
+  // every derived cell, and setCell writes it — setCell strips any inherited
+  // template formula (see setCell impl), so mergeIntoTemplate later emits
+  // pure <v>value</v> cells with the template's original styling preserved.
+  // ─────────────────────────────────────────────────────────────────────────
+  const num = (ws: XLSX.WorkSheet | undefined, addr: string): number => {
+    const v = ws?.[addr]?.v
+    if (v == null || v === '') return 0
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+
+  // ── Sheet 1 derived (5 formulas) ────────────────────────────────────────
+  if (s1) {
+    // C35 = SUM(C20:C34) — total unit count
+    let c35 = 0
+    for (let r = 20; r <= 34; r++) c35 += num(s1, `C${r}`)
+    setCell(s1, 'C35', c35, 'n')
+    // D35 = SUM(D20:D34) — total unit value
+    let d35 = 0
+    for (let r = 20; r <= 34; r++) d35 += num(s1, `D${r}`)
+    setCell(s1, 'D35', d35, 'n')
+    // D8 = D35
+    setCell(s1, 'D8', d35, 'n')
+    const d7  = num(s1, 'D7')
+    const d9  = num(s1, 'D9')
+    const d10 = num(s1, 'D10')
+    // D11 = D9 + D10
+    const d11 = d9 + d10
+    setCell(s1, 'D11', d11, 'n')
+    // D12 = (D8 - D7 - D11) / D8  → profit margin
+    const d12 = d35 !== 0 ? (d35 - d7 - d11) / d35 : 0
+    setCell(s1, 'D12', d12, 'n')
+  }
+
+  // ── Sheet 2 derived (1 formula) ─────────────────────────────────────────
+  if (s2) {
+    // L17 = SUBTOTAL(109, L3:L16) — voucher amount total
+    let l17 = 0
+    for (let r = 3; r <= 16; r++) l17 += num(s2, `L${r}`)
+    setCell(s2, 'L17', l17, 'n')
+  }
+
+  // ── Sheet 3 derived (39 formulas) ───────────────────────────────────────
+  if (s3) {
+    // B15 = SUM(B9:B14) — cumulative debit total
+    const b15 = num(s3,'B9')+num(s3,'B10')+num(s3,'B11')+num(s3,'B12')+num(s3,'B13')+num(s3,'B14')
+    setCell(s3, 'B15', b15, 'n')
+    // D15 = SUM(D9:D14) — cumulative credit total
+    const d15 = num(s3,'D9')+num(s3,'D10')+num(s3,'D11')+num(s3,'D12')+num(s3,'D13')+num(s3,'D14')
+    setCell(s3, 'D15', d15, 'n')
+    // G15 / I15 — period totals
+    const g15 = num(s3,'G9')+num(s3,'G10')+num(s3,'G11')+num(s3,'G12')+num(s3,'G13')+num(s3,'G14')
+    const i15 = num(s3,'I9')+num(s3,'I10')+num(s3,'I11')+num(s3,'I12')+num(s3,'I13')+num(s3,'I14')
+    setCell(s3, 'G15', g15, 'n')
+    setCell(s3, 'I15', i15, 'n')
+    // B18 = C5 (opening balance carry-down)
+    const c5 = num(s3, 'C5')
+    setCell(s3, 'B18', c5, 'n')
+    // D18 = B18 + I15 - G15 (closing balance)
+    setCell(s3, 'D18', c5 + i15 - g15, 'n')
+    // Rolling SUBTOTAL windows on G19..G34, I19..I34 — the template shifts
+    // the window by 1 row per step. Since G16..G18 and G20..G27 are blank
+    // in our output, the window sums degenerate to fixed subsets. Compute
+    // each explicitly by summing the referenced range.
+    const sumRange = (col: string, r1: number, r2: number): number => {
+      let s = 0
+      for (let r = r1; r <= r2; r++) s += num(s3, `${col}${r}`)
+      return s
+    }
+    // G19=G14:G18, G20=G15:G19, … G34=G28:G33
+    for (let step = 0; step < 16; step++) {
+      const target = 19 + step
+      // Window sizes vary — but the template rule is (target-5, target-1).
+      const g = sumRange('G', target - 5, target - 1)
+      const i = sumRange('I', target - 5, target - 1)
+      setCell(s3, `G${target}`, g, 'n')
+      setCell(s3, `I${target}`, i, 'n')
+    }
+    // C23 = -B10 (refund reversal)
+    setCell(s3, 'C23', -num(s3, 'B10'), 'n')
+    // C24 = C22 + C23 (down-payment net)
+    setCell(s3, 'C24', num(s3, 'C22') + num(s3, 'C23'), 'n')
+    // Sheet-4 cross-ref for B29 — total unit sales F51 comes from Sheet 4
+    // (computed below). Compute Sheet 4 first for accuracy; for now stash
+    // the placeholder and rewrite after Sheet 4 pass.
+    // Compliance calcs referencing Sheet 1 D9:
+    const s1D9 = num(s1, 'D9')
+    setCell(s3, 'D29', s1D9 * 0.05, 'n')                            // D29 = D9 * 0.05
+    // D30 = D9 * 0.04 - D29
+    setCell(s3, 'D30', s1D9 * 0.04 - s1D9 * 0.05, 'n')
+    setCell(s3, 'B31', num(s3, 'B11'), 'n')                         // B31 = B11
+  }
+
+  // ── Sheet 4 derived (153 formulas) ──────────────────────────────────────
+  // Table 1 (rows 2..17): C=count, D=%, E=value, F=collected, G=remaining
+  // Table 2 (rows 19..34): sold subset — count/percent
+  // Table 3 (rows 36..51): collected — count/percent/value
+  // Table 4 (rows 53..68): remaining — Table1 - Table3
+  if (s4) {
+    // Rows 2..16 pull straight from Sheet 1's rows 20..34.
+    const TYPE_ROW_MAP: Array<[number, number]> = [
+      [2, 20], [3, 21], [4, 22], [5, 23], [6, 24], [7, 25], [8, 26],
+      [9, 27], [10, 28], [11, 29], [12, 30], [13, 31], [14, 32],
+      [15, 33], [16, 34],
+    ]
+    // Total unit count → C17 (must be computed before D_% cells).
+    let c17raw = 0
+    for (const [s4r] of TYPE_ROW_MAP) c17raw += num(s4, `C${s4r}`)
+    setCell(s4, 'C17', c17raw, 'n')
+    const c17safe = c17raw || 1 // avoid div/0
+    // Row-by-row: D = count/C17
+    for (const [s4r] of TYPE_ROW_MAP) {
+      const cnt = num(s4, `C${s4r}`)
+      setCell(s4, `D${s4r}`, cnt / c17safe, 'n')
+    }
+    // E17 / F17 / G17 totals (F17 + G17 already set earlier if payments)
+    let e17 = 0, f17 = num(s4, 'F17'), g17 = num(s4, 'G17')
+    for (const [s4r] of TYPE_ROW_MAP) e17 += num(s4, `E${s4r}`)
+    setCell(s4, 'E17', e17, 'n')
+    if (f17 === 0) setCell(s4, 'F17', 0, 'n')
+    if (g17 === 0) setCell(s4, 'G17', Math.max(0, e17 - f17), 'n')
+    setCell(s4, 'D17', 1, 'n')
+    // Table 2 (rows 19..33): the SOLD units percentages against C34 total.
+    // Data (C, E, F, G) isn't broken down by type in our data, so leave
+    // rows empty (zero) and totals as zero.
+    let c34s4 = 0, e34 = 0, f34 = 0, g34 = 0
+    for (let r = 19; r <= 33; r++) {
+      c34s4 += num(s4, `C${r}`)
+      e34   += num(s4, `E${r}`)
+      f34   += num(s4, `F${r}`)
+      g34   += num(s4, `G${r}`)
+    }
+    const c34safe = c34s4 || 1
+    for (let r = 19; r <= 33; r++) {
+      setCell(s4, `D${r}`, num(s4, `C${r}`) / c34safe, 'n')
+    }
+    setCell(s4, 'C34', c34s4, 'n')
+    setCell(s4, 'D34', c34s4 > 0 ? 1 : 0, 'n')
+    setCell(s4, 'E34', e34, 'n')
+    setCell(s4, 'F34', f34, 'n')
+    setCell(s4, 'G34', g34, 'n')
+    // Table 3 (rows 36..50) — collected — same pattern.
+    let c51 = 0, e51 = 0, f51 = 0, g51 = 0
+    for (let r = 36; r <= 50; r++) {
+      c51 += num(s4, `C${r}`)
+      e51 += num(s4, `E${r}`)
+      f51 += num(s4, `F${r}`)
+      g51 += num(s4, `G${r}`)
+    }
+    const c51safe = c51 || 1
+    for (let r = 36; r <= 50; r++) {
+      setCell(s4, `D${r}`, num(s4, `C${r}`) / c51safe, 'n')
+    }
+    setCell(s4, 'C51', c51, 'n')
+    setCell(s4, 'D51', c51 > 0 ? 1 : 0, 'n')
+    setCell(s4, 'E51', e51, 'n')
+    setCell(s4, 'F51', f51, 'n')
+    setCell(s4, 'G51', g51, 'n')
+    // F2 = F36 (visual link — first row of Table 1 mirrors Table 3 total-row target)
+    setCell(s4, 'F2', num(s4, 'F36'), 'n')
+    // Table 4 (rows 53..67) — remaining = Table1 - Table3.
+    let c68 = 0
+    for (let step = 0; step < 15; step++) {
+      const t1r = 2 + step   // Table 1 row
+      const t3r = 36 + step  // Table 3 row
+      const t4r = 53 + step  // Table 4 row
+      const cVal = num(s4, `C${t1r}`) - num(s4, `C${t3r}`)
+      const eVal = num(s4, `E${t1r}`) - num(s4, `E${t3r}`)
+      const fVal = num(s4, `F${t1r}`) - num(s4, `F${t3r}`)
+      setCell(s4, `C${t4r}`, cVal, 'n')
+      setCell(s4, `E${t4r}`, eVal, 'n')
+      setCell(s4, `F${t4r}`, fVal, 'n')
+      c68 += cVal
+    }
+    const c68safe = c68 || 1
+    for (let step = 0; step < 15; step++) {
+      const t4r = 53 + step
+      const dVal = num(s4, `C${t4r}`) / c68safe
+      setCell(s4, `D${t4r}`, dVal, 'n')
+    }
+    setCell(s4, 'C68', c68, 'n')
+    setCell(s4, 'D68', c68 > 0 ? 1 : 0, 'n')
+
+    // Now that Sheet 4 is computed, back-fill Sheet 3's B29/B30/B32 which
+    // depend on Sheet 4's F51 (total collected).
+    if (s3) {
+      const f51_v = num(s4, 'F51')
+      setCell(s3, 'B29', f51_v, 'n')
+      setCell(s3, 'B30', f51_v * 0.2, 'n')
+      setCell(s3, 'B32', f51_v * 0.2 - num(s3, 'B31'), 'n')
+    }
+  }
+
+  // ── Sheet 5 derived (15 formulas) ───────────────────────────────────────
+  if (s5) {
+    // B24-B26: planned from Sheet 1
+    const b24 = num(s1, 'D8')                 // planned total unit value
+    const b25 = num(s1, 'D9')                 // planned construction
+    const b26 = num(s1, 'D10')                // planned admin+marketing
+    // C24-C26: actual from Sheet 3 / Sheet 4
+    const c24 = num(s4, 'E51')                // actual sold value
+    const c25 = num(s3, 'B9')                 // actual construction spent
+    const c26 = num(s3, 'B11')                // actual admin+marketing spent
+    setCell(s5, 'B24', b24, 'n')
+    setCell(s5, 'C24', c24, 'n')
+    setCell(s5, 'D24', b24 - c24, 'n')
+    setCell(s5, 'E24', b24 !== 0 ? c24 / b24 : 0, 'n')
+    setCell(s5, 'B25', b25, 'n')
+    setCell(s5, 'C25', c25, 'n')
+    setCell(s5, 'D25', b25 - c25, 'n')
+    setCell(s5, 'E25', b25 !== 0 ? c25 / b25 : 0, 'n')
+    setCell(s5, 'B26', b26, 'n')
+    setCell(s5, 'C26', c26, 'n')
+    setCell(s5, 'D26', b26 - c26, 'n')
+    setCell(s5, 'E26', b26 !== 0 ? c26 / b26 : 0, 'n')
+    // B13 = B12 - TODAY() (days until license expiry) — compute as int days
+    const b12str = s5['B12']?.v
+    if (typeof b12str === 'string') {
+      const d = parseSupabaseDate(b12str)
+      if (d) {
+        const days = Math.floor((d.getTime() - Date.now()) / 86400000)
+        setCell(s5, 'B13', days, 'n')
+      }
+    }
+    // B17 = B16 - B25*0.05 (surplus after 5% retention), B18 = B17
+    const b16 = num(s5, 'B16')
+    const b17 = b16 - b25 * 0.05
+    setCell(s5, 'B17', b17, 'n')
+    setCell(s5, 'B18', b17, 'n')
+  }
+
+  // ── Sheet 7 derived (11 formulas) — balance sheet ───────────────────────
+  if (s7) {
+    // F13 = SUM(F12) — cash total (single-cell sum)
+    const f12 = num(s7, 'F12')
+    setCell(s7, 'F13', f12, 'n')
+    // F15 = B9 + B10 + B11 + B13 (all costs recognized)
+    const f15 = num(s3, 'B9') + num(s3, 'B10') + num(s3, 'B11') + num(s3, 'B13')
+    setCell(s7, 'F15', f15, 'n')
+    setCell(s7, 'F16', f15, 'n')                             // F16 = SUM(F15)
+    setCell(s7, 'F17', f15 + f12, 'n')                       // F17 = F16 + F13
+    // Liabilities section
+    const f22 = num(s3, 'D9') - num(s3, 'B12')
+    const f23 = num(s3, 'D10')
+    const f24 = num(s3, 'D11')
+    const f25 = num(s3, 'D12')
+    const f26 = num(s3, 'D13') + num(s3, 'D14') - num(s3, 'B14')
+    setCell(s7, 'F22', f22, 'n')
+    setCell(s7, 'F23', f23, 'n')
+    setCell(s7, 'F24', f24, 'n')
+    setCell(s7, 'F25', f25, 'n')
+    setCell(s7, 'F26', f26, 'n')
+    const f27 = f22 + f23 + f24 + f25 + f26
+    setCell(s7, 'F27', f27, 'n')
+    // F28 = F17 - F27 (equity / plug)
+    setCell(s7, 'F28', (f15 + f12) - f27, 'n')
+  }
+
+  // ── Hidden Sheet1 (5 compliance-ratio formulas) ─────────────────────────
+  const sHidden = wb.Sheets['Sheet1']
+  if (sHidden) {
+    // J8 = Sheet1(1).D9 - Sheet3.B9  (construction remaining)
+    const j8 = num(s1, 'D9') - num(s3, 'B9')
+    setCell(sHidden, 'J8', j8, 'n')
+    setCell(sHidden, 'K8', j8 * 0.2, 'n')                    // K8 = J8 * 20%
+    setCell(sHidden, 'L8', num(s4, 'F51') * 0.04, 'n')       // L8 = Sheet4.F51 * 4%
+    setCell(sHidden, 'T8', num(s3, 'D9') * 0.04, 'n')        // T8 = Sheet3.D9 * 4%
+    setCell(sHidden, 'U8', num(s1, 'D9') * 0.05, 'n')        // U8 = Sheet1.D9 * 5%
+  }
+
   // Post-process: merge values into the template's original sheet XML for
   // 100% styling fidelity (fonts, colors, borders, alignments, fills all
   // preserved). Same technique as the buyers register — see mergeIntoTemplate.
