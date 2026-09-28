@@ -213,11 +213,17 @@ function mergeCellXml(tplCell: ParsedCell | null, outCell: ParsedCell): string {
 // new cell inherits appropriate styling (borders, alignment, fills, font).
 // -----------------------------------------------------------------------
 
-function buildNewCell(outCell: ParsedCell, styleRef: string | null): string {
+function buildNewCell(outCell: ParsedCell, styleRef: string | null, forceStyleRef = false): string {
   // Start from output's attrs, then inherit style from template's reference
-  // row if the output cell has no s= of its own.
+  // row. Normally we only apply the reference style when the output cell has
+  // no s= — but for STRIPPED rows (rows the caller flagged via
+  // stripTemplateRowsBySheet), we FORCE the reference style. Reason:
+  // SheetJS often assigns garbage s= refs to cells at rows past the sample
+  // range (e.g. row 13-23 buyer cells getting s="2"/s="5" pointing at the
+  // template's totals-row styles) — forcing here ensures every buyer row
+  // uses the correct data-row styling.
   let attrs = outCell.attrs
-  if (styleRef && !attr(attrs, 's')) {
+  if (styleRef && (forceStyleRef || !attr(attrs, 's'))) {
     attrs = setAttr(attrs, 's', styleRef)
   }
   // 🔴 CRITICAL: apply the SAME type-normalisation as mergeCellXml, otherwise
@@ -531,12 +537,15 @@ export function mergeIntoTemplate(
     // Start with every output cell — that's the definitive value list.
     for (const [addr, outCell] of outCells) {
       const tplCell = tplCells.get(addr) ?? null
-      if (tplCell) {
+      const inStripRow = stripRows.has(rowOf(addr))
+      if (tplCell && !inStripRow) {
         merged.set(addr, mergeCellXml(tplCell, outCell))
       } else {
-        // New cell. Inherit style from the template's reference row (same column).
+        // New cell OR stripped row. Inherit style from the template's
+        // reference row (same column). For stripped rows we FORCE the
+        // reference style over whatever SheetJS may have (mis)assigned.
         const styleRef = refRow?.cellStyles.get(colOf(addr)) ?? null
-        merged.set(addr, buildNewCell(outCell, styleRef))
+        merged.set(addr, buildNewCell(outCell, styleRef, inStripRow))
       }
     }
     // Include template-only cells (styling / labels the output didn't write)
