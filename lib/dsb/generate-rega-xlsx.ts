@@ -541,13 +541,21 @@ export async function generateBuyersRegisterXlsx(
 
   // Preserve the two spacer rows the 2026 template uses to separate the
   // meta block (rows 2-3) from the title (row 5) and the header row (row 7).
-  // SheetJS drops these row heights on round-trip; without them the top of
-  // the sheet looks cramped compared to the original.
   //   Row 4 = 15.75 pt (blank spacer)
   //   Row 6 = 3.75  pt (thin gap under title)
   if (!ws['!rows']) ws['!rows'] = []
-  ws['!rows'][3] = { hpt: 15.75 } // 0-indexed row 3 == excel row 4
-  ws['!rows'][5] = { hpt: 3.75  } // 0-indexed row 5 == excel row 6
+  ws['!rows'][3] = { hpt: 15.75 }
+  ws['!rows'][5] = { hpt: 3.75  }
+
+  // 🔴 Force rows 13..23 to normal data-row height (39pt, matching row 8).
+  // Template ships with row 13 = 31.5 (totals-row height) and row 23 = 41.25
+  // (note-row height). SheetJS loads those into ws['!rows'] on read; on
+  // write it re-emits with the totals/note heights, which then appear on
+  // whichever buyers happen to land at rows 13 or 23. Overwriting the
+  // !rows entries here forces SheetJS to emit them as data rows.
+  for (let r = 13; r <= 23; r++) {
+    ws['!rows'][r - 1] = { hpt: 39 }
+  }
 
   // -----------------------------------------------------------------------
   // STEP 1 — Snapshot template row 8 BEFORE clearing.
@@ -712,7 +720,11 @@ export async function generateBuyersRegisterXlsx(
       const cell = ws[addr] as (XLSX.CellObject & { s?: unknown }) | undefined
       if (!cell) continue
       if (snap.z != null && cell.z == null) cell.z = snap.z
-      if (snap.s != null && cell.s == null) (cell as { s?: unknown }).s = snap.s
+      // 🔴 ALWAYS overwrite s= (not just when null) — for buyer rows landing
+      // on template's totals row (13) or note row (23), the cell had leaked
+      // in with the wrong (totals/note) style ref from the template load.
+      // Forcing snap.s from row 8 ensures every buyer row gets data styling.
+      if (snap.s != null) (cell as { s?: unknown }).s = snap.s
     }
   }
 
