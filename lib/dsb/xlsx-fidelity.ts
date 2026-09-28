@@ -622,6 +622,27 @@ export function mergeIntoTemplate(
     const dim = computeDimension(merged)
     newXml = newXml.replace(/<dimension\s+ref="[^"]*"\s*\/>/, `<dimension ref="${dim}"/>`)
 
+    // Replace <mergeCells> with output's version — the generator updates
+    // ws['!merges'] when the totals row moves (A13:U13 → A463:U463), so
+    // template's original merges are stale and would put the totals-label
+    // merge in the middle of buyer data.
+    const outMergeCellsMatch = outXml.match(/<mergeCells\b[^>]*>[\s\S]*?<\/mergeCells>|<mergeCells\b[^>]*\/>/)
+    if (outMergeCellsMatch) {
+      const tplHasMerge = /<mergeCells\b[^>]*>[\s\S]*?<\/mergeCells>|<mergeCells\b[^>]*\/>/.test(newXml)
+      if (tplHasMerge) {
+        newXml = newXml.replace(
+          /<mergeCells\b[^>]*>[\s\S]*?<\/mergeCells>|<mergeCells\b[^>]*\/>/,
+          outMergeCellsMatch[0],
+        )
+      } else {
+        // No mergeCells in template — insert before pageMargins (schema order).
+        newXml = newXml.replace(/<(pageMargins|pageSetup|headerFooter|drawing|legacyDrawing|tableParts)/, `${outMergeCellsMatch[0]}<$1`)
+      }
+    } else {
+      // Output has no merges — strip template's too.
+      newXml = newXml.replace(/<mergeCells\b[^>]*>[\s\S]*?<\/mergeCells>|<mergeCells\b[^>]*\/>/, '')
+    }
+
     template.remove(path)
     template.file(path, newXml)
   }
