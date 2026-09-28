@@ -796,6 +796,15 @@ export async function generateBuyersRegisterXlsx(
     if (s !== undefined) (cell as { s?: unknown }).s = s
     ws[addr] = cell
   }
+  // Fill EVERY column of the totals row with an empty styled cell so the
+  // teal fill (applied by mergeIntoTemplate's styleFromTemplateRow) covers
+  // the whole width. Without these placeholders, cols B-U, W, X, AD-AF
+  // come out as white gaps in the middle of the dark totals bar.
+  for (let c = 0; c < 32; c++) {
+    const addr = XLSX.utils.encode_cell({ r: newTotalsRow - 1, c })
+    if (ws[addr]) continue // already set (label / formula)
+    ws[addr] = { t: 's', v: '' } as XLSX.CellObject
+  }
   // Extend !ref so SheetJS emits the new totals row (direct assignment
   // doesn't touch !ref; cells past the current range get silently dropped).
   {
@@ -805,6 +814,25 @@ export async function generateBuyersRegisterXlsx(
     if (31 > range.e.c) range.e.c = 31 // cover column AF
     ws['!ref'] = XLSX.utils.encode_range(range)
   }
+  // ─────────────────────────────────────────────────────────────────────
+  // Move template's merged ranges to match the actual totals row position.
+  //   Template ships with A13:U13 merged (totals label spans across the
+  //   row) + A23:AF23 merged (note row). When the totals row moves to
+  //   row `newTotalsRow`, the merges must move too — otherwise A13:U13
+  //   sits in the middle of buyer data and A23:AF23 covers buyer #16.
+  //
+  //   We remove the row-13 and row-23 merges (from ws['!merges']) and
+  //   add A{newTotalsRow}:U{newTotalsRow}.
+  // ─────────────────────────────────────────────────────────────────────
+  if (!ws['!merges']) ws['!merges'] = []
+  ws['!merges'] = ws['!merges'].filter((m) => {
+    const r = m.s.r + 1 // 0-indexed → 1-indexed
+    return r !== 13 && r !== 23 // drop template's totals + note merges
+  })
+  ws['!merges'].push({
+    s: { r: newTotalsRow - 1, c: 0 },   // A{newTotalsRow}
+    e: { r: newTotalsRow - 1, c: 20 },  // U{newTotalsRow}
+  })
   // Legacy no-op retarget pass (kept for defensive symmetry with older
   // template versions that had SUM-13 refs floating around).
   if (lastDataRow <= BUYERS_TEMPLATE_LAST_DATA_ROW) {
