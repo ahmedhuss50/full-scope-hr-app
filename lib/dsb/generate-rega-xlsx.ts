@@ -623,7 +623,18 @@ export async function generateBuyersRegisterXlsx(
   // LATEST contract per unit. The other tabs (ملغية / معاد بيعها / منجزة)
   // are additional views of the same underlying data.
   // -----------------------------------------------------------------------
-  const sheet1Units = units.filter((u) => deriveUnitStatus(u.id) !== 'no_contract')
+  const sheet1Units = units.filter((u) => {
+    if (deriveUnitStatus(u.id) === 'no_contract') return false
+    // Skip units whose sale has no buyer identity captured. These show up
+    // as half-empty rows (price + collected filled, but every buyer/contract
+    // column blank) which the REGA reviewer flags. Better to omit than to
+    // ship a row with 20 empty cells.
+    const s = saleByUnit.get(u.id)
+    const hasBuyerInfo =
+      (s?.buyer_name_ar && s.buyer_name_ar.trim() !== '') ||
+      (s?.buyer_id_number && String(s.buyer_id_number).trim() !== '')
+    return Boolean(hasBuyerInfo)
+  })
   let idx = 0
   for (const u of sheet1Units) {
     const s = saleByUnit.get(u.id)
