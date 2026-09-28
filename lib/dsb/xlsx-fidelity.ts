@@ -461,6 +461,14 @@ export function mergeIntoTemplate(
      * note-row cell styling — visible as tall dark bands mid-data.
      */
     stripTemplateRowsBySheet?: Record<string, number[]>
+    /**
+     * Per-sheet: apply the CELL STYLES from template's specified source row
+     * to every cell in a target row of the output. Used to give the new
+     * (post-move) totals row the SAME dark-teal + bold-white styling as
+     * template's original row-13 totals row.
+     *   { sheetName: { fromTemplateRow: 13, toOutputRow: 463 } }
+     */
+    styleFromTemplateRowBySheet?: Record<string, { fromTemplateRow: number; toOutputRow: number }>
   } = {},
 ): Buffer {
   const template = new PizZip(templateBuf)
@@ -492,6 +500,7 @@ export function mergeIntoTemplate(
   const dataStartBySheet = opts.dataStartRowBySheet ?? {}
   const sheetOrder = opts.sheetOrder ?? []
   const stripBySheet = opts.stripTemplateRowsBySheet ?? {}
+  const styleFromBySheet = opts.styleFromTemplateRowBySheet ?? {}
 
   for (const path of sheetPaths) {
     const tplXml = template.file(path)?.asText()
@@ -503,9 +512,25 @@ export function mergeIntoTemplate(
     const sheetName = sheetOrder[sheetIdx] ?? ''
     const dataStartRow = dataStartBySheet[sheetName] ?? 0
     const stripRows = new Set(stripBySheet[sheetName] ?? [])
+    const styleFrom = styleFromBySheet[sheetName]
 
     const tplCells = parseCells(tplXml)
     const outCells = parseCells(outXml)
+
+    // Capture cell styles from a template row BEFORE stripping. Used to
+    // paint the new-position totals row with the template's original
+    // totals-row styling (dark teal fill, bold white text, etc.).
+    let styleOverridesForToRow: Map<string, string> | null = null
+    let styleTargetRow = 0
+    if (styleFrom) {
+      styleTargetRow = styleFrom.toOutputRow
+      styleOverridesForToRow = new Map()
+      for (const [addr, cell] of tplCells) {
+        if (rowOf(addr) !== styleFrom.fromTemplateRow) continue
+        const s = attr(cell.attrs, 's')
+        if (s != null) styleOverridesForToRow.set(colOf(addr), s)
+      }
+    }
 
     // Strip template cells at specified rows so buyer data at those rows
     // flows through buildNewCell (using reference-row styling) instead of
@@ -538,7 +563,15 @@ export function mergeIntoTemplate(
     for (const [addr, outCell] of outCells) {
       const tplCell = tplCells.get(addr) ?? null
       const inStripRow = stripRows.has(rowOf(addr))
-      if (tplCell && !inStripRow) {
+      // If this cell lives on the target row for a style-transfer, use the
+      // template's source-row style ref for its column (overrides both
+      // buildNewCell's ref-row logic and mergeCellXml's template attrs).
+      const styleOverride = styleOverridesForToRow && rowOf(addr) === styleTargetRow
+        ? styleOverridesForToRow.get(colOf(addr)) ?? null
+        : null
+      if (styleOverride) {
+        merged.set(addr, buildNewCell(outCell, styleOverride, true))
+      } else if (tplCell && !inStripRow) {
         merged.set(addr, mergeCellXml(tplCell, outCell))
       } else {
         // New cell OR stripped row. Inherit style from the template's

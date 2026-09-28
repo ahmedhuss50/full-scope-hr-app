@@ -1178,6 +1178,14 @@ export async function generateBuyersRegisterXlsx(
     stripTemplateRowsBySheet: {
       'سجل المشترين وحدات قائمة': [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
     },
+    // Apply template's row-13 totals styling (dark teal fill + bold white
+    // text) to whichever row we placed the new totals row on. Without this
+    // the new totals row inherits data-row styling from the reference row
+    // (row 8) — same as a normal buyer row, missing the distinctive
+    // totals-row visual.
+    styleFromTemplateRowBySheet: {
+      'سجل المشترين وحدات قائمة': { fromTemplateRow: 13, toOutputRow: newTotalsRow },
+    },
   })
   // Suppress unused-import warning when the flag is off.
   void includeLetterhead
