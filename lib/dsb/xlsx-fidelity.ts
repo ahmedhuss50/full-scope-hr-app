@@ -361,37 +361,37 @@ function rebuildSheetData(
     })
   }
 
-  // Emit rows in numeric order. Row-attr priority:
-  //   1. For rows that have CELLS in the merged output: prefer OUTPUT's
-  //      attrs (SheetJS wrote them based on ws['!rows']). Otherwise the
-  //      template's row-13 totals-row height gets applied to whichever
-  //      buyer happens to land at row 13, and template's row-23 note-row
-  //      styling gets applied to whichever buyer lands at row 23.
-  //   2. For rows the OUTPUT didn't emit at all: use TEMPLATE's attrs
-  //      (this preserves spacer rows like main-sheet rows 4 & 6).
-  //   3. Only emit an EMPTY row from template if it carries a real styling
-  //      hint (ht, customHeight, style, hidden) AND it's outside the
-  //      output's data range. Otherwise template rows 14-22 (empty in
-  //      template, past where we place totals) would leak through.
+  // Build the set of rows to emit and pick the best attrs for each.
+  //   1. Every row with cells → definite emit
+  //   2. Every row where OUTPUT emitted attrs → emit (even if no cells,
+  //      SheetJS may emit spacer rows via ws['!rows']). But if output's
+  //      attrs are empty (bare `r="N"`) and template has real styling
+  //      (ht/height on same row), use template's attrs instead — this
+  //      recovers spacer-row heights that SheetJS dropped.
+  //   3. Every template row with real styling (ht/customHeight/hidden)
+  //      → emit self-closing with template's attrs (spacer rows the
+  //      output never touched).
   const rowSet = new Set<number>(cellsByRow.keys())
-  const outputMaxRow = outputRowAttrs.size > 0 ? Math.max(...outputRowAttrs.keys()) : 0
+  for (const r of outputRowAttrs.keys()) rowSet.add(r)
   for (const r of templateRowAttrs.keys()) {
-    if (rowSet.has(r)) continue // already emitted with cells
-    if (outputRowAttrs.has(r)) continue // output touched this row (maybe zero-cells) — respect that
-    // Preserve template-only rows only when they're OUTSIDE output's used
-    // range (so they don't fight with buyer data) AND they carry styling.
-    if (r > outputMaxRow) continue
     const a = templateRowAttrs.get(r)!
-    if (/\b(ht|customHeight|hidden)\b/.test(a)) {
-      rowSet.add(r)
-    }
+    if (/\b(ht|customHeight|hidden)\b/.test(a)) rowSet.add(r)
   }
   const rows = Array.from(rowSet).sort((a, b) => a - b)
   const parts: string[] = ['<sheetData>']
   for (const r of rows) {
-    // Prefer OUTPUT'S row attrs when output emitted the row — this stops
-    // template's row-13/23 special styling from bleeding onto buyer rows.
-    let rowAttrs = outputRowAttrs.get(r) ?? templateRowAttrs.get(r) ?? ` r="${r}"`
+    const outAttrs = outputRowAttrs.get(r)
+    const tplAttrs = templateRowAttrs.get(r)
+    // Pick the attrs with the most useful info. Priority:
+    //   • If OUTPUT has a height (ht), OUTPUT wins — SheetJS explicitly
+    //     chose it. This is how buyer data rows get row-8 height (39pt)
+    //     from ws['!rows'] rather than the template's row-13 totals height.
+    //   • Otherwise if TEMPLATE has a height, TEMPLATE wins — recovers
+    //     spacer-row heights (rows 4 & 6) that SheetJS dropped on write.
+    //   • Otherwise fall back to whatever's non-empty.
+    const outHasHt = outAttrs && /\bht=/.test(outAttrs)
+    const tplHasHt = tplAttrs && /\bht=/.test(tplAttrs)
+    let rowAttrs = outHasHt ? outAttrs! : (tplHasHt ? tplAttrs! : (outAttrs ?? tplAttrs ?? ` r="${r}"`))
     if (!attr(rowAttrs, 'r')) rowAttrs += ` r="${r}"`
     const cellsInRow = cellsByRow.get(r) ?? []
     if (cellsInRow.length === 0) {
@@ -504,9 +504,22 @@ export function mergeIntoTemplate(
     // Strip template cells at specified rows so buyer data at those rows
     // flows through buildNewCell (using reference-row styling) instead of
     // mergeCellXml (inheriting the template row's special styling).
+    // Also strip the template's ROW-level attrs (ht, customHeight) at those
+    // rows so buyer data doesn't get totals-row / note-row height either.
+    let workingTplXml = tplXml
     if (stripRows.size > 0) {
       for (const addr of Array.from(tplCells.keys())) {
         if (stripRows.has(rowOf(addr))) tplCells.delete(addr)
+      }
+      // Remove the <row r="N" ...>...</row> element from template XML for
+      // each stripped row. rebuildSheetData reads row attrs from this XML;
+      // dropping them means the row falls through to output attrs (which
+      // are SheetJS defaults for buyer data — the correct height).
+      for (const r of stripRows) {
+        workingTplXml = workingTplXml.replace(
+          new RegExp(`<row[^>]*r="${r}"[^>]*(?:/>|>[\\s\\S]*?</row>)`, 'g'),
+          ''
+        )
       }
     }
 
@@ -552,7 +565,7 @@ export function mergeIntoTemplate(
     }
 
     // Rebuild <sheetData>.
-    const newSheetData = rebuildSheetData(merged, tplXml, outXml)
+    const newSheetData = rebuildSheetData(merged, workingTplXml, outXml)
 
     // Splice into template's XML.
     let newXml = tplXml.replace(
