@@ -542,10 +542,14 @@ export function mergeIntoTemplate(
         merged.set(addr, mergeCellXml(tplCell, outCell))
       } else {
         // New cell OR stripped row. Inherit style from the template's
-        // reference row (same column). For stripped rows we FORCE the
-        // reference style over whatever SheetJS may have (mis)assigned.
+        // reference row (same column). We ALWAYS force the reference-row
+        // style over whatever SheetJS assigned — SheetJS's community
+        // writer often mis-serializes cell.s objects and picks garbage
+        // xf refs (s=2/4/5 pointing at totals-row styles) for cells past
+        // the template's sample range. Forcing here guarantees every
+        // buyer row uses the same per-column style as the reference row.
         const styleRef = refRow?.cellStyles.get(colOf(addr)) ?? null
-        merged.set(addr, buildNewCell(outCell, styleRef, inStripRow))
+        merged.set(addr, buildNewCell(outCell, styleRef, styleRef != null))
       }
     }
     // Include template-only cells (styling / labels the output didn't write)
