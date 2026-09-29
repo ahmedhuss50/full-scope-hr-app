@@ -992,9 +992,10 @@ export async function generateBuyersRegisterXlsx(
     const totalsRow   = lastDataRow + 4   // 3 blank rows + totals
 
     // Fill the 3 blank rows between data and totals with styled empty cells
-    // (across all 26 columns) so they render as visible rows with borders
-    // matching the buyer rows above — otherwise they appear as unformatted
-    // white space.
+    // (across all 26 columns). Later on, mergeIntoTemplate paints them with
+    // template row-7's WHITE-with-borders style (via styleFromTemplateRow)
+    // so they render as clean bordered rows, not the grey-striped look
+    // that the data-row (template row 2) style would apply.
     for (let r = lastDataRow + 1; r < totalsRow; r++) {
       for (let c = 0; c < 26; c++) {
         const addr = XLSX.utils.encode_cell({ r: r - 1, c })
@@ -1273,17 +1274,31 @@ export async function generateBuyersRegisterXlsx(
     // bar) to whichever rows we moved them to.
     styleFromTemplateRowBySheet: {
       'سجل المشترين وحدات قائمة': { fromTemplateRow: 13, toOutputRow: newTotalsRow },
+      // For each secondary sheet: transfer template row 7's styling (white
+      // + borders) to the totals row AND to each of the 3 blank rows above
+      // it — that gives blank cells clean white background with borders
+      // instead of the grey-striped data-row style. Note row gets template
+      // row 10 or 11's styling (green bar).
       ...(resoldPos ? { 'الوحدات الملغية والمعاد بيعها': [
-        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow },
-        { fromTemplateRow: 11, toOutputRow: resoldPos.noteRow   },
+        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow - 3 },
+        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow - 2 },
+        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow - 1 },
+        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow     },
+        { fromTemplateRow: 11, toOutputRow: resoldPos.noteRow       },
       ] } : {}),
       ...(cancelledPos ? { 'الوحدات الملغية': [
-        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow },
-        { fromTemplateRow: 10, toOutputRow: cancelledPos.noteRow   },
+        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow - 3 },
+        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow - 2 },
+        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow - 1 },
+        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow     },
+        { fromTemplateRow: 10, toOutputRow: cancelledPos.noteRow       },
       ] } : {}),
       ...(completedPos ? { 'الوحدات المنجزة': [
-        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow },
-        { fromTemplateRow: 10, toOutputRow: completedPos.noteRow   },
+        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow - 3 },
+        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow - 2 },
+        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow - 1 },
+        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow     },
+        { fromTemplateRow: 10, toOutputRow: completedPos.noteRow       },
       ] } : {}),
     },
   })
