@@ -308,6 +308,7 @@ const COMPLETED_SHEET_HEADER_ROW_1: Record<string, string> = {
 const SHORT_SHEET_NOTE_RESOLD    = 'ملاحظة: في هذه الشريحة يتم إضافة المشتري الملغي  باللون الرمادي ويتم إضافة المشتري الجديد باللون الأبيض '
 const SHORT_SHEET_NOTE_CANCELLED = 'ملاحظة: في هذه الشريحة يتم إضافة ا الوحدات الملغية والتي لم يتم إعادة بيعها'
 const COMPLETED_SHEET_NOTE       = 'ملاحظة: في هذه الشريحة يتم إضافة  الوحدات المنجزة وتم صدور خطاب الموافقة على الإنجاز'
+const MAIN_SHEET_NOTE            = 'ملاحظة: في هذه الشريحة يتم إضافة التالي ( الوحدات المباعة والغير منجزة ، الوحدات المعاد بيعها ، الوحدات الملغية ولم يتم إعادة بيعها'
 // The 2026 REGA-approved template ships with 5 sample rows (8..12) and a
 // totals row at 13. We overwrite the sample and expand as needed.
 const BUYERS_TEMPLATE_LAST_DATA_ROW = 12
@@ -854,6 +855,35 @@ export async function generateBuyersRegisterXlsx(
     s: { r: newTotalsRow - 1, c: 0 },   // A{newTotalsRow}
     e: { r: newTotalsRow - 1, c: 20 },  // U{newTotalsRow}
   })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Note row at end of sheet (matches template's row 23 layout).
+  // Position: 3 blank rows below the totals row, then the note bar.
+  // The note text spans A:AF (green fill from template row 23 style).
+  // ─────────────────────────────────────────────────────────────────────
+  const mainNoteRow = newTotalsRow + 3
+  // Fill every column of the note row with empty styled cells so the green
+  // fill (applied by mergeIntoTemplate's styleFromTemplateRow=23) covers
+  // the whole width A:AF.
+  for (let c = 0; c < 32; c++) {
+    const addr = XLSX.utils.encode_cell({ r: mainNoteRow - 1, c })
+    ws[addr] = { t: 's', v: '' } as XLSX.CellObject
+  }
+  // Note text on A{mainNoteRow} — the merge below spans it across A:AF.
+  ws[XLSX.utils.encode_cell({ r: mainNoteRow - 1, c: 0 })] = { t: 's', v: MAIN_SHEET_NOTE } as XLSX.CellObject
+  ws['!merges'].push({
+    s: { r: mainNoteRow - 1, c: 0 },    // A{mainNoteRow}
+    e: { r: mainNoteRow - 1, c: 31 },   // AF{mainNoteRow}
+  })
+  // Extend !ref one more time so SheetJS emits the note row.
+  {
+    const currentRef = ws['!ref'] ?? 'A1'
+    const range = XLSX.utils.decode_range(currentRef)
+    if (mainNoteRow - 1 > range.e.r) range.e.r = mainNoteRow - 1
+    if (31 > range.e.c) range.e.c = 31
+    ws['!ref'] = XLSX.utils.encode_range(range)
+  }
+
   // Legacy no-op retarget pass (kept for defensive symmetry with older
   // template versions that had SUM-13 refs floating around).
   if (lastDataRow <= BUYERS_TEMPLATE_LAST_DATA_ROW) {
@@ -1273,7 +1303,12 @@ export async function generateBuyersRegisterXlsx(
     // 7, dark teal) AND the note-row styling (template row 10 or 11, green
     // bar) to whichever rows we moved them to.
     styleFromTemplateRowBySheet: {
-      'سجل المشترين وحدات قائمة': { fromTemplateRow: 13, toOutputRow: newTotalsRow },
+      // Main sheet: totals row (from template row 13, teal) + note row
+      // (from template row 23, green bar) transferred to new positions.
+      'سجل المشترين وحدات قائمة': [
+        { fromTemplateRow: 13, toOutputRow: newTotalsRow },
+        { fromTemplateRow: 23, toOutputRow: mainNoteRow  },
+      ],
       // For each secondary sheet: transfer template row 7's styling (white
       // + borders) to the totals row AND to each of the 3 blank rows above
       // it — that gives blank cells clean white background with borders
