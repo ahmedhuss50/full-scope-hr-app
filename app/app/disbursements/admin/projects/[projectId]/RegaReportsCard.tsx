@@ -59,6 +59,30 @@ export function RegaReportsCard({
   const [fromDate, setFromDate] = useState<string>(q.from)
   const [toDate, setToDate] = useState<string>(q.to)
 
+  // Two-stage: user edits fromDate/toDate + year/quarter freely, then clicks
+  // «تطبيق». Only the APPLIED values are used in the download URLs. The
+  // download links are disabled while there are pending unapplied changes,
+  // so users can't accidentally download with a half-typed date.
+  const [appliedYear, setAppliedYear] = useState<number>(year)
+  const [appliedQuarter, setAppliedQuarter] = useState<QCode>(quarter)
+  const [appliedUseCustom, setAppliedUseCustom] = useState<boolean>(useCustomRange)
+  const [appliedFrom, setAppliedFrom] = useState<string>(q.from)
+  const [appliedTo, setAppliedTo] = useState<string>(q.to)
+
+  const isDirty =
+    year !== appliedYear ||
+    quarter !== appliedQuarter ||
+    useCustomRange !== appliedUseCustom ||
+    (useCustomRange && (fromDate !== appliedFrom || toDate !== appliedTo))
+
+  function applyFilter() {
+    setAppliedYear(year)
+    setAppliedQuarter(quarter)
+    setAppliedUseCustom(useCustomRange)
+    setAppliedFrom(useCustomRange ? fromDate : q.from)
+    setAppliedTo(useCustomRange ? toDate : q.to)
+  }
+
   // Whether to embed the REGA-approved letterhead + footer graphics on export.
   // Default on — accountants usually want the official-looking version.
   const [includeLetterhead, setIncludeLetterhead] = useState(true)
@@ -70,18 +94,19 @@ export function RegaReportsCard({
     return [cur + 1, cur, cur - 1, cur - 2, cur - 3]
   }, [nowPeriod.year])
 
-  const qLabel = QUARTERS.find((qq) => qq.code === quarter)?.label ?? ''
+  const qLabel = QUARTERS.find((qq) => qq.code === appliedQuarter)?.label ?? ''
+  const appliedQ = quarterDateRange(appliedYear, appliedQuarter)
+  // Effective date range = the APPLIED values (not the pending edits).
+  const effFrom = appliedUseCustom ? appliedFrom : appliedQ.from
+  const effTo   = appliedUseCustom ? appliedTo   : appliedQ.to
 
-  // Effective date range: user-picked custom, or the quarter's implied range.
-  const effFrom = useCustomRange ? fromDate : q.from
-  const effTo   = useCustomRange ? toDate   : q.to
-
-  const deliveryHref   = `/api/dsb-delivery-notice?project_id=${projectId}&quarter=${quarter}&year=${year}`
-  const accountantHref = `/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${quarter}&year=${year}${letterheadParam}`
+  const deliveryHref   = `/api/dsb-delivery-notice?project_id=${projectId}&quarter=${appliedQuarter}&year=${appliedYear}`
+  const accountantHref = `/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${appliedQuarter}&year=${appliedYear}${letterheadParam}`
   const buyersHref     = `/api/dsb-buyers-register-xlsx?project_id=${projectId}&from=${effFrom}&to=${effTo}${letterheadParam}`
 
   const btn =
     'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-bold shadow-sm hover:bg-teal-700 transition'
+  const btnDisabled = 'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-300 text-slate-500 text-sm font-bold cursor-not-allowed'
 
   return (
     <section className="rounded-xl border border-teal-200 bg-teal-50/30 shadow-sm p-5 space-y-4" dir="rtl">
@@ -175,33 +200,68 @@ export function RegaReportsCard({
             تضمين ترويسة وتذييل الرسمية في التقارير (الصورة العلوية والسفلية)
           </span>
         </label>
+
+        {/* Apply button + applied-range indicator */}
+        <div className="flex items-center gap-3 flex-wrap pt-2 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={applyFilter}
+            disabled={!isDirty}
+            className={
+              isDirty
+                ? 'inline-flex items-center gap-2 px-4 py-1.5 rounded-md bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 transition'
+                : 'inline-flex items-center gap-2 px-4 py-1.5 rounded-md bg-slate-200 text-slate-500 text-sm font-bold cursor-not-allowed'
+            }
+          >
+            تطبيق الفلتر
+          </button>
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-[11px] text-slate-500">الفترة المطبَّقة على التنزيلات:</div>
+            <div className="text-xs font-mono text-slate-900" dir="ltr">
+              {effFrom} → {effTo}
+              {isDirty && (
+                <span className="mr-2 inline-block text-amber-700 font-sans font-bold text-[11px]">
+                  ⚠ تغييرات غير مطبَّقة
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Download buttons — one per report type, all use the picked period */}
+      {/* Download buttons — one per report type, all use the APPLIED period.
+          Disabled when there are unapplied changes so users can't download
+          with a half-typed date. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <a
-          href={deliveryHref}
-          download
-          className={btn}
-          title={`إشعار تسليم ${qLabel} ${year} لمشروع ${projectName}`}
+          href={isDirty ? '#' : deliveryHref}
+          download={!isDirty}
+          onClick={(e) => { if (isDirty) e.preventDefault() }}
+          className={isDirty ? btnDisabled : btn}
+          title={isDirty ? 'اضغط «تطبيق الفلتر» أولاً' : `إشعار تسليم ${qLabel} ${appliedYear} لمشروع ${projectName}`}
+          aria-disabled={isDirty}
         >
           <FileDown className="w-4 h-4" aria-hidden="true" />
           إشعار التسليم (Word)
         </a>
         <a
-          href={buyersHref}
-          download
-          className={btn}
-          title={`سجل المشترين ${useCustomRange ? `(${effFrom} → ${effTo})` : `${qLabel} ${year}`} لمشروع ${projectName}`}
+          href={isDirty ? '#' : buyersHref}
+          download={!isDirty}
+          onClick={(e) => { if (isDirty) e.preventDefault() }}
+          className={isDirty ? btnDisabled : btn}
+          title={isDirty ? 'اضغط «تطبيق الفلتر» أولاً' : `سجل المشترين ${appliedUseCustom ? `(${effFrom} → ${effTo})` : `${qLabel} ${appliedYear}`} لمشروع ${projectName}`}
+          aria-disabled={isDirty}
         >
           <FileDown className="w-4 h-4" aria-hidden="true" />
           سجل المشترين (Excel)
         </a>
         <a
-          href={accountantHref}
-          download
-          className={btn}
-          title={`نموذج المحاسب القانوني ${qLabel} ${year} لمشروع ${projectName}`}
+          href={isDirty ? '#' : accountantHref}
+          download={!isDirty}
+          onClick={(e) => { if (isDirty) e.preventDefault() }}
+          className={isDirty ? btnDisabled : btn}
+          title={isDirty ? 'اضغط «تطبيق الفلتر» أولاً' : `نموذج المحاسب القانوني ${qLabel} ${appliedYear} لمشروع ${projectName}`}
+          aria-disabled={isDirty}
         >
           <FileDown className="w-4 h-4" aria-hidden="true" />
           نموذج المحاسب القانوني (Excel)
