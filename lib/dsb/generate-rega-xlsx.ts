@@ -1223,6 +1223,15 @@ export async function generateBuyersRegisterXlsx(
     // styling and produce visible bands in the middle of the data.
     stripTemplateRowsBySheet: {
       'سجل المشترين وحدات قائمة': [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+      // Secondary sheets: template's rows 2..11 hold sample data with SHARED
+      // formulas (one master cell + child cells that reference si="N"). My
+      // generator overwrites those with real buyer data / blank rows /
+      // totals / note. If we don't strip, child cells like <f t="shared"
+      // si="0"/> survive without a master → Excel throws
+      // "Removed Records: Shared formula from /xl/worksheets/sheetN.xml".
+      'الوحدات الملغية والمعاد بيعها': [2,3,4,5,6,7,8,9,10,11],
+      'الوحدات الملغية':               [2,3,4,5,6,7,8,9,10,11],
+      'الوحدات المنجزة':               [2,3,4,5,6,7,8,9,10,11],
     },
     // Apply template's row-13 totals styling (dark teal fill + bold white
     // text) to whichever row we placed the new totals row on. Without this
