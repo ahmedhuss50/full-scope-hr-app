@@ -908,24 +908,11 @@ export async function generateBuyersRegisterXlsx(
       setCell(sheet, `${colLetter}1`, headerText, 's')
     }
 
-    // Preserve template rows 2..6 as auto-compute formula slots. Template
-    // ships with 5 empty-but-formula-bearing rows so users get computed
-    // totals as soon as they paste raw values into T/J. Rows we later
-    // overwrite with real buyer data still work — setCell strips .f.
-    for (let r = 2; r <= 6; r++) {
-      setCell(sheet, `A${r}`, r - 1, 'n') // serial 1..5
-      const putF = (col: string, fmla: string) => {
-        setCell(sheet, `${col}${r}`, 0, 'n')
-        const c = sheet[`${col}${r}`] as XLSX.CellObject
-        c.f = fmla; delete c.v
-      }
-      putF('U', `T${r}*5/100`)
-      putF('V', `T${r}+U${r}`)
-      setCell(sheet, `W${r}`, 0, 'n') // collected default
-      putF('X', `V${r}-W${r}`)
-      putF('Y', `W${r}/V${r}`)
-      putF('Z', `T${r}/J${r}`)
-    }
+    // NOTE: template's rows 2..6 are pre-filled with formulas like =T2*5/100
+    // that show as #DIV/0! for empty rows. We used to replicate those so users
+    // could paste values in, but the errors looked broken in the export.
+    // Leave the unused rows genuinely blank — real buyer rows are written
+    // below, and totals sit 3 blank rows past the last real row.
 
     let idx = 0
     for (const { u, s, label } of rows) {
@@ -976,13 +963,15 @@ export async function generateBuyersRegisterXlsx(
       }
     }
 
-    // Totals row — matches template row 7 when we have ≤5 data rows,
-    // otherwise slides down to row (2 + n_rows) to sit right below the data.
-    // Columns match template: A = 'المجموع', T..X = SUM formulas.
-    const lastDataRow = idx > 0 ? 1 + idx : 6 // 0 rows → totals at row 7 (matches template)
-    const totalsRow   = lastDataRow + 1
+    // Totals row placement: 3 blank rows below the last filled buyer row.
+    // With N buyers filling rows 2..(1+N), totals lands at row (1+N)+4 = N+5.
+    // With 0 buyers, still leave 3 blank rows below header → totals at row 5.
+    const lastDataRow = 1 + idx           // 1+N (or 1 when N=0)
+    const totalsRow   = lastDataRow + 4   // 3 blank rows + totals
     setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
     if (idx > 0) {
+      // SUM ranges only need to span actual data rows (2..lastDataRow).
+      // Blank rows between data and totals don't affect SUM.
       setCell(sheet, `T${totalsRow}`, 0, 'n'); (sheet[`T${totalsRow}`] as XLSX.CellObject).f = `SUM(T2:T${lastDataRow})`; delete (sheet[`T${totalsRow}`] as XLSX.CellObject).v
       setCell(sheet, `U${totalsRow}`, 0, 'n'); (sheet[`U${totalsRow}`] as XLSX.CellObject).f = `SUM(U2:U${lastDataRow})`; delete (sheet[`U${totalsRow}`] as XLSX.CellObject).v
       setCell(sheet, `V${totalsRow}`, 0, 'n'); (sheet[`V${totalsRow}`] as XLSX.CellObject).f = `SUM(V2:V${lastDataRow})`; delete (sheet[`V${totalsRow}`] as XLSX.CellObject).v
@@ -1024,22 +1013,9 @@ export async function generateBuyersRegisterXlsx(
       setCell(sheet, `${colLetter}1`, headerText, 's')
     }
 
-    // Preserve template rows 2..6 as auto-compute formula slots (31-col
-    // schema — different columns than the 26-col short sheets).
-    for (let r = 2; r <= 6; r++) {
-      setCell(sheet, `A${r}`, r - 1, 'n') // serial 1..5
-      const putF = (col: string, fmla: string) => {
-        setCell(sheet, `${col}${r}`, 0, 'n')
-        const c = sheet[`${col}${r}`] as XLSX.CellObject
-        c.f = fmla; delete c.v
-      }
-      putF('Y',  `V${r}*5/100`)
-      putF('Z',  `V${r}+Y${r}`)
-      setCell(sheet, `AA${r}`, 0, 'n') // collected default
-      putF('AC', `Z${r}-AA${r}`)
-      putF('AD', `AA${r}/Z${r}`)
-      putF('AE', `V${r}/L${r}`)
-    }
+    // Skip template's pre-filled formula rows 2..6 (they show as #DIV/0!
+    // for empty slots). Leave those rows genuinely blank — buyer rows are
+    // written below, then 3 blank rows, then totals.
 
     let idx = 0
     for (const { u, s } of rows) {
@@ -1097,10 +1073,10 @@ export async function generateBuyersRegisterXlsx(
       }
     }
 
-    // Totals row (matches template's row 7 for ≤5 rows, slides down for more).
+    // Totals row: 3 blank rows below the last filled buyer row.
     // 31-col schema: A = 'المجموع', V/Y/Z/AA/AC = SUM formulas per template.
-    const lastDataRow = idx > 0 ? 1 + idx : 6
-    const totalsRow   = lastDataRow + 1
+    const lastDataRow = 1 + idx
+    const totalsRow   = lastDataRow + 4  // 3 blank rows + totals
     setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
     if (idx > 0) {
       const putSum = (col: string) => {
