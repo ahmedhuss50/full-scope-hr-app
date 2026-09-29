@@ -342,9 +342,21 @@ function retargetRow8Refs(formula: string, targetRow: number): string {
 
 export async function generateBuyersRegisterXlsx(
   projectId: string,
-  opts: { includeLetterhead?: boolean } = {},
+  opts: {
+    includeLetterhead?: boolean
+    /** ISO date (YYYY-MM-DD). Only sales dated ON OR BEFORE this survive.
+     *  Only payments dated ON OR BEFORE this contribute to collected totals.
+     *  When omitted, all-time (no upper bound). */
+    toDate?: string
+    /** ISO date (YYYY-MM-DD). Only sales dated ON OR AFTER this survive.
+     *  Only payments dated ON OR AFTER this contribute to collected totals.
+     *  When omitted, no lower bound. */
+    fromDate?: string
+  } = {},
 ): Promise<Buffer> {
   const includeLetterhead = opts.includeLetterhead !== false // default: true
+  const fromDate = opts.fromDate?.slice(0, 10) || null
+  const toDate   = opts.toDate?.slice(0, 10)   || null
   const svc = createSupabaseService()
 
   // Project + tenant identity for the header
@@ -409,12 +421,17 @@ export async function generateBuyersRegisterXlsx(
   if (unitIds.length > 0) {
     for (let i = 0; i < unitIds.length; i += 500) {
       const slice = unitIds.slice(i, i + 500)
-      const { data } = await svc
+      let q = svc
         .from('dsb_unit_sales')
         .select('id, unit_id, buyer_name_ar, buyer_id_type, buyer_id_number, buyer_nationality, buyer_phone, contract_number, contract_type, financing_type, financing_bank, sale_date, sale_count, sale_status, price_before_tax_sar, price_with_vat_sar, vat_sar, delivery_status, delivery_date, created_at')
         .eq('tenant_id', project.tenant_id)
         .in('unit_id', slice)
-        .order('created_at', { ascending: false })
+      // Only include sales made within the [fromDate, toDate] window. Sales
+      // with NULL sale_date are excluded when a filter is set (we don't know
+      // when they happened, so we can't say they're in-window).
+      if (fromDate) q = q.gte('sale_date', fromDate)
+      if (toDate)   q = q.lte('sale_date', toDate)
+      const { data } = await q.order('created_at', { ascending: false })
       sales.push(...((data ?? []) as SaleLite[]))
     }
   }
@@ -477,13 +494,17 @@ export async function generateBuyersRegisterXlsx(
   // Buyer-collection payments per sale, bucketed by year
   type PayRow = { sale_id: string | null; amount_sar: number | null; payment_date: string }
   const payments = await fetchAllChunked<PayRow>(async (from, to) => {
-    const res = await svc
+    let q = svc
       .from('dsb_payments')
       .select('sale_id, amount_sar, payment_date')
       .eq('tenant_id', project.tenant_id)
       .eq('project_id', projectId)
       .eq('deposit_category', 'buyer_collection')
-      .range(from, to)
+    // Only collected amounts within the [fromDate, toDate] window contribute
+    // to buyer totals. Matches the sales-date filter above.
+    if (fromDate) q = q.gte('payment_date', fromDate)
+    if (toDate)   q = q.lte('payment_date', toDate)
+    const res = await q.range(from, to)
     return { data: res.data as PayRow[] | null, error: res.error }
   })
   // Map<saleId, Map<year, total>>

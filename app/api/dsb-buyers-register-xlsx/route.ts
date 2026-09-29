@@ -43,7 +43,11 @@ export async function GET(req: NextRequest) {
   // Default (unset or =1) keeps them.
   const letterheadParam = req.nextUrl.searchParams.get('letterhead')
   const includeLetterhead = letterheadParam !== '0' && letterheadParam !== 'false'
-  const bytes = await generateBuyersRegisterXlsx(projectId, { includeLetterhead })
+  // Date-range filter (ISO YYYY-MM-DD). Applied to sale_date + payment_date
+  // in the generator. Both optional — if omitted, all-time snapshot.
+  const fromDate = (req.nextUrl.searchParams.get('from') ?? '').trim() || undefined
+  const toDate   = (req.nextUrl.searchParams.get('to')   ?? '').trim() || undefined
+  const bytes = await generateBuyersRegisterXlsx(projectId, { includeLetterhead, fromDate, toDate })
   const ab = new ArrayBuffer(bytes.byteLength)
   new Uint8Array(ab).set(bytes)
   const blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
