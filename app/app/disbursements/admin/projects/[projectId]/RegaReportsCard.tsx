@@ -53,34 +53,40 @@ export function RegaReportsCard({
   const [year, setYear] = useState<number>(nowPeriod.year || currentYear)
   const [quarter, setQuarter] = useState<QCode>(nowPeriod.quarter)
 
-  // Optional custom range for the buyers register snapshot.
-  const [useCustomRange, setUseCustomRange] = useState(false)
+  // Date filter mode for the buyers register:
+  //   'upTo' (default) — cumulative snapshot: everything ≤ toDate. Only the
+  //                       end-date input is shown. fromDate is NOT sent.
+  //   'between'         — window: only sales/collections in [fromDate..toDate].
+  //                       Both inputs shown.
+  // Note: this filter only affects the buyers register. The CPA workbook +
+  // delivery notice still use the year/quarter selector above.
+  type DateMode = 'upTo' | 'between'
+  const [dateMode, setDateMode] = useState<DateMode>('upTo')
   const q = quarterDateRange(year, quarter)
   const [fromDate, setFromDate] = useState<string>(q.from)
   const [toDate, setToDate] = useState<string>(q.to)
 
   // Two-stage: user edits fromDate/toDate + year/quarter freely, then clicks
-  // «تطبيق». Only the APPLIED values are used in the download URLs. The
-  // download links are disabled while there are pending unapplied changes,
-  // so users can't accidentally download with a half-typed date.
+  // «تطبيق». Only the APPLIED values are used in the download URLs.
   const [appliedYear, setAppliedYear] = useState<number>(year)
   const [appliedQuarter, setAppliedQuarter] = useState<QCode>(quarter)
-  const [appliedUseCustom, setAppliedUseCustom] = useState<boolean>(useCustomRange)
+  const [appliedDateMode, setAppliedDateMode] = useState<DateMode>(dateMode)
   const [appliedFrom, setAppliedFrom] = useState<string>(q.from)
   const [appliedTo, setAppliedTo] = useState<string>(q.to)
 
   const isDirty =
     year !== appliedYear ||
     quarter !== appliedQuarter ||
-    useCustomRange !== appliedUseCustom ||
-    (useCustomRange && (fromDate !== appliedFrom || toDate !== appliedTo))
+    dateMode !== appliedDateMode ||
+    toDate !== appliedTo ||
+    (dateMode === 'between' && fromDate !== appliedFrom)
 
   function applyFilter() {
     setAppliedYear(year)
     setAppliedQuarter(quarter)
-    setAppliedUseCustom(useCustomRange)
-    setAppliedFrom(useCustomRange ? fromDate : q.from)
-    setAppliedTo(useCustomRange ? toDate : q.to)
+    setAppliedDateMode(dateMode)
+    setAppliedFrom(fromDate)
+    setAppliedTo(toDate)
   }
 
   // Whether to embed the REGA-approved letterhead + footer graphics on export.
@@ -95,14 +101,15 @@ export function RegaReportsCard({
   }, [nowPeriod.year])
 
   const qLabel = QUARTERS.find((qq) => qq.code === appliedQuarter)?.label ?? ''
-  const appliedQ = quarterDateRange(appliedYear, appliedQuarter)
-  // Effective date range = the APPLIED values (not the pending edits).
-  const effFrom = appliedUseCustom ? appliedFrom : appliedQ.from
-  const effTo   = appliedUseCustom ? appliedTo   : appliedQ.to
+  // Effective date range for the buyers register:
+  //   'upTo'    → only end date sent (from omitted → backend applies no lower bound)
+  //   'between' → both from and to sent
+  const effTo   = appliedTo
+  const effFrom = appliedDateMode === 'between' ? appliedFrom : ''
 
   const deliveryHref   = `/api/dsb-delivery-notice?project_id=${projectId}&quarter=${appliedQuarter}&year=${appliedYear}`
   const accountantHref = `/api/dsb-accountant-workbook-xlsx?project_id=${projectId}&quarter=${appliedQuarter}&year=${appliedYear}${letterheadParam}`
-  const buyersHref     = `/api/dsb-buyers-register-xlsx?project_id=${projectId}&from=${effFrom}&to=${effTo}${letterheadParam}`
+  const buyersHref     = `/api/dsb-buyers-register-xlsx?project_id=${projectId}${effFrom ? `&from=${effFrom}` : ''}&to=${effTo}${letterheadParam}`
 
   const btn =
     'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-bold shadow-sm hover:bg-teal-700 transition'
@@ -164,27 +171,51 @@ export function RegaReportsCard({
           </span>
         </div>
 
-        <label className="inline-flex items-start gap-2 text-xs cursor-pointer">
-          <input
-            type="checkbox"
-            checked={useCustomRange}
-            onChange={(e) => setUseCustomRange(e.target.checked)}
-            className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-          />
-          <span className="text-slate-700">
-            استخدام نطاق تواريخ مخصص (يؤثر فقط على «سجل المشترين»)
-          </span>
-        </label>
-        {useCustomRange && (
+        <div className="space-y-2">
+          <div className="text-[11px] font-bold text-slate-700">
+            نطاق تواريخ «سجل المشترين»:
+          </div>
+          <div className="flex items-center gap-4 flex-wrap">
+            <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="radio"
+                name="dateMode"
+                checked={dateMode === 'upTo'}
+                onChange={() => setDateMode('upTo')}
+                className="h-3.5 w-3.5 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="text-slate-700 font-semibold">حتى تاريخ محدد</span>
+              <span className="text-[10px] text-slate-500">(كل البيانات قبل التاريخ)</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
+              <input
+                type="radio"
+                name="dateMode"
+                checked={dateMode === 'between'}
+                onChange={() => setDateMode('between')}
+                className="h-3.5 w-3.5 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="text-slate-700 font-semibold">بين تاريخين</span>
+            </label>
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-[11px] text-slate-600">من</label>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-mono" dir="ltr" />
-            <label className="text-[11px] text-slate-600">إلى</label>
+            {dateMode === 'between' && (
+              <>
+                <label className="text-[11px] text-slate-600">من</label>
+                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-mono" dir="ltr" />
+              </>
+            )}
+            <label className="text-[11px] text-slate-600">
+              {dateMode === 'between' ? 'إلى' : 'التاريخ'}
+            </label>
             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
               className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-mono" dir="ltr" />
           </div>
-        )}
+          <div className="text-[10px] text-slate-500 leading-relaxed">
+            نموذج المحاسب القانوني وإشعار التسليم يستخدمان الربع/السنة المختارة أعلاه.
+          </div>
+        </div>
 
         {/* Letterhead + footer toggle — controls whether the exported .xlsx
             includes the REGA-approved letterhead (top image) and footer
@@ -216,9 +247,9 @@ export function RegaReportsCard({
             تطبيق الفلتر
           </button>
           <div className="flex-1 min-w-[200px]">
-            <div className="text-[11px] text-slate-500">الفترة المطبَّقة على التنزيلات:</div>
+            <div className="text-[11px] text-slate-500">الفترة المطبَّقة على «سجل المشترين»:</div>
             <div className="text-xs font-mono text-slate-900" dir="ltr">
-              {effFrom} → {effTo}
+              {appliedDateMode === 'between' ? `${effFrom} → ${effTo}` : `≤ ${effTo}`}
               {isDirty && (
                 <span className="mr-2 inline-block text-amber-700 font-sans font-bold text-[11px]">
                   ⚠ تغييرات غير مطبَّقة
@@ -249,7 +280,7 @@ export function RegaReportsCard({
           download={!isDirty}
           onClick={(e) => { if (isDirty) e.preventDefault() }}
           className={isDirty ? btnDisabled : btn}
-          title={isDirty ? 'اضغط «تطبيق الفلتر» أولاً' : `سجل المشترين ${appliedUseCustom ? `(${effFrom} → ${effTo})` : `${qLabel} ${appliedYear}`} لمشروع ${projectName}`}
+          title={isDirty ? 'اضغط «تطبيق الفلتر» أولاً' : `سجل المشترين ${appliedDateMode === 'between' ? `(${effFrom} → ${effTo})` : `(حتى ${effTo})`} لمشروع ${projectName}`}
           aria-disabled={isDirty}
         >
           <FileDown className="w-4 h-4" aria-hidden="true" />
