@@ -968,6 +968,18 @@ export async function generateBuyersRegisterXlsx(
     // With 0 buyers, still leave 3 blank rows below header → totals at row 5.
     const lastDataRow = 1 + idx           // 1+N (or 1 when N=0)
     const totalsRow   = lastDataRow + 4   // 3 blank rows + totals
+
+    // Fill the 3 blank rows between data and totals with styled empty cells
+    // (across all 26 columns) so they render as visible rows with borders
+    // matching the buyer rows above — otherwise they appear as unformatted
+    // white space.
+    for (let r = lastDataRow + 1; r < totalsRow; r++) {
+      for (let c = 0; c < 26; c++) {
+        const addr = XLSX.utils.encode_cell({ r: r - 1, c })
+        if (!sheet[addr]) sheet[addr] = { t: 's', v: '' } as XLSX.CellObject
+      }
+    }
+
     setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
     if (idx > 0) {
       // SUM ranges only need to span actual data rows (2..lastDataRow).
@@ -1077,6 +1089,15 @@ export async function generateBuyersRegisterXlsx(
     // 31-col schema: A = 'المجموع', V/Y/Z/AA/AC = SUM formulas per template.
     const lastDataRow = 1 + idx
     const totalsRow   = lastDataRow + 4  // 3 blank rows + totals
+
+    // Fill the 3 blank rows with styled empty cells so they render as
+    // visible bordered rows (matching the buyer rows above).
+    for (let r = lastDataRow + 1; r < totalsRow; r++) {
+      for (let c = 0; c < 31; c++) {
+        const addr = XLSX.utils.encode_cell({ r: r - 1, c })
+        if (!sheet[addr]) sheet[addr] = { t: 's', v: '' } as XLSX.CellObject
+      }
+    }
     setCell(sheet, `A${totalsRow}`, 'المجموع', 's')
     if (idx > 0) {
       const putSum = (col: string) => {
