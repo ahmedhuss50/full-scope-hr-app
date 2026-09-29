@@ -142,10 +142,9 @@ export function RegaReportsCard({
             onChange={(e) => {
               const y = Number(e.target.value)
               setYear(y)
-              if (!useCustomRange) {
-                const r = quarterDateRange(y, quarter)
-                setFromDate(r.from); setToDate(r.to)
-              }
+              // Sync the buyers-register date inputs to the newly-picked quarter
+              const r = quarterDateRange(y, quarter)
+              setFromDate(r.from); setToDate(r.to)
             }}
             className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-mono text-slate-900"
             dir="ltr"
@@ -157,10 +156,8 @@ export function RegaReportsCard({
             onChange={(e) => {
               const qq = e.target.value as QCode
               setQuarter(qq)
-              if (!useCustomRange) {
-                const r = quarterDateRange(year, qq)
-                setFromDate(r.from); setToDate(r.to)
-              }
+              const r = quarterDateRange(year, qq)
+              setFromDate(r.from); setToDate(r.to)
             }}
             className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-semibold text-slate-900"
           >
