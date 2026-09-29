@@ -908,7 +908,8 @@ export async function generateBuyersRegisterXlsx(
     rows: Array<{ u: typeof units[number]; s: SaleLite; label: string }>,
     noteText: string,
     noteRowGapFromTotals = 3,  // resold sheet has note at row 11 (gap=4), cancelled at row 10 (gap=3)
-  ) {
+    templateNoteRow = 10,      // row in template where the merged green note bar lives
+  ): { totalsRow: number; noteRow: number } {
     // Snapshot row 2 for formula/style replication then clear rows 2..200.
     const templateRow2 = new Map<number, TemplateCellSnapshot>()
     for (let c = 0; c < 26; c++) {
@@ -1024,10 +1025,27 @@ export async function generateBuyersRegisterXlsx(
     if (noteRow - 1 > range.e.r) range.e.r = noteRow - 1
     if (25 > range.e.c) range.e.c = 25 // cover column Z
     sheet['!ref'] = XLSX.utils.encode_range(range)
+
+    // ─── Move merged ranges to the new totals + note positions ────────
+    // Template ships with A7:S7 merged (totals label bar) and A10:Z10 or
+    // A11:Z11 merged (green note bar). When we slide these rows down, the
+    // merges must slide too — otherwise the labels appear as single-column
+    // cells and the green fill lands on empty rows.
+    if (!sheet['!merges']) sheet['!merges'] = []
+    sheet['!merges'] = sheet['!merges'].filter((m) => {
+      const r = m.s.r + 1
+      return r !== 7 && r !== templateNoteRow // drop template's fixed positions
+    })
+    // Totals row merge: A{totalsRow}:S{totalsRow} (matches template's A7:S7)
+    sheet['!merges'].push({ s: { r: totalsRow - 1, c: 0 }, e: { r: totalsRow - 1, c: 18 } })
+    // Note row merge: A{noteRow}:Z{noteRow} (matches template's A10:Z10)
+    sheet['!merges'].push({ s: { r: noteRow - 1, c: 0 }, e: { r: noteRow - 1, c: 25 } })
+
+    return { totalsRow, noteRow }
   }
 
   // Sheet 4 (المنجزة) — 31 columns, distinct layout.
-  function populateCompletedSheet(sheet: XLSX.WorkSheet, rows: Array<{ u: typeof units[number]; s: SaleLite }>) {
+  function populateCompletedSheet(sheet: XLSX.WorkSheet, rows: Array<{ u: typeof units[number]; s: SaleLite }>): { totalsRow: number; noteRow: number } {
     const templateRow2 = new Map<number, TemplateCellSnapshot>()
     for (let c = 0; c < 31; c++) {
       const addr = XLSX.utils.encode_cell({ r: 1, c })
@@ -1140,6 +1158,17 @@ export async function generateBuyersRegisterXlsx(
     if (noteRow - 1 > range.e.r) range.e.r = noteRow - 1
     if (30 > range.e.c) range.e.c = 30 // cover column AE
     sheet['!ref'] = XLSX.utils.encode_range(range)
+
+    // ─── Move merges (totals A7:U7 + note A10:AE10) to new positions ──
+    if (!sheet['!merges']) sheet['!merges'] = []
+    sheet['!merges'] = sheet['!merges'].filter((m) => {
+      const r = m.s.r + 1
+      return r !== 7 && r !== 10
+    })
+    sheet['!merges'].push({ s: { r: totalsRow - 1, c: 0 }, e: { r: totalsRow - 1, c: 20 } })  // A:U
+    sheet['!merges'].push({ s: { r: noteRow   - 1, c: 0 }, e: { r: noteRow   - 1, c: 30 } })  // A:AE
+
+    return { totalsRow, noteRow }
   }
 
   // Bucket units for the three secondary sheets.
@@ -1188,9 +1217,13 @@ export async function generateBuyersRegisterXlsx(
   const wsResold    = wb.Sheets['الوحدات الملغية والمعاد بيعها']
   const wsCancelled = wb.Sheets['الوحدات الملغية']
   const wsCompleted = wb.Sheets['الوحدات المنجزة']
-  if (wsResold)    populateShortSheet(wsResold,    resoldRows,        SHORT_SHEET_NOTE_RESOLD,    4)
-  if (wsCancelled) populateShortSheet(wsCancelled, cancelledOnlyRows, SHORT_SHEET_NOTE_CANCELLED, 3)
-  if (wsCompleted) populateCompletedSheet(wsCompleted, completedRows)
+  // Populate + capture the resolved totals/note row positions for each
+  // secondary sheet. These positions vary with buyer count, so we pass
+  // them into mergeIntoTemplate's styleFromTemplateRowBySheet so the
+  // right rows get the template's dark-teal totals + green note styling.
+  const resoldPos    = wsResold    ? populateShortSheet(wsResold,    resoldRows,        SHORT_SHEET_NOTE_RESOLD,    4, 11) : null
+  const cancelledPos = wsCancelled ? populateShortSheet(wsCancelled, cancelledOnlyRows, SHORT_SHEET_NOTE_CANCELLED, 3, 10) : null
+  const completedPos = wsCompleted ? populateCompletedSheet(wsCompleted, completedRows) : null
 
   // Write to buffer, then post-process. Order:
   //   1. SheetJS raw output — has our cell VALUES + formulas but styles are
@@ -1234,12 +1267,24 @@ export async function generateBuyersRegisterXlsx(
       'الوحدات المنجزة':               [2,3,4,5,6,7,8,9,10,11],
     },
     // Apply template's row-13 totals styling (dark teal fill + bold white
-    // text) to whichever row we placed the new totals row on. Without this
-    // the new totals row inherits data-row styling from the reference row
-    // (row 8) — same as a normal buyer row, missing the distinctive
-    // totals-row visual.
+    // text) to whichever row we placed the new totals row on. For the 3
+    // secondary sheets, transfer BOTH the totals-row styling (template row
+    // 7, dark teal) AND the note-row styling (template row 10 or 11, green
+    // bar) to whichever rows we moved them to.
     styleFromTemplateRowBySheet: {
       'سجل المشترين وحدات قائمة': { fromTemplateRow: 13, toOutputRow: newTotalsRow },
+      ...(resoldPos ? { 'الوحدات الملغية والمعاد بيعها': [
+        { fromTemplateRow: 7,  toOutputRow: resoldPos.totalsRow },
+        { fromTemplateRow: 11, toOutputRow: resoldPos.noteRow   },
+      ] } : {}),
+      ...(cancelledPos ? { 'الوحدات الملغية': [
+        { fromTemplateRow: 7,  toOutputRow: cancelledPos.totalsRow },
+        { fromTemplateRow: 10, toOutputRow: cancelledPos.noteRow   },
+      ] } : {}),
+      ...(completedPos ? { 'الوحدات المنجزة': [
+        { fromTemplateRow: 7,  toOutputRow: completedPos.totalsRow },
+        { fromTemplateRow: 10, toOutputRow: completedPos.noteRow   },
+      ] } : {}),
     },
   })
   // Suppress unused-import warning when the flag is off.
