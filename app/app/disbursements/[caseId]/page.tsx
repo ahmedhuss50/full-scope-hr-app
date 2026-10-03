@@ -21,6 +21,7 @@ import { DeliverDocumentButton } from './DeliverDocumentButton'
 import { AttachmentsSection } from './AttachmentsSection'
 import { CaseVendorPicker, type VendorPickerOption } from './CaseVendorPicker'
 import { CaseDisbursementTypePicker, type DisbursementTypeOption } from './CaseDisbursementTypePicker'
+import { CaseAdvanceDeduction } from './CaseAdvanceDeduction'
 import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 import { fmtDate, fmtDateTime } from '@/lib/dsb/datetime'
 import { resolveEffectiveTemplateId } from '@/lib/dsb/effective-checklist'
@@ -74,6 +75,8 @@ type CaseRow = {
   voucher_number_text: string | null
   voucher_date: string | null
   amount_sar: number | null
+  advance_deduction_sar: number | null
+  advance_deduction_pct: number | null
   delivery_date: string | null
   status: CaseStatus
   notes: string | null
@@ -150,7 +153,7 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
 
   const { data: kaseRaw } = await svc
     .from('dsb_cases')
-    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, vendor_id, is_downpayment, unit_id, sale_id, contract_id,
+    .select(`id, case_number, voucher_number_text, voucher_date, amount_sar, delivery_date, status, notes, submitted_at, signed_at, signed_document_path, signed_document_filename, extracted_fields, extraction_cost_usd, extraction_model, extracted_at, delivered_at, delivered_by_user_id, recipient_name, recipient_id_number, recipient_phone, recipient_notes, delivery_notes, paid_from_account_id, paid_at, vendor_id, is_downpayment, advance_deduction_sar, advance_deduction_pct, unit_id, sale_id, contract_id,
              project:dsb_projects!dsb_cases_project_id_fkey(id, code, name_ar, assigned_employee_id, bank_name, bank_account, bank_iban),
              developer:dsb_developers!dsb_cases_developer_id_fkey(id, company_name_ar, bank_name, bank_account, bank_iban),
              paid_from:dsb_project_accounts!dsb_cases_paid_from_account_id_fkey(id, label, bank_name, account_number, iban),
@@ -250,6 +253,36 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
         return a.label.localeCompare(b.label, 'ar')
       })
   } catch { /* tenants table read failure — leave options empty */ }
+
+  // ---- Advance (دفعة مقدمة) balance for the voucher's vendor ----
+  // Computes: totalAdvance = sum of amount_sar on all is_downpayment=true
+  //           cases for this (vendor, project), minus deductions on
+  //           other invoice cases. Lets the case page show a banner when
+  //           an open advance balance exists on the vendor.
+  let advanceTotalForVendor = 0
+  let advanceOtherDeductions = 0
+  if (kase.vendor_id && project?.id && !kase.is_downpayment) {
+    const [downRes, dedRes] = await Promise.all([
+      svc.from('dsb_cases')
+        .select('amount_sar')
+        .eq('tenant_id', tenantId)
+        .eq('project_id', project.id)
+        .eq('vendor_id', kase.vendor_id)
+        .eq('is_downpayment', true),
+      svc.from('dsb_cases')
+        .select('advance_deduction_sar')
+        .eq('tenant_id', tenantId)
+        .eq('project_id', project.id)
+        .eq('vendor_id', kase.vendor_id)
+        .eq('is_downpayment', false)
+        .neq('id', kase.id)
+        .gt('advance_deduction_sar', 0),
+    ])
+    advanceTotalForVendor = ((downRes.data ?? []) as Array<{ amount_sar: number | null }>)
+      .reduce((s, r) => s + Number(r.amount_sar ?? 0), 0)
+    advanceOtherDeductions = ((dedRes.data ?? []) as Array<{ advance_deduction_sar: number | null }>)
+      .reduce((s, r) => s + Number(r.advance_deduction_sar ?? 0), 0)
+  }
 
   // ---- Reassignment dropdowns (developer + project) ----
   // Feeds the "wrong client/project picked at upload" fix in EditCaseInfo.
@@ -579,6 +612,22 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                   options={disbursementTypeOptions}
                   canEdit={canWrite}
                 />
+                {/* خصم دفعة مقدمة — only shows when:
+                    1) vendor is assigned on this case, 2) case is NOT itself
+                    a downpayment voucher, 3) vendor has an open advance
+                    balance OR this case already has a deduction. */}
+                {kase.vendor_id && !kase.is_downpayment &&
+                  (advanceTotalForVendor - advanceOtherDeductions > 0 || Number(kase.advance_deduction_sar ?? 0) > 0) && (
+                  <CaseAdvanceDeduction
+                    caseId={kase.id}
+                    invoiceAmount={Number(kase.amount_sar ?? 0)}
+                    totalAdvance={advanceTotalForVendor}
+                    otherDeductions={advanceOtherDeductions}
+                    initialDeduction={Number(kase.advance_deduction_sar ?? 0)}
+                    initialPct={kase.advance_deduction_pct}
+                    canEdit={canWrite}
+                  />
+                )}
               </div>
             )}
             {kase.notes && (
