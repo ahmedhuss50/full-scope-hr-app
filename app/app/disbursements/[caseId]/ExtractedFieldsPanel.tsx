@@ -36,6 +36,10 @@ export type ExtractedFields = {
   beneficiary_account_number?: string | null
   beneficiary_bank_name?: string | null
   beneficiary_iban?: string | null
+  /** Set by the cascading BeneficiaryPicker when the user picks from a
+      known entity list. Nulled when the free-text name is edited. */
+  beneficiary_type?: 'buyer' | 'developer' | 'vendor' | 'gov' | 'bank' | 'other' | null
+  beneficiary_ref_id?: string | null
   invoice_number?: string | null
   invoice_date?: string | null
   invoice_total_sar?: number | null
