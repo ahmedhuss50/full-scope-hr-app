@@ -399,7 +399,9 @@ export async function createSinglePayment(
     description: (input.description ?? '').trim() || null,
     reference_number: (input.reference_number ?? '').trim() || null,
     payment_method: (input.payment_method ?? '').trim() || null,
-    contract_number: cn || null,
+    // NOTE: dsb_payments has no contract_number column — only sale_id (set
+    // above via resolution). Trying to write contract_number here throws
+    // "Could not find the 'contract_number' column of 'dsb_payments'".
   }
   const { data, error } = await svc.from('dsb_payments').insert(row).select('id').single()
   if (error) return { ok: false, error: error.message }
