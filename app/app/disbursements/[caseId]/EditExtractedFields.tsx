@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { updateExtractedFields } from './actions'
 import type { ExtractedFields, DisbursementTypeCode } from './ExtractedFieldsPanel'
+import { BeneficiaryPicker, type BeneficiaryOption, type BeneficiaryType } from './BeneficiaryPicker'
 
 const DTYPE_OPTIONS: Array<{ code: DisbursementTypeCode; label: string }> = [
   { code: 'admin_marketing',       label: 'مصاريف إدارية وتسويقية' },
@@ -46,10 +47,18 @@ export function EditExtractedFields({
   caseId,
   extracted,
   canEdit,
+  beneficiaryBuyers = [],
+  beneficiaryDeveloper = null,
+  beneficiaryVendors = [],
 }: {
   caseId: string
   extracted: ExtractedFields | null
   canEdit: boolean
+  /** Options for the cascading beneficiary picker (type → specific entity).
+      All optional — picker degrades gracefully if a list is empty. */
+  beneficiaryBuyers?: BeneficiaryOption[]
+  beneficiaryDeveloper?: BeneficiaryOption | null
+  beneficiaryVendors?: BeneficiaryOption[]
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -63,6 +72,12 @@ export function EditExtractedFields({
   const [developerEn, setDeveloperEn] = useState((e.developer_name_en as string | null) ?? '')
   const [beneficiaryAr, setBeneficiaryAr] = useState((e.beneficiary_name_ar as string | null) ?? '')
   const [beneficiaryEn, setBeneficiaryEn] = useState((e.beneficiary_name_en as string | null) ?? '')
+  const [beneficiaryType,  setBeneficiaryType]  = useState<BeneficiaryType | null>(
+    (e.beneficiary_type  as BeneficiaryType | null) ?? null,
+  )
+  const [beneficiaryRefId, setBeneficiaryRefId] = useState<string | null>(
+    (e.beneficiary_ref_id as string | null) ?? null,
+  )
   const [beneAccount, setBeneAccount] = useState((e.beneficiary_account_number as string | null) ?? '')
   const [beneBank, setBeneBank] = useState((e.beneficiary_bank_name as string | null) ?? '')
   const [beneIban, setBeneIban] = useState((e.beneficiary_iban as string | null) ?? '')
@@ -221,6 +236,8 @@ export function EditExtractedFields({
       developer_name_en: developerEn.trim() || null,
       beneficiary_name_ar: beneficiaryAr.trim() || null,
       beneficiary_name_en: beneficiaryEn.trim() || null,
+      beneficiary_type:    beneficiaryType  || null,
+      beneficiary_ref_id:  beneficiaryRefId || null,
       beneficiary_account_number: beneAccount.trim() || null,
       beneficiary_bank_name: beneBank.trim() || null,
       beneficiary_iban: beneIban.trim() || null,
@@ -304,9 +321,27 @@ export function EditExtractedFields({
           <label className={labelCls}>اسم المطور (English)</label>
           <input className={inputCls} value={developerEn} onChange={(ev) => setDeveloperEn(ev.target.value)} disabled={saving} dir="ltr" />
         </div>
+        <div className="sm:col-span-2">
+          <BeneficiaryPicker
+            buyers={beneficiaryBuyers}
+            developer={beneficiaryDeveloper}
+            vendors={beneficiaryVendors}
+            disabled={saving}
+            onPick={(name_ar, type, ref_id) => {
+              setBeneficiaryAr(name_ar)
+              setBeneficiaryType(type)
+              setBeneficiaryRefId(ref_id)
+            }}
+          />
+        </div>
         <div>
           <label className={labelCls}>اسم المستفيد (عربي)</label>
-          <input className={inputCls} value={beneficiaryAr} onChange={(ev) => setBeneficiaryAr(ev.target.value)} disabled={saving} />
+          <input className={inputCls} value={beneficiaryAr} onChange={(ev) => { setBeneficiaryAr(ev.target.value); setBeneficiaryType(null); setBeneficiaryRefId(null) }} disabled={saving} />
+          {beneficiaryType && (
+            <div className="text-[10px] text-indigo-700 mt-1">
+              مرتبط بـ {beneficiaryType === 'buyer' ? 'مشتري' : beneficiaryType === 'developer' ? 'مطور' : beneficiaryType === 'vendor' ? 'مقاول/مورد' : beneficiaryType === 'gov' ? 'جهة حكومية' : 'بنك'}
+            </div>
+          )}
         </div>
         <div>
           <label className={labelCls}>اسم المستفيد (English)</label>

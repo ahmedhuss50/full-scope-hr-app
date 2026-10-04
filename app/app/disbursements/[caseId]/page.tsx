@@ -254,6 +254,41 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
       })
   } catch { /* tenants table read failure — leave options empty */ }
 
+  // ---- Options for the cascading beneficiary picker (type → entity) ----
+  // Feeds the «اسم المستفيد» cascade in EditExtractedFields. The user
+  // picks a type (buyer / developer / vendor / gov / bank / other), then
+  // a dropdown of the entities of that type on this project. Picking
+  // auto-fills the Arabic name and stores beneficiary_type + ref_id in
+  // extracted_fields so later reports can group by beneficiary type.
+  let beneficiaryBuyers: Array<{ type: 'buyer'; id: string; name_ar: string; hint?: string }> = []
+  let beneficiaryVendors: Array<{ type: 'vendor'; id: string; name_ar: string; hint?: string }> = []
+  let beneficiaryDeveloper: { type: 'developer'; id: string; name_ar: string } | null = null
+  if (project?.id) {
+    const [buyerRes, vendorRes] = await Promise.all([
+      svc.from('dsb_unit_sales')
+        .select('id, buyer_name_ar, contract_number, unit_id')
+        .eq('tenant_id', tenantId)
+        .in('unit_id', (await svc.from('dsb_project_units').select('id').eq('tenant_id', tenantId).eq('project_id', project.id)).data?.map((u: { id: string }) => u.id) ?? [])
+        .not('buyer_name_ar', 'is', null)
+        .order('buyer_name_ar', { ascending: true })
+        .limit(500),
+      svc.from('dsb_vendors')
+        .select('id, contact_name_ar, service_category')
+        .eq('tenant_id', tenantId)
+        .eq('project_id', project.id)
+        .order('contact_name_ar', { ascending: true }),
+    ])
+    beneficiaryBuyers = ((buyerRes.data ?? []) as Array<{ id: string; buyer_name_ar: string; contract_number: string | null }>)
+      .filter((b) => b.buyer_name_ar && b.buyer_name_ar.trim())
+      .map((b) => ({ type: 'buyer' as const, id: b.id, name_ar: b.buyer_name_ar, hint: b.contract_number ?? undefined }))
+    beneficiaryVendors = ((vendorRes.data ?? []) as Array<{ id: string; contact_name_ar: string | null; service_category: string | null }>)
+      .filter((v) => v.contact_name_ar && v.contact_name_ar.trim())
+      .map((v) => ({ type: 'vendor' as const, id: v.id, name_ar: v.contact_name_ar!, hint: v.service_category ?? undefined }))
+  }
+  if (developer) {
+    beneficiaryDeveloper = { type: 'developer', id: developer.id, name_ar: developer.company_name_ar }
+  }
+
   // ---- Advance (دفعة مقدمة) balance for the voucher's vendor ----
   // Computes: totalAdvance = sum of amount_sar on all is_downpayment=true
   //           cases for this (vendor, project), minus deductions on
@@ -966,6 +1001,9 @@ export default async function DisbursementCaseDetailPage({ params }: { params: {
                 caseId={kase.id}
                 extracted={extractedFields}
                 canEdit={canWrite}
+                beneficiaryBuyers={beneficiaryBuyers}
+                beneficiaryDeveloper={beneficiaryDeveloper}
+                beneficiaryVendors={beneficiaryVendors}
               />
             </div>
             <ExtractedFieldsPanel
