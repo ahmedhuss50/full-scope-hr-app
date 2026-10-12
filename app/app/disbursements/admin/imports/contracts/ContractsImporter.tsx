@@ -83,33 +83,37 @@ export function ContractsImporter({
    * contract state — honoring that automatically lets staff upload the
    * whole workbook in one shot and get status right per sheet.
    */
-  function sheetNameToStatus(name: string): 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null {
-    // Normalize: trim + collapse whitespace + strip Arabic tatweel + lowercase
-    // tolerance for latin chars (sheet-name labels sometimes carry invisible
-    // characters from Excel re-saves). Match by substring so an exact-string
-    // regression from a renamed sheet still classifies correctly.
+  function sheetNameToStatus(name: string): 'active' | 'cancelled' | null {
+    // Simplified 2-state model (per user decision): ONLY the pure «الملغية»
+    // sheet classifies as cancelled. Everything else — قائمة / المعاد بيعها
+    // / المنجزة / أي شيت ثاني — تعتبر ساري.
+    //
+    // Order matters: we have to RULE OUT 'المعاد بيعها' before matching
+    // 'الملغية' alone, otherwise «الملغية والمعاد بيعها» would get
+    // misread as cancelled instead of active.
     const n = (name ?? '')
-      .replace(/ـ/g, '')        // tatweel
+      .replace(/ـ/g, '')          // tatweel
       .replace(/[​-‏]/g, '') // zero-width spaces + bidi marks
       .replace(/\s+/g, ' ')
       .trim()
-    // Order matters: 'الملغية والمعاد بيعها' must match BEFORE the plain
-    // 'الملغية' substring (otherwise cancelled_resold rows get misread as
-    // cancelled).
-    if (n.includes('الملغية والمعاد بيعها') || n.includes('ملغية ومعاد بيعها')) return 'cancelled_resold'
-    if (n.includes('المعاد بيعها') || n.includes('معاد بيعها')) return 'cancelled_resold'
-    if (n.includes('المنجزة') || n.includes('منجزة')) return 'completed'
-    if (n.includes('الملغية') || n.includes('ملغية') || n.includes('ملغاة') || n.includes('الملغاة')) return 'cancelled'
-    if (n.includes('قائمة') || n.includes('سجل المشترين')) return 'active'
+    const mentionsResold = n.includes('معاد بيعها') || n.includes('المعاد بيعها')
+    const mentionsCancelled =
+      n.includes('الملغية') || n.includes('ملغية') ||
+      n.includes('ملغاة')   || n.includes('الملغاة')
+    if (mentionsCancelled && !mentionsResold) return 'cancelled'
+    // قائمة / منجزة / المعاد بيعها / سجل المشترين / etc.
+    if (
+      n.includes('قائمة') || n.includes('سجل المشترين') ||
+      n.includes('منجزة') || n.includes('المنجزة') ||
+      mentionsResold
+    ) return 'active'
     return null  // unknown sheet → fall back to batchStatus
   }
 
   /** Human-readable Arabic label for a sale status. Reused in the preview chip. */
-  function labelForStatus(s: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null): string {
+  function labelForStatus(s: 'active' | 'cancelled' | null): string {
     if (s === 'cancelled') return 'ملغي'
-    if (s === 'cancelled_resold') return 'ملغي ومعاد بيعه'
-    if (s === 'completed') return 'منجز'
-    if (s === 'active') return 'ساري'
+    if (s === 'active')    return 'ساري'
     return 'ساري (افتراضي)'
   }
 
@@ -128,10 +132,11 @@ export function ContractsImporter({
     //   3. User's batch toggle (ساري/ملغي)
     // Each layer gets its own tag in the preview chip so the operator can see
     // where the status came from.
-    const aiStatus = (aiSaleStatus ?? null) as
-      | 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
+    // 2-state model: AI already returns only {active, cancelled, null} after
+    // the prompt + server-side normalization in /api/dsb-units-map-columns.
+    const aiStatus = (aiSaleStatus ?? null) as 'active' | 'cancelled' | null
     const regexStatus = sheetNameToStatus(sheetName)
-    const effectiveStatus =
+    const effectiveStatus: 'active' | 'cancelled' =
       aiStatus ?? regexStatus ?? batchStatus
     const statusSource: 'ai' | 'name' | 'fallback' =
       aiStatus ? 'ai' : regexStatus ? 'name' : 'fallback'

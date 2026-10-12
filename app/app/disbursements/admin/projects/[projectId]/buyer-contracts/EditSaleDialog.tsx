@@ -4,7 +4,14 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Pencil, X, Loader2 } from 'lucide-react'
 
-type SaleStatus = 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
+// Simplified 2-state model (per user decision). Older rows may still carry
+// 'cancelled_resold' or 'completed' in the DB — we normalize those to 'active'
+// when seeding the dropdown so staff can only pick between ساري / ملغي.
+type SaleStatus = 'active' | 'cancelled'
+type RawSaleStatus = SaleStatus | 'cancelled_resold' | 'completed'
+function normalizeStatus(s: RawSaleStatus | null | undefined): SaleStatus {
+  return s === 'cancelled' ? 'cancelled' : 'active'
+}
 
 type ExistingSale = {
   id: string
@@ -21,7 +28,7 @@ type ExistingSale = {
   sale_date: string | null
   delivery_date: string | null
   price_before_tax_sar: number | null
-  sale_status: SaleStatus | null
+  sale_status: RawSaleStatus | null
 }
 
 /**
@@ -55,7 +62,7 @@ export function EditSaleDialog({
   const [saleDate, setSaleDate]             = useState(sale.sale_date?.slice(0, 10) ?? '')
   const [deliveryDate, setDeliveryDate]     = useState(sale.delivery_date?.slice(0, 10) ?? '')
   const [priceBeforeTax, setPriceBeforeTax] = useState(sale.price_before_tax_sar != null ? String(sale.price_before_tax_sar) : '')
-  const [saleStatus, setSaleStatus]         = useState<SaleStatus>(sale.sale_status ?? 'active')
+  const [saleStatus, setSaleStatus]         = useState<SaleStatus>(normalizeStatus(sale.sale_status))
 
   async function onSave() {
     setError(null); setBusy(true)
@@ -142,10 +149,8 @@ export function EditSaleDialog({
               onChange={(e) => setSaleStatus(e.target.value as SaleStatus)}
               disabled={busy}
             >
-              <option value="active">ساري (نشط)</option>
+              <option value="active">ساري</option>
               <option value="cancelled">ملغي</option>
-              <option value="cancelled_resold">ملغي ومعاد بيعه</option>
-              <option value="completed">منجز</option>
             </select>
           </div>
 

@@ -187,35 +187,33 @@ Rules:
 - "المبلغ المتبقي من قيمة الوحدة" is remaining_amount_sar (per-unit balance), NOT total_collected_*.
 - Percentage columns (retention_percentage, collection_percentage) may appear as "0.35" or "35%" — return the column index either way; we normalize on the server.
 
-SALE-STATUS CLASSIFICATION — classify the sheet into one of four buyer-register
-states based on the sheet name AND the data it carries. This mirrors the REGA
-buyers-register convention where each sheet tracks a specific contract state.
+SALE-STATUS CLASSIFICATION — classify the sheet into one of TWO states:
 
 Values:
-  - "active"            → live/current contracts ("سجل المشترين وحدات قائمة",
-                          "الوحدات القائمة", "العقود السارية", "الربع الأول",
-                          anything a REGA reviewer would call still-selling)
-  - "cancelled"         → cancelled contracts, not resold ("الوحدات الملغية",
-                          "الملغاة", "العقود الملغية")
-  - "cancelled_resold"  → cancelled then resold to a new buyer ("الوحدات
-                          الملغية والمعاد بيعها", "ملغي ومعاد بيعه", "resold")
-  - "completed"         → delivered + fully-paid units ("الوحدات المنجزة",
-                          "المسلمة", "المكتملة", "منجز")
-  - null                → cannot classify (sheet is a summary tab, lookup
-                          table, totals, or unrelated — e.g. "Sheet1" with
-                          only numbers, "ملخص", "بيانات المشروع")
+  - "cancelled"  → cancelled contracts, NOT resold. Only when the sheet is
+                   specifically about cancelled contracts that haven't been
+                   re-sold ("الوحدات الملغية", "الملغاة", "العقود الملغية").
+  - "active"     → everything else: live contracts, completed/delivered
+                   contracts, cancelled-and-resold contracts, buyer records,
+                   quarterly registers. ("سجل المشترين", "الوحدات القائمة",
+                   "الوحدات المنجزة", "الوحدات الملغية والمعاد بيعها").
+  - null         → cannot classify (sheet is a summary tab, lookup table,
+                   totals, or unrelated — e.g. "Sheet1" with only numbers,
+                   "ملخص", "بيانات المشروع").
 
 Rules:
-- Match sheet name first (strongest signal). Headers like "نوع المشتري
-  (الغاء/إعادة بيع)" or a "تاريخ الإلغاء" column also hint at cancelled rows.
-- Prefer "cancelled_resold" over "cancelled" when BOTH keywords appear.
+- Match sheet name first (strongest signal).
+- A sheet whose name mentions "المعاد بيعها" / "ومعاد بيعه" is "active"
+  (NOT "cancelled") even when "الملغية" also appears — the resold rows are
+  back on the active register.
+- A sheet whose name mentions "المنجزة" / "منجز" is "active".
 - A sheet with no contract-like data (no اسم العميل / رقم العقد / unit_number)
   returns null — don't guess from an ambiguous name alone.
 
 Return ONE JSON object only — no prose, no fences:
 {
   "header_row_index": int,
-  "sale_status": "active" | "cancelled" | "cancelled_resold" | "completed" | null,
+  "sale_status": "active" | "cancelled" | null,
   "columns": {
     "unit_number": int|null, "block_number": int|null, "zone_number": int|null,
     "unit_type": int|null, "area_m2": int|null, "district": int|null,
@@ -470,15 +468,18 @@ export async function POST(req: Request) {
     return jsonError('Claude did not return a valid header_row_index', 502)
   }
 
-  // Normalize sale_status — accept only the known values, otherwise null.
-  const SALE_STATUS_VALUES = ['active', 'cancelled', 'cancelled_resold', 'completed'] as const
-  type SaleStatus = (typeof SALE_STATUS_VALUES)[number]
+  // 2-state model (per user decision): accept only 'active' / 'cancelled'.
+  // Any legacy wider value (e.g. 'completed', 'cancelled_resold') from an
+  // older prompt collapses to 'active' so downstream consumers never see
+  // the extra states.
   const rawStatus =
     typeof p.sale_status === 'string' ? p.sale_status.trim().toLowerCase() : ''
-  const saleStatus: SaleStatus | null =
-    (SALE_STATUS_VALUES as readonly string[]).includes(rawStatus)
-      ? (rawStatus as SaleStatus)
-      : null
+  const saleStatus: 'active' | 'cancelled' | null =
+    rawStatus === 'cancelled'                 ? 'cancelled'
+    : rawStatus === 'active'                  ? 'active'
+    : rawStatus === 'completed'               ? 'active'
+    : rawStatus === 'cancelled_resold'        ? 'active'
+    : null
 
   const columnsIn = (p.columns && typeof p.columns === 'object' ? p.columns : {}) as Record<
     string,

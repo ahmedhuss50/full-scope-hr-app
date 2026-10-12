@@ -84,7 +84,7 @@ export interface BaseImporterProps<TPayload> {
     projectRaw: string
     /** AI-classified sale status for the sheet (contracts importer uses it
      *  as the primary source of truth; other importers can ignore). */
-    aiSaleStatus?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
+    aiSaleStatus?: 'active' | 'cancelled' | null
   }) => Omit<BaseParsedRow<TPayload>, 'matchedProjectId' | 'selectedProjectId' | 'unitExists'> | null
 
   /** Called with the set of (project_id, unit_number) pairs the user is about
