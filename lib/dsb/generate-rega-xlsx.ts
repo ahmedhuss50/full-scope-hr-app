@@ -712,21 +712,21 @@ export async function generateBuyersRegisterXlsx(
     if (deliveryDate) setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 23 }), deliveryDate, 'd')
 
     // Cumulative collected — the 2026 template splits into two cells:
-    //   AA (col 26): total collected WITHOUT VAT (excluding the 5%)
-    //   AB (col 27): total collected WITH VAT (as paid by buyer)
-    // Our dsb_payments store the actual paid amount which already includes
-    // VAT. To split we divide by 1.05 for the excl-VAT figure.
+    //   AA (col 26): total collected WITHOUT VAT (as entered)
+    //   AB (col 27): total collected WITH VAT (5% added)
+    // Our dsb_payments store the actual amount WITHOUT VAT (per client
+    // workflow). AA shows the as-stored figure; AB adds a 5% VAT uplift.
     let saleTotalCollected = 0
     if (s?.id) {
       const perYear = yearlyBySale.get(s.id)
       if (perYear) for (const amount of perYear.values()) saleTotalCollected += amount
     }
     if (saleTotalCollected > 0) {
-      // AA = collected excl VAT (divided out of the 5%). Rounded to 2dp.
-      const excl = Math.round((saleTotalCollected / 1.05) * 100) / 100
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 26 }), excl, 'n')
-      // AB = collected incl VAT (as-paid).
-      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 27 }), saleTotalCollected, 'n')
+      // AA = collected without VAT (as paid, raw value).
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 26 }), saleTotalCollected, 'n')
+      // AB = collected with VAT (× 1.05, rounded to 2dp).
+      const incl = Math.round(saleTotalCollected * 1.05 * 100) / 100
+      setCell(ws, XLSX.utils.encode_cell({ r: r0, c: 27 }), incl, 'n')
     }
     // Payment count (col 29 = AD — "رقم الدفعة" / count of payments so far)
     if (s?.id) {
@@ -1133,8 +1133,9 @@ export async function generateBuyersRegisterXlsx(
       // Y = 5% VAT (formula), Z = price+VAT (formula) — replicated below
       const collected = totalCollectedForSale(s.id)
       if (collected > 0) {
-        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 26 }), collected, 'n')  // AA — بدون ضريبة
-        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 27 }), collected, 'n')  // AB — شامل الضريبة
+        // AA = raw (no VAT), AB = +5% VAT uplift.
+        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 26 }), collected, 'n')
+        setCell(sheet, XLSX.utils.encode_cell({ r: r0, c: 27 }), Math.round(collected * 1.05 * 100) / 100, 'n')
       }
       // AC / AD / AE are formulas — replicate below.
       for (const [col, snap] of templateRow2) {
