@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { BaseImporter, type BaseImporterProps } from '../_shared/BaseImporter'
 import {
   CONTRACT_FIELDS,
@@ -66,6 +67,13 @@ export function ContractsImporter({
   // عقود ومشترين" shortcut.
   lockedProjectId?: string | null
 }) {
+  // Status for the whole batch — stamped on every row's sale_status.
+  // 'active' (ساري) is the default and matches the pre-existing behaviour.
+  // 'cancelled' (ملغي) is for importing a batch of historical cancelled
+  // contracts (lets the user bring 'الوحدات الملغية' into the system
+  // without going row-by-row).
+  const [batchStatus, setBatchStatus] = useState<'active' | 'cancelled'>('active')
+
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
     rowValues,
     columns,
@@ -186,7 +194,34 @@ export function ContractsImporter({
   }
 
   return (
-    <BaseImporter<Payload>
+    <div className="space-y-4" dir="rtl">
+      {/* Batch status toggle — applies to every row in the file. The default
+          'ساري' preserves the old behaviour; switch to 'ملغي' when importing
+          a batch of historical cancelled contracts. */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
+        <div className="text-sm font-bold text-slate-800">حالة العقود في هذا الملف</div>
+        <div className="flex gap-4 flex-wrap">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="batchStatus" checked={batchStatus === 'active'}
+              onChange={() => setBatchStatus('active')}
+              className="h-4 w-4 text-teal-600 focus:ring-teal-500" />
+            <span className="text-sm font-semibold text-slate-800">ساري (نشط)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="batchStatus" checked={batchStatus === 'cancelled'}
+              onChange={() => setBatchStatus('cancelled')}
+              className="h-4 w-4 text-rose-600 focus:ring-rose-500" />
+            <span className="text-sm font-semibold text-slate-800">ملغي</span>
+          </label>
+        </div>
+        <div className="text-[11px] text-slate-600 leading-relaxed">
+          {batchStatus === 'active'
+            ? 'ستُحفظ كل الصفوف كعقود نشطة. إذا كانت الوحدة فيها عقد نشط حالياً، يُحدَّث.'
+            : '⚠ ستُحفظ كل الصفوف كعقود ملغية. العقد النشط الحالي (إن وجد) لن يُلمس — يُضاف صف ملغي جديد بجانبه.'}
+        </div>
+      </div>
+
+      <BaseImporter<Payload>
       title="ملف Excel: عقود ومشترين"
       subtitle="ارفع ملف يحتوي على (رقم الوحدة، رقم العقد، اسم المشتري، الجوال، تاريخ البيع، السعر، التمويل، حالة التسليم، اسم المشروع). يستخرج النظام أيضًا الأعمدة المالية إذا كانت متوفرة، ويربط العقود بالوحدات تلقائيًا بالذكاء الاصطناعي."
       projects={projects}
@@ -194,7 +229,7 @@ export function ContractsImporter({
       relevantFields={CONTRACT_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
       parseRow={parseRow}
-      attachProjectId={(payload, projectId) => ({ ...payload, project_id: projectId })}
+      attachProjectId={(payload, projectId) => ({ ...payload, project_id: projectId, sale_status: batchStatus })}
       checkExisting={async (pairs) => {
         const res = await checkExistingUnits({ pairs })
         const set = new Set<string>()
@@ -256,5 +291,6 @@ export function ContractsImporter({
         }
       }}
     />
+    </div>
   )
 }

@@ -1059,6 +1059,12 @@ export interface BulkImportContractRow {
   buyer_nationality?: string | null
   buyer_residency_type?: string | null
   buyer_phone?: string | null
+
+  /** Optional per-row status override. When omitted → defaults to 'active'
+      (keeping the old behaviour). The ContractsImporter UI lets the user
+      pick ساري ('active') or ملغي ('cancelled') for the whole batch; the
+      choice gets stamped on every row here. */
+  sale_status?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
 }
 
 export async function bulkImportContractsFromRows(
@@ -1225,8 +1231,13 @@ export async function bulkImportContractsFromRows(
     const patch = salePatchFromRow(row)
     // Always keep unit_number_raw fresh in case it changes.
     patch.unit_number_raw = row.unit_number || null
+    // Status chosen by the user in the importer UI (ساري/ملغي). When the
+    // row says 'cancelled' we DON'T update the existing active sale (that
+    // would overwrite a live contract) — we insert a new cancelled row
+    // alongside it. Only 'active' takes the update path.
+    const status = row.sale_status || 'active'
     const existingSale = activeSaleByUnitId.get(unitId)
-    if (existingSale) {
+    if (existingSale && status === 'active') {
       toUpdate.push({ saleId: existingSale.id, patch })
     } else {
       toInsert.push({
@@ -1235,7 +1246,7 @@ export async function bulkImportContractsFromRows(
         unit_id: unitId,
         unit_number_raw: row.unit_number || null,
         sale_count: 1,
-        sale_status: 'active',
+        sale_status: status,
         ...patch,
       })
     }
@@ -1250,7 +1261,7 @@ export async function bulkImportContractsFromRows(
       unit_id: null,
       unit_number_raw: row.unit_number || null,
       sale_count: 1,
-      sale_status: 'active',
+      sale_status: row.sale_status || 'active',
       ...salePatchFromRow(row),
     })
   }
