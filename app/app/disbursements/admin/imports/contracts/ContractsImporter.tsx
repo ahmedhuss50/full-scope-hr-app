@@ -155,8 +155,15 @@ export function ContractsImporter({
     const price_before_tax_sar = toNumOrNull(at(columns.price_before_tax_sar))
     const vat_sar = toNumOrNull(at(columns.vat_sar))
     const price_with_vat_sar = toNumOrNull(at(columns.price_with_vat_sar))
-    const delivery_status = toDeliveryStatus(at(columns.delivery_status))
-    const delivery_date = toIsoDateOrNull(at(columns.delivery_date))
+    // Delivery status is ALWAYS forced to 'pending' (غير مسلمة) at upload
+    // time — the operator confirms per-contract after import via the
+    // delivery toggle on عقود المشترين. Reading the Excel column caused
+    // false positives (templates ship with "مسلمة" placeholder text).
+    // Original parse kept here commented for reference:
+    //   const delivery_status = toDeliveryStatus(at(columns.delivery_status))
+    //   const delivery_date = toIsoDateOrNull(at(columns.delivery_date))
+    const delivery_status = 'pending' as ReturnType<typeof toDeliveryStatus>
+    const delivery_date: string | null = null
 
     // Financial tracking (055).
     const retention_percentage = toPercentOrNull(at(columns.retention_percentage))
