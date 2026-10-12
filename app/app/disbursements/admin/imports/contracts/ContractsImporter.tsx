@@ -37,6 +37,10 @@ const PREVIEW_COLUMNS = [
   { key: 'price', label: 'السعر' },
   { key: 'financing', label: 'التمويل' },
   { key: 'delivery', label: 'التسليم' },
+  // Status chip — shows the auto-detected sale_status so the operator can
+  // spot a wrong classification (sheet-name mismatch, fallback kicking in)
+  // BEFORE committing the upload.
+  { key: 'sale_status_label', label: 'الحالة' },
 ] as const
 
 /** Render a percentage value stored as either 0.35 or 35 → "35%". */
@@ -80,12 +84,33 @@ export function ContractsImporter({
    * whole workbook in one shot and get status right per sheet.
    */
   function sheetNameToStatus(name: string): 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null {
-    const n = (name ?? '').trim()
-    if (n === 'سجل المشترين وحدات قائمة') return 'active'
-    if (n === 'الوحدات الملغية والمعاد بيعها') return 'cancelled_resold'
-    if (n === 'الوحدات الملغية') return 'cancelled'
-    if (n === 'الوحدات المنجزة') return 'completed'
+    // Normalize: trim + collapse whitespace + strip Arabic tatweel + lowercase
+    // tolerance for latin chars (sheet-name labels sometimes carry invisible
+    // characters from Excel re-saves). Match by substring so an exact-string
+    // regression from a renamed sheet still classifies correctly.
+    const n = (name ?? '')
+      .replace(/ـ/g, '')        // tatweel
+      .replace(/[​-‏]/g, '') // zero-width spaces + bidi marks
+      .replace(/\s+/g, ' ')
+      .trim()
+    // Order matters: 'الملغية والمعاد بيعها' must match BEFORE the plain
+    // 'الملغية' substring (otherwise cancelled_resold rows get misread as
+    // cancelled).
+    if (n.includes('الملغية والمعاد بيعها') || n.includes('ملغية ومعاد بيعها')) return 'cancelled_resold'
+    if (n.includes('المعاد بيعها') || n.includes('معاد بيعها')) return 'cancelled_resold'
+    if (n.includes('المنجزة') || n.includes('منجزة')) return 'completed'
+    if (n.includes('الملغية') || n.includes('ملغية') || n.includes('ملغاة') || n.includes('الملغاة')) return 'cancelled'
+    if (n.includes('قائمة') || n.includes('سجل المشترين')) return 'active'
     return null  // unknown sheet → fall back to batchStatus
+  }
+
+  /** Human-readable Arabic label for a sale status. Reused in the preview chip. */
+  function labelForStatus(s: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null): string {
+    if (s === 'cancelled') return 'ملغي'
+    if (s === 'cancelled_resold') return 'ملغي ومعاد بيعه'
+    if (s === 'completed') return 'منجز'
+    if (s === 'active') return 'ساري'
+    return 'ساري (افتراضي)'
   }
 
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
@@ -175,6 +200,15 @@ export function ContractsImporter({
             : delivery_status === 'pending'
             ? 'قيد التسليم'
             : delivery_status ?? '—',
+        // Status chip — reflects the auto-detected sale_status for this row.
+        // Prefixed with ⚠ when we fell back to the batch toggle (unknown
+        // sheet) so the operator notices and can adjust before saving.
+        sale_status_label: (() => {
+          const detected = sheetNameToStatus(sheetName)
+          const effective = detected ?? batchStatus
+          const prefix = detected ? '' : '⚠ '
+          return `${prefix}${labelForStatus(effective)}`
+        })(),
       },
       payload: {
         project_id: '',
