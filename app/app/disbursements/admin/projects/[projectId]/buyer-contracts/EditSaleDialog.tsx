@@ -21,6 +21,7 @@ type ExistingSale = {
   sale_date: string | null
   delivery_date: string | null
   price_before_tax_sar: number | null
+  sale_status: SaleStatus | null
 }
 
 /**
@@ -54,6 +55,7 @@ export function EditSaleDialog({
   const [saleDate, setSaleDate]             = useState(sale.sale_date?.slice(0, 10) ?? '')
   const [deliveryDate, setDeliveryDate]     = useState(sale.delivery_date?.slice(0, 10) ?? '')
   const [priceBeforeTax, setPriceBeforeTax] = useState(sale.price_before_tax_sar != null ? String(sale.price_before_tax_sar) : '')
+  const [saleStatus, setSaleStatus]         = useState<SaleStatus>(sale.sale_status ?? 'active')
 
   async function onSave() {
     setError(null); setBusy(true)
@@ -77,6 +79,7 @@ export function EditSaleDialog({
             delivery_date: deliveryDate || null,
             delivery_status: deliveryDate ? 'delivered' : null,
             price_before_tax_sar: priceBeforeTax ? Number(priceBeforeTax) : null,
+            sale_status: saleStatus,
           },
         }),
       })
@@ -124,6 +127,25 @@ export function EditSaleDialog({
               {units.map((u) => (
                 <option key={u.id} value={u.id}>{u.unit_number}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Contract status — lets staff flip a sale between active/cancelled
+              / cancelled-resold / completed per contract. Changing from
+              'active' to 'cancelled' moves the row to «الوحدات الملغية» tab
+              on the next buyers-register export. */}
+          <div>
+            <label className={labelCls}>حالة العقد</label>
+            <select
+              className={inputCls}
+              value={saleStatus}
+              onChange={(e) => setSaleStatus(e.target.value as SaleStatus)}
+              disabled={busy}
+            >
+              <option value="active">ساري (نشط)</option>
+              <option value="cancelled">ملغي</option>
+              <option value="cancelled_resold">ملغي ومعاد بيعه</option>
+              <option value="completed">منجز</option>
             </select>
           </div>
 

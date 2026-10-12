@@ -475,6 +475,7 @@ export default async function ProjectBuyerContractsPage({
                                 sale_date: s.sale_date,
                                 delivery_date: s.delivery_date,
                                 price_before_tax_sar: s.price_before_tax_sar,
+                                sale_status: (s.sale_status as 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null) ?? null,
                               }}
                               units={unitPickerOptions}
                             />

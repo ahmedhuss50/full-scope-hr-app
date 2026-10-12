@@ -67,12 +67,26 @@ export function ContractsImporter({
   // عقود ومشترين" shortcut.
   lockedProjectId?: string | null
 }) {
-  // Status for the whole batch — stamped on every row's sale_status.
-  // 'active' (ساري) is the default and matches the pre-existing behaviour.
-  // 'cancelled' (ملغي) is for importing a batch of historical cancelled
-  // contracts (lets the user bring 'الوحدات الملغية' into the system
-  // without going row-by-row).
+  // Fallback status when the Excel sheet name doesn't match any known
+  // REGA buyers-register sheet. Sheet-based auto-detection takes priority
+  // (see sheetNameToStatus below) — this toggle only kicks in for custom
+  // single-sheet exports.
   const [batchStatus, setBatchStatus] = useState<'active' | 'cancelled'>('active')
+
+  /**
+   * Auto-detect sale_status from the Excel sheet name. The REGA buyers
+   * register template ships with 4 sheets, each tracking a specific
+   * contract state — honoring that automatically lets staff upload the
+   * whole workbook in one shot and get status right per sheet.
+   */
+  function sheetNameToStatus(name: string): 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null {
+    const n = (name ?? '').trim()
+    if (n === 'سجل المشترين وحدات قائمة') return 'active'
+    if (n === 'الوحدات الملغية والمعاد بيعها') return 'cancelled_resold'
+    if (n === 'الوحدات الملغية') return 'cancelled'
+    if (n === 'الوحدات المنجزة') return 'completed'
+    return null  // unknown sheet → fall back to batchStatus
+  }
 
   const parseRow: BaseImporterProps<Payload>['parseRow'] = ({
     rowValues,
@@ -189,6 +203,10 @@ export function ContractsImporter({
         remaining_amount_sar,
         collection_percentage,
         price_per_meter_sar,
+        // Auto-detect from sheet name (REGA template convention). If the
+        // sheet isn't a recognized REGA sheet, attachProjectId below will
+        // stamp the batchStatus fallback.
+        sale_status: sheetNameToStatus(sheetName),
       },
     }
   }
@@ -199,13 +217,19 @@ export function ContractsImporter({
           'ساري' preserves the old behaviour; switch to 'ملغي' when importing
           a batch of historical cancelled contracts. */}
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
-        <div className="text-sm font-bold text-slate-800">حالة العقود في هذا الملف</div>
+        <div className="text-sm font-bold text-slate-800">حالة العقود (للصفحات غير المعروفة)</div>
+        <div className="text-[11px] text-slate-600 leading-relaxed">
+          إذا كان الملف من قالب REGA (أسماء الصفحات: «سجل المشترين وحدات
+          قائمة» / «الوحدات الملغية» / «الوحدات الملغية والمعاد بيعها» /
+          «الوحدات المنجزة»)، النظام يحدد الحالة تلقائياً من اسم الصفحة
+          لكل صف. هذا الخيار يُستخدم فقط للصفحات بأسماء غير معروفة.
+        </div>
         <div className="flex gap-4 flex-wrap">
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input type="radio" name="batchStatus" checked={batchStatus === 'active'}
               onChange={() => setBatchStatus('active')}
               className="h-4 w-4 text-teal-600 focus:ring-teal-500" />
-            <span className="text-sm font-semibold text-slate-800">ساري (نشط)</span>
+            <span className="text-sm font-semibold text-slate-800">ساري (افتراضي)</span>
           </label>
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input type="radio" name="batchStatus" checked={batchStatus === 'cancelled'}
@@ -213,11 +237,6 @@ export function ContractsImporter({
               className="h-4 w-4 text-rose-600 focus:ring-rose-500" />
             <span className="text-sm font-semibold text-slate-800">ملغي</span>
           </label>
-        </div>
-        <div className="text-[11px] text-slate-600 leading-relaxed">
-          {batchStatus === 'active'
-            ? 'ستُحفظ كل الصفوف كعقود نشطة. إذا كانت الوحدة فيها عقد نشط حالياً، يُحدَّث.'
-            : '⚠ ستُحفظ كل الصفوف كعقود ملغية. العقد النشط الحالي (إن وجد) لن يُلمس — يُضاف صف ملغي جديد بجانبه.'}
         </div>
       </div>
 
@@ -229,7 +248,14 @@ export function ContractsImporter({
       relevantFields={CONTRACT_FIELDS as readonly MappingField[]}
       previewColumns={PREVIEW_COLUMNS}
       parseRow={parseRow}
-      attachProjectId={(payload, projectId) => ({ ...payload, project_id: projectId, sale_status: batchStatus })}
+      attachProjectId={(payload, projectId) => ({
+        ...payload,
+        project_id: projectId,
+        // Keep auto-detected sheet status if present; else fall back to the
+        // batch toggle. Lets the user upload multi-sheet REGA workbooks
+        // (sheet dictates status) OR a single-sheet file (toggle dictates).
+        sale_status: payload.sale_status ?? batchStatus,
+      })}
       checkExisting={async (pairs) => {
         const res = await checkExistingUnits({ pairs })
         const set = new Set<string>()
