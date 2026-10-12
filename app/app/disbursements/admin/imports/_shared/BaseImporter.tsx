@@ -82,6 +82,9 @@ export interface BaseImporterProps<TPayload> {
     sheetName: string
     rowNumber: number
     projectRaw: string
+    /** AI-classified sale status for the sheet (contracts importer uses it
+     *  as the primary source of truth; other importers can ignore). */
+    aiSaleStatus?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
   }) => Omit<BaseParsedRow<TPayload>, 'matchedProjectId' | 'selectedProjectId' | 'unitExists'> | null
 
   /** Called with the set of (project_id, unit_number) pairs the user is about
@@ -301,6 +304,7 @@ export function BaseImporter<TPayload>(props: BaseImporterProps<TPayload>) {
             sheetName: pack.name,
             rowNumber: i + 1,
             projectRaw,
+            aiSaleStatus: pack.mapping.sale_status ?? null,
           })
           if (!built) {
             droppedInSheet++

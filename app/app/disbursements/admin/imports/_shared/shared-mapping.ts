@@ -82,6 +82,11 @@ export interface ColumnMap {
   header_row_index: number
   columns: Record<MappingField, number | null>
   notes_ar: string
+  /** AI-classified sale status for the whole sheet. Added so the contracts
+   *  importer can trust Claude's classification over fragile regex when the
+   *  sheet name is non-standard. Null = Claude couldn't classify (sheet is a
+   *  summary tab, lookup, or unrelated). */
+  sale_status?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
 }
 
 // Arabic labels shown in mapping strip + manual mapping UI.

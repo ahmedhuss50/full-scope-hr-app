@@ -187,9 +187,35 @@ Rules:
 - "المبلغ المتبقي من قيمة الوحدة" is remaining_amount_sar (per-unit balance), NOT total_collected_*.
 - Percentage columns (retention_percentage, collection_percentage) may appear as "0.35" or "35%" — return the column index either way; we normalize on the server.
 
+SALE-STATUS CLASSIFICATION — classify the sheet into one of four buyer-register
+states based on the sheet name AND the data it carries. This mirrors the REGA
+buyers-register convention where each sheet tracks a specific contract state.
+
+Values:
+  - "active"            → live/current contracts ("سجل المشترين وحدات قائمة",
+                          "الوحدات القائمة", "العقود السارية", "الربع الأول",
+                          anything a REGA reviewer would call still-selling)
+  - "cancelled"         → cancelled contracts, not resold ("الوحدات الملغية",
+                          "الملغاة", "العقود الملغية")
+  - "cancelled_resold"  → cancelled then resold to a new buyer ("الوحدات
+                          الملغية والمعاد بيعها", "ملغي ومعاد بيعه", "resold")
+  - "completed"         → delivered + fully-paid units ("الوحدات المنجزة",
+                          "المسلمة", "المكتملة", "منجز")
+  - null                → cannot classify (sheet is a summary tab, lookup
+                          table, totals, or unrelated — e.g. "Sheet1" with
+                          only numbers, "ملخص", "بيانات المشروع")
+
+Rules:
+- Match sheet name first (strongest signal). Headers like "نوع المشتري
+  (الغاء/إعادة بيع)" or a "تاريخ الإلغاء" column also hint at cancelled rows.
+- Prefer "cancelled_resold" over "cancelled" when BOTH keywords appear.
+- A sheet with no contract-like data (no اسم العميل / رقم العقد / unit_number)
+  returns null — don't guess from an ambiguous name alone.
+
 Return ONE JSON object only — no prose, no fences:
 {
   "header_row_index": int,
+  "sale_status": "active" | "cancelled" | "cancelled_resold" | "completed" | null,
   "columns": {
     "unit_number": int|null, "block_number": int|null, "zone_number": int|null,
     "unit_type": int|null, "area_m2": int|null, "district": int|null,
@@ -436,12 +462,23 @@ export async function POST(req: Request) {
     header_row_index?: unknown
     columns?: unknown
     notes_ar?: unknown
+    sale_status?: unknown
   }
 
   const headerRow = toIndexOrNull(p.header_row_index)
   if (headerRow === null) {
     return jsonError('Claude did not return a valid header_row_index', 502)
   }
+
+  // Normalize sale_status — accept only the known values, otherwise null.
+  const SALE_STATUS_VALUES = ['active', 'cancelled', 'cancelled_resold', 'completed'] as const
+  type SaleStatus = (typeof SALE_STATUS_VALUES)[number]
+  const rawStatus =
+    typeof p.sale_status === 'string' ? p.sale_status.trim().toLowerCase() : ''
+  const saleStatus: SaleStatus | null =
+    (SALE_STATUS_VALUES as readonly string[]).includes(rawStatus)
+      ? (rawStatus as SaleStatus)
+      : null
 
   const columnsIn = (p.columns && typeof p.columns === 'object' ? p.columns : {}) as Record<
     string,
@@ -474,6 +511,7 @@ export async function POST(req: Request) {
       header_row_index: headerRow,
       columns: columnsOut,
       notes_ar: notesAr,
+      sale_status: saleStatus,
     },
     cost_usd: Number(costUsd.toFixed(6)),
     model: usedModel,

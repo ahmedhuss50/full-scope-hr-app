@@ -119,7 +119,22 @@ export function ContractsImporter({
     sheetName,
     rowNumber,
     projectRaw,
+    aiSaleStatus,
   }) => {
+    // Status resolution order (most-trusted first):
+    //   1. AI classification for the whole sheet (sent by the mapping call)
+    //   2. Local regex over the sheet name (fast, no cost — catches the
+    //      standard REGA templates even if the API hiccups)
+    //   3. User's batch toggle (ساري/ملغي)
+    // Each layer gets its own tag in the preview chip so the operator can see
+    // where the status came from.
+    const aiStatus = (aiSaleStatus ?? null) as
+      | 'active' | 'cancelled' | 'cancelled_resold' | 'completed' | null
+    const regexStatus = sheetNameToStatus(sheetName)
+    const effectiveStatus =
+      aiStatus ?? regexStatus ?? batchStatus
+    const statusSource: 'ai' | 'name' | 'fallback' =
+      aiStatus ? 'ai' : regexStatus ? 'name' : 'fallback'
     const at = (idx: number | null): unknown =>
       idx === null || idx < 0 ? '' : rowValues[idx]
 
@@ -200,14 +215,17 @@ export function ContractsImporter({
             : delivery_status === 'pending'
             ? 'قيد التسليم'
             : delivery_status ?? '—',
-        // Status chip — reflects the auto-detected sale_status for this row.
-        // Prefixed with ⚠ when we fell back to the batch toggle (unknown
-        // sheet) so the operator notices and can adjust before saving.
+        // Status chip — reflects the resolved sale_status with its source:
+        //   🤖 = classified by AI (most trusted; the API saw the whole sheet)
+        //   📄 = matched by sheet name alone (local regex)
+        //   ⚠  = fell back to the batch toggle (sheet unknown + AI couldn't
+        //         classify — review this before saving)
         sale_status_label: (() => {
-          const detected = sheetNameToStatus(sheetName)
-          const effective = detected ?? batchStatus
-          const prefix = detected ? '' : '⚠ '
-          return `${prefix}${labelForStatus(effective)}`
+          const icon =
+            statusSource === 'ai' ? '🤖 '
+            : statusSource === 'name' ? '📄 '
+            : '⚠ '
+          return `${icon}${labelForStatus(effectiveStatus)}`
         })(),
       },
       payload: {
@@ -237,10 +255,10 @@ export function ContractsImporter({
         remaining_amount_sar,
         collection_percentage,
         price_per_meter_sar,
-        // Auto-detect from sheet name (REGA template convention). If the
-        // sheet isn't a recognized REGA sheet, attachProjectId below will
-        // stamp the batchStatus fallback.
-        sale_status: sheetNameToStatus(sheetName),
+        // Resolved sale_status (AI → sheet-name regex → batch toggle, see
+        // above). attachProjectId still runs a final defensive fallback in
+        // case this ever comes through as null.
+        sale_status: aiStatus ?? regexStatus,
       },
     }
   }
