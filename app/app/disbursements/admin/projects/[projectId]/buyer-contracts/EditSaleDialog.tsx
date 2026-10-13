@@ -73,6 +73,8 @@ export function EditSaleDialog({
         body: JSON.stringify({
           id: sale.id,
           patch: {
+            // Unit link — editable inline. Empty string = detach.
+            unit_id: unitId || null,
             buyer_name_ar: buyerName.trim() || null,
             buyer_id_type: buyerIdType || null,
             buyer_id_number: buyerIdNumber.trim() || null,
@@ -127,14 +129,27 @@ export function EditSaleDialog({
           </button>
         </div>
         <div className="p-4 space-y-3">
+          {/* Unit link — editable inline (previously locked, required a
+              separate "ربط" button). Owner can now attach/change/detach the
+              unit directly from this dialog. The patch below sends
+              `unit_id: unitId || null`, letting the server action re-link
+              the sale to any unit in the same project or clear the link. */}
           <div>
             <label className={labelCls}>الوحدة</label>
-            <select className={inputCls} value={unitId} onChange={(e) => setUnitId(e.target.value)} disabled title="تعديل الربط من زر الربط أعلى الصفحة">
+            <select
+              className={inputCls}
+              value={unitId}
+              onChange={(e) => setUnitId(e.target.value)}
+              disabled={busy}
+            >
               <option value="">— بدون ربط —</option>
               {units.map((u) => (
                 <option key={u.id} value={u.id}>{u.unit_number}</option>
               ))}
             </select>
+            <div className="text-[11px] text-slate-500 mt-1">
+              يمكنك اختيار وحدة من المشروع أو إبقاء العقد بدون ربط.
+            </div>
           </div>
 
           {/* Contract status — lets staff flip a sale between active/cancelled

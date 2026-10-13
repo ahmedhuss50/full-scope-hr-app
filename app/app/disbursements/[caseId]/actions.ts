@@ -366,7 +366,11 @@ export async function approveCase(input: { case_id: string }): Promise<{ ok: tru
     }
     nextStatus = 'with_supervisor'
   } else if (kase.status === 'with_supervisor') {
-    if (caller.dsbRole !== 'supervisor') return { ok: false, error: 'لا تملك صلاحية الاعتماد.' }
+    // Owner can also approve at the supervisor stage (per-request: owner has
+    // full control over every action in the system).
+    if (!caller.dsbRole || !['supervisor', 'owner'].includes(caller.dsbRole)) {
+      return { ok: false, error: 'لا تملك صلاحية الاعتماد.' }
+    }
     nextStatus = 'with_owner'
   } else {
     return { ok: false, error: 'حالة الطلب الحالية لا تسمح بالاعتماد.' }

@@ -1383,6 +1383,10 @@ export async function updateUnit(
 export interface UpdateSaleInput {
   id: string
   patch: {
+    /** Re-link the sale to a different unit, or detach it (null). The server
+     *  validates the target unit belongs to the same tenant and that no
+     *  other active sale exists on it when this sale is itself active. */
+    unit_id?: string | null
     sale_status?: 'active' | 'cancelled' | 'cancelled_resold' | 'completed'
     sale_count?: number | null
     buyer_name_ar?: string | null
@@ -1439,10 +1443,53 @@ export async function updateSale(
   }
   if (Object.keys(patch).length === 0) return { ok: true }
 
+  // Guard: if re-linking to a different unit, verify the target unit exists
+  // in the same tenant AND (when this sale is or will be active) that the
+  // target unit has no other active sale already. This mirrors the
+  // active-uniqueness rule the importer enforces.
+  if ('unit_id' in patch) {
+    const newUnitId = patch.unit_id as string | null
+    if (newUnitId) {
+      const { data: targetUnit } = await svc
+        .from('dsb_project_units')
+        .select('id, tenant_id')
+        .eq('id', newUnitId)
+        .maybeSingle()
+      if (!targetUnit || (targetUnit as { tenant_id: string }).tenant_id !== caller.tenantId) {
+        return { ok: false, error: 'الوحدة المختارة غير موجودة أو لا تخص المستأجر.' }
+      }
+      // If this sale is active (or being flipped to active in this same
+      // patch), reject if another active sale occupies the target unit.
+      const willBeActive =
+        patch.sale_status === 'active' ||
+        (patch.sale_status === undefined && /* current status */ true)
+      if (willBeActive) {
+        const { count: othersActive } = await svc
+          .from('dsb_unit_sales')
+          .select('id', { count: 'exact', head: true })
+          .eq('tenant_id', caller.tenantId)
+          .eq('unit_id', newUnitId)
+          .eq('sale_status', 'active')
+          .neq('id', input.id)
+        if ((othersActive ?? 0) > 0) {
+          // Non-fatal when the status is explicitly non-active in this patch.
+          if (patch.sale_status && patch.sale_status !== 'active') {
+            // allow — this sale is cancelled, no conflict
+          } else {
+            return {
+              ok: false,
+              error: 'لا يمكن ربط العقد بهذه الوحدة: يوجد عقد ساري آخر عليها.',
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Guard: if flipping this sale to 'active', reject if another sale on
   // the same unit is already active. Mirrors the check in createSingleSale.
   if (patch.sale_status === 'active') {
-    const uId = (sale as { unit_id: string | null }).unit_id
+    const uId = (patch.unit_id as string | null | undefined) ?? (sale as { unit_id: string | null }).unit_id
     if (uId) {
       const { count: activeOthers } = await svc
         .from('dsb_unit_sales')

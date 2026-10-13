@@ -116,7 +116,10 @@ export async function sendWelcomeEmailToAllStaff(): Promise<
     .from('users')
     .select('id, email, full_name, dsb_role')
     .eq('tenant_id', caller.tenantId)
-    .in('dsb_role', ['employee', 'supervisor', 'owner'])
+    // Include every staff role so bulk welcome also reaches viewer/deliverer
+    // accounts added in migration 105. 'developer' is the external-tenant
+    // portal account type — keep it OUT of staff bulk emails.
+    .in('dsb_role', ['employee', 'supervisor', 'owner', 'viewer', 'deliverer'])
     .neq('id', caller.userId)
 
   const staff = (rows ?? []) as Array<{
