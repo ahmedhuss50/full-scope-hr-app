@@ -410,3 +410,71 @@ export async function createSinglePayment(
   revalidatePath(`/app/disbursements/admin/projects/${projectId}`)
   return { ok: true, id: (data as { id: string }).id }
 }
+
+// ---------------------------------------------------------------------------
+// deletePayment — owner only. Removes a single dsb_payments row.
+//
+// • Split children (rows with split_source_payment_id) are refused — they're
+//   regenerated from the parent on every distribution pass, so deleting one
+//   directly would reappear. Instead, delete the PARENT and the FK cascade
+//   (dsb_payments.split_source_payment_id references dsb_payments(id)
+//   ON DELETE CASCADE) wipes the children automatically.
+// • Deleting a parent that has split children triggers that cascade, so the
+//   caller doesn't need to clean them up manually.
+// ---------------------------------------------------------------------------
+
+export async function deletePayment(
+  input: { payment_id: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email)
+    .maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط بمستأجر.' }
+  if ((profile.dsb_role as string | null) !== 'owner') {
+    return { ok: false, error: 'هذا الإجراء متاح للمدير فقط.' }
+  }
+  const tenantId = profile.tenant_id as string
+
+  const paymentId = (input.payment_id ?? '').trim()
+  if (!paymentId) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const { data: existing } = await svc
+    .from('dsb_payments')
+    .select('id, tenant_id, project_id, split_source_payment_id')
+    .eq('id', paymentId)
+    .maybeSingle()
+  if (!existing || (existing as { tenant_id: string }).tenant_id !== tenantId) {
+    return { ok: false, error: 'الدفعة غير موجودة.' }
+  }
+  const ex = existing as {
+    id: string
+    project_id: string | null
+    split_source_payment_id: string | null
+  }
+  if (ex.split_source_payment_id) {
+    return {
+      ok: false,
+      error: 'صف توزيع تلقائي — احذف الأصل بدلاً من ذلك والفروع ستُحذف تلقائيًا.',
+    }
+  }
+
+  const { error } = await svc
+    .from('dsb_payments')
+    .delete()
+    .eq('id', paymentId)
+    .eq('tenant_id', tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/lists/payments')
+  if (ex.project_id) {
+    revalidatePath(`/app/disbursements/admin/projects/${ex.project_id}`)
+  }
+  return { ok: true }
+}

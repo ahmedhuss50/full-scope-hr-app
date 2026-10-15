@@ -2,8 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Pencil } from 'lucide-react'
-import { updatePayment } from './actions'
+import { Pencil, Trash2 } from 'lucide-react'
+import { updatePayment, deletePayment } from './actions'
 
 // ---------------------------------------------------------------------------
 // EditPaymentRow
@@ -173,18 +173,44 @@ export function EditPaymentRow({
               <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              title="تعديل الدفعة"
-              aria-expanded={open}
-              className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 transition"
-            >
-              <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                title="تعديل الدفعة"
+                aria-expanded={open}
+                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 transition"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  if (!confirm(`حذف هذه الدفعة بتاريخ ${payment.payment_date}؟ لا يمكن التراجع.`)) return
+                  setError(null)
+                  setSaving(true)
+                  const res = await deletePayment({ payment_id: payment.id })
+                  setSaving(false)
+                  if (!res.ok) { setError(res.error); return }
+                  startTransition(() => router.refresh())
+                }}
+                title="حذف الدفعة"
+                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-slate-200 bg-white text-red-600 hover:bg-red-50 hover:border-red-200 transition disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
           )}
         </td>
       </tr>
+      {error && !open && (
+        <tr>
+          <td colSpan={totalCols} className="px-3 py-1 bg-red-50 text-xs text-red-700 border-t border-red-200">
+            {error}
+          </td>
+        </tr>
+      )}
       {open && !payment.is_split_child && (
         <tr>
           <td colSpan={totalCols} className="p-0 bg-teal-50/20">
