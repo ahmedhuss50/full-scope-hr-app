@@ -17,6 +17,7 @@ import { ArrowRight, ArrowLeft, Building2, FileText, Wallet, Activity, User2, Ph
 import { VendorContractsList } from '../VendorContractsList'
 import { VendorDownpaymentEditor } from '../VendorDownpaymentEditor'
 import type { VendorContractRow } from '../page'
+import { DeleteCaseButton } from '../../../../_shared/EntityDeleteButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -271,6 +272,9 @@ export default async function VendorDetailPage({
                       <th className="px-3 py-2 text-xs font-bold text-slate-600">المبلغ</th>
                       <th className="px-3 py-2 text-xs font-bold text-slate-600">الحالة</th>
                       <th className="px-3 py-2 text-xs font-bold text-slate-600">تاريخ السداد</th>
+                      {dsbRole === 'owner' && (
+                        <th className="px-3 py-2 text-xs font-bold text-slate-600">إجراءات</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -292,6 +296,11 @@ export default async function VendorDetailPage({
                         <td className="px-3 py-2 text-xs font-mono">{fmtSar(c.amount_sar)}</td>
                         <td className="px-3 py-2"><CaseStatusPill s={c.status} /></td>
                         <td className="px-3 py-2 text-xs text-slate-500">{c.paid_at ?? '—'}</td>
+                        {dsbRole === 'owner' && (
+                          <td className="px-3 py-2">
+                            <DeleteCaseButton caseId={c.id} caseNumber={c.case_number} />
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

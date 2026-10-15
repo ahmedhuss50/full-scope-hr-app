@@ -4,6 +4,7 @@ import { ArrowRight, FileSignature } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeliveryToggle } from '../../projects/[projectId]/buyer-contracts/DeliveryToggle'
+import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 
 /**
  * Tenant-wide CONTRACTS list.
@@ -320,6 +321,7 @@ export default async function ContractsListPage({
                   <Th># الأقساط</Th>
                   <Th>النسبة المستقطعة</Th>
                   <Th>نسبة التحصيل</Th>
+                  <Th>إجراءات</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -382,6 +384,9 @@ export default async function ContractsListPage({
                       </Td>
                       <Td className="font-mono text-xs" dir="ltr">
                         {fmtPct(s.collection_percentage)}
+                      </Td>
+                      <Td>
+                        <DeleteSaleButton saleId={s.id} label={s.contract_number ?? s.buyer_name_ar ?? 'بدون رقم'} />
                       </Td>
                     </tr>
                   )

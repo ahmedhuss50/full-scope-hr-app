@@ -6,6 +6,7 @@ import { fmtDateTime } from '@/lib/dsb/datetime'
 import { CaseFiltersBar } from '../CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
 import { EditRowButton, type EditableCase, type DeveloperOpt, type ProjectOpt, type VendorOpt, type AccountOpt } from './EditRowButton'
+import { DeleteCaseButton } from '../admin/_shared/EntityDeleteButtons'
 import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
@@ -367,6 +368,9 @@ export default async function DeliveryDocumentsRegisterPage({
                             <Download className="w-3.5 h-3.5" aria-hidden="true" />
                             تنزيل
                           </Link>
+                          {dsbRole === 'owner' && (
+                            <DeleteCaseButton caseId={c.id} caseNumber={c.case_number} />
+                          )}
                         </div>
                       </Td>
                     </tr>

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { ArrowRight, Users } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
+import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 
 /**
  * Tenant-wide BUYERS list.
@@ -284,6 +285,7 @@ export default async function BuyersListPage({
                     }}
                   />
                   <Th>حالة البيع</Th>
+                  <Th>إجراءات</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -329,6 +331,9 @@ export default async function BuyersListPage({
                         >
                           {status.label}
                         </span>
+                      </Td>
+                      <Td>
+                        <DeleteSaleButton saleId={s.id} label={s.buyer_name_ar ?? 'بدون اسم'} />
                       </Td>
                     </tr>
                   )

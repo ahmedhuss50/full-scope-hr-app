@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { ArrowRight, Building2 } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
+import { DeleteUnitButton } from '../../_shared/EntityDeleteButtons'
 
 /**
  * Tenant-wide UNITS list.
@@ -260,6 +261,7 @@ export default async function UnitsListPage({
                     basePath={basePath}
                     otherParams={{ q, project: projectFilter }}
                   />
+                  <Th>إجراءات</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -294,6 +296,9 @@ export default async function UnitsListPage({
                       <Td className="max-w-[14rem] truncate">{devName}</Td>
                       <Td className="font-mono text-xs">
                         {salesCount > 0 ? salesCount : '—'}
+                      </Td>
+                      <Td>
+                        <DeleteUnitButton unitId={u.id} unitNumber={u.unit_number} />
                       </Td>
                     </tr>
                   )
