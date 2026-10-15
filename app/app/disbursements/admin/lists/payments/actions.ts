@@ -461,18 +461,23 @@ export async function bulkDeletePayments(
   }
   if (safeIds.length === 0) return { ok: true, deleted: 0 }
 
-  const { error } = await svc
+  const { data: deleted, error } = await svc
     .from('dsb_payments')
     .delete()
     .in('id', safeIds)
     .eq('tenant_id', tenantId)
+    .select('id')
   if (error) return { ok: false, error: error.message }
 
   revalidatePath('/app/disbursements/admin/lists/payments')
   for (const pid of projectIds) {
     revalidatePath(`/app/disbursements/admin/projects/${pid}`)
   }
-  return { ok: true, deleted: safeIds.length }
+  const actuallyDeleted = (deleted ?? []).length
+  if (actuallyDeleted === 0 && safeIds.length > 0) {
+    return { ok: false, error: 'لم تُحذف أي دفعة. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
+  }
+  return { ok: true, deleted: actuallyDeleted }
 }
 
 // ---------------------------------------------------------------------------

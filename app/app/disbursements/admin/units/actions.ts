@@ -1702,11 +1702,16 @@ export async function bulkDeleteSales(
   }
   if (safeIds.length === 0) return { ok: true, deleted: 0 }
 
-  const { error } = await svc
+  // Chain .select() so we get the ACTUAL rows removed back from Postgres —
+  // reporting safeIds.length without this would overstate the count whenever
+  // the DELETE silently matched fewer rows (RLS, FK triggers, etc.) and
+  // mask the bug of 'ok but nothing deleted'.
+  const { data: deleted, error } = await svc
     .from('dsb_unit_sales')
     .delete()
     .in('id', safeIds)
     .eq('tenant_id', caller.tenantId)
+    .select('id')
   if (error) return { ok: false, error: error.message }
 
   for (const pid of projectIds) {
@@ -1715,7 +1720,11 @@ export async function bulkDeleteSales(
   }
   revalidatePath('/app/disbursements/admin/lists/buyers')
   revalidatePath('/app/disbursements/admin/lists/contracts')
-  return { ok: true, deleted: safeIds.length }
+  const actuallyDeleted = (deleted ?? []).length
+  if (actuallyDeleted === 0 && safeIds.length > 0) {
+    return { ok: false, error: 'لم يُحذف أي صف. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
+  }
+  return { ok: true, deleted: actuallyDeleted }
 }
 
 /**
@@ -1758,11 +1767,12 @@ export async function bulkDeleteUnits(
     .in('unit_id', safeIds)
     .eq('extraction_status', 'matched')
 
-  const { error } = await svc
+  const { data: deleted, error } = await svc
     .from('dsb_project_units')
     .delete()
     .in('id', safeIds)
     .eq('tenant_id', caller.tenantId)
+    .select('id')
   if (error) return { ok: false, error: error.message }
 
   for (const pid of projectIds) {
@@ -1770,7 +1780,11 @@ export async function bulkDeleteUnits(
     revalidatePath(`/app/disbursements/admin/projects/${pid}/units`)
   }
   revalidatePath('/app/disbursements/admin/lists/units')
-  return { ok: true, deleted: safeIds.length }
+  const actuallyDeleted = (deleted ?? []).length
+  if (actuallyDeleted === 0 && safeIds.length > 0) {
+    return { ok: false, error: 'لم تُحذف أي وحدة. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
+  }
+  return { ok: true, deleted: actuallyDeleted }
 }
 
 export async function deleteSale(
