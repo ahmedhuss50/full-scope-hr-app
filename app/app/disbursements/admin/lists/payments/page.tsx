@@ -8,6 +8,8 @@ import type { DepositCategory } from './actions'
 import { EditPaymentRow, type PaymentEditable, type ProjectOption, type AccountOption } from './EditPaymentRow'
 import { AddPaymentDialog } from './AddPaymentDialog'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
+import { PaymentsSelectionProvider } from '../../_shared/EntitySelectionProviders'
+import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -657,6 +659,9 @@ export default async function PaymentsListPage({
         ids={sorted.map((p) => p.id)}
       />
 
+      <PaymentsSelectionProvider allIds={sorted.map((p) => p.id)}>
+        <SelectionActionBar />
+
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">
           {allPayments.length === 0 ? 'لا توجد دفعات مطابقة.' : 'الصفحة فارغة.'}
@@ -692,6 +697,7 @@ export default async function PaymentsListPage({
                   <Th>العقد</Th>
                   <Th>الوحدة</Th>
                   <Th>التصنيف</Th>
+                  <th className="px-3 py-2 w-10"><SelectAllCheckbox /></th>
                   <Th>تعديل</Th>
                 </tr>
               </thead>
@@ -751,7 +757,7 @@ export default async function PaymentsListPage({
                       projects={editProjectOptions}
                       accounts={editAccountOptions}
                       rowClassName={rowCls}
-                      totalCols={12}
+                      totalCols={13}
                     >
                       <Td className="font-mono text-xs" dir="ltr">
                         {p.payment_date}
@@ -811,6 +817,7 @@ export default async function PaymentsListPage({
                           )}
                         </div>
                       </Td>
+                      <Td><RowCheckbox id={p.id} /></Td>
                     </EditPaymentRow>
                   )
                 })}
@@ -827,6 +834,7 @@ export default async function PaymentsListPage({
           />
         </div>
       )}
+      </PaymentsSelectionProvider>
     </div>
   )
 }

@@ -5,6 +5,8 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeleteUnitButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
+import { UnitsSelectionProvider } from '../../_shared/EntitySelectionProviders'
+import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
 
 /**
  * Tenant-wide UNITS list.
@@ -223,6 +225,9 @@ export default async function UnitsListPage({
 
       <BulkDeleteBar entity="units" count={sorted.length} ids={sorted.map((u) => u.id)} />
 
+      <UnitsSelectionProvider allIds={sorted.map((u) => u.id)}>
+        <SelectionActionBar />
+
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">
           {allUnits.length === 0 ? 'لا توجد وحدات مطابقة.' : 'الصفحة فارغة.'}
@@ -264,6 +269,7 @@ export default async function UnitsListPage({
                     basePath={basePath}
                     otherParams={{ q, project: projectFilter }}
                   />
+                  <th className="px-3 py-2 w-10"><SelectAllCheckbox /></th>
                   <Th>إجراءات</Th>
                 </tr>
               </thead>
@@ -300,6 +306,7 @@ export default async function UnitsListPage({
                       <Td className="font-mono text-xs">
                         {salesCount > 0 ? salesCount : '—'}
                       </Td>
+                      <td className="px-3 py-2"><RowCheckbox id={u.id} /></td>
                       <Td>
                         <DeleteUnitButton unitId={u.id} unitNumber={u.unit_number} />
                       </Td>
@@ -319,6 +326,7 @@ export default async function UnitsListPage({
           />
         </div>
       )}
+      </UnitsSelectionProvider>
     </div>
   )
 }

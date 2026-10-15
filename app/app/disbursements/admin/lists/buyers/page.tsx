@@ -5,6 +5,8 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
+import { SalesSelectionProvider } from '../../_shared/EntitySelectionProviders'
+import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
 
 /**
  * Tenant-wide BUYERS list.
@@ -247,6 +249,9 @@ export default async function BuyersListPage({
 
       <BulkDeleteBar entity="sales" count={sorted.length} ids={sorted.map((s) => s.id)} />
 
+      <SalesSelectionProvider allIds={sorted.map((s) => s.id)}>
+        <SelectionActionBar />
+
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">
           {allSales.length === 0 ? 'لا يوجد مشترون مطابقون.' : 'الصفحة فارغة.'}
@@ -288,6 +293,7 @@ export default async function BuyersListPage({
                     }}
                   />
                   <Th>حالة البيع</Th>
+                  <th className="px-3 py-2 w-10"><SelectAllCheckbox /></th>
                   <Th>إجراءات</Th>
                 </tr>
               </thead>
@@ -335,6 +341,7 @@ export default async function BuyersListPage({
                           {status.label}
                         </span>
                       </Td>
+                      <td className="px-3 py-2"><RowCheckbox id={s.id} /></td>
                       <Td>
                         <DeleteSaleButton saleId={s.id} label={s.buyer_name_ar ?? 'بدون اسم'} />
                       </Td>
@@ -354,6 +361,7 @@ export default async function BuyersListPage({
           />
         </div>
       )}
+      </SalesSelectionProvider>
     </div>
   )
 }

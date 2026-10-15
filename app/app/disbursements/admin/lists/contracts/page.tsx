@@ -6,6 +6,8 @@ import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeliveryToggle } from '../../projects/[projectId]/buyer-contracts/DeliveryToggle'
 import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
+import { SalesSelectionProvider } from '../../_shared/EntitySelectionProviders'
+import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
 
 /**
  * Tenant-wide CONTRACTS list.
@@ -279,6 +281,9 @@ export default async function ContractsListPage({
 
       <BulkDeleteBar entity="sales" count={sorted.length} ids={sorted.map((s) => s.id)} />
 
+      <SalesSelectionProvider allIds={sorted.map((s) => s.id)}>
+        <SelectionActionBar />
+
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">
           {allSales.length === 0 ? 'لا توجد عقود مطابقة.' : 'الصفحة فارغة.'}
@@ -324,6 +329,7 @@ export default async function ContractsListPage({
                   <Th># الأقساط</Th>
                   <Th>النسبة المستقطعة</Th>
                   <Th>نسبة التحصيل</Th>
+                  <th className="px-3 py-2 w-10"><SelectAllCheckbox /></th>
                   <Th>إجراءات</Th>
                 </tr>
               </thead>
@@ -388,6 +394,7 @@ export default async function ContractsListPage({
                       <Td className="font-mono text-xs" dir="ltr">
                         {fmtPct(s.collection_percentage)}
                       </Td>
+                      <td className="px-3 py-2"><RowCheckbox id={s.id} /></td>
                       <Td>
                         <DeleteSaleButton saleId={s.id} label={s.contract_number ?? s.buyer_name_ar ?? 'بدون رقم'} />
                       </Td>
@@ -407,6 +414,7 @@ export default async function ContractsListPage({
           />
         </div>
       )}
+      </SalesSelectionProvider>
     </div>
   )
 }
