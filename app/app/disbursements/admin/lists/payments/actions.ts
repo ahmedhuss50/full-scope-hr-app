@@ -445,36 +445,52 @@ export async function bulkDeletePayments(
   if (ids.length === 0) return { ok: true, deleted: 0 }
   if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 دفعة كحد أقصى في المرة.' }
 
-  // Fetch each row's tenant + split flag — reject any outside the tenant and
-  // skip split-children (the parent delete cascades them anyway).
-  const { data: rows } = await svc
-    .from('dsb_payments')
-    .select('id, tenant_id, project_id, split_source_payment_id')
-    .in('id', ids)
+  // IMPORTANT: Supabase .in() over PostgREST hits URL length limits around
+  // ~500-1000 ids. We chunk EVERY .in() call below so large bulk deletes
+  // (2000+ rows) actually hit the DB instead of silently returning empty.
+  const CHUNK = 200
+
+  // 1) Fetch each row's tenant + split flag in CHUNKS so no .in() exceeds the
+  //    URL limit. Reject any outside the tenant and skip split-children.
   const safeIds: string[] = []
   const projectIds = new Set<string>()
-  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null; split_source_payment_id: string | null }>) {
-    if (r.tenant_id !== tenantId) continue
-    if (r.split_source_payment_id) continue
-    safeIds.push(r.id)
-    if (r.project_id) projectIds.add(r.project_id)
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { data: rows, error: selErr } = await svc
+      .from('dsb_payments')
+      .select('id, tenant_id, project_id, split_source_payment_id')
+      .in('id', slice)
+    if (selErr) return { ok: false, error: selErr.message }
+    for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null; split_source_payment_id: string | null }>) {
+      if (r.tenant_id !== tenantId) continue
+      if (r.split_source_payment_id) continue
+      safeIds.push(r.id)
+      if (r.project_id) projectIds.add(r.project_id)
+    }
   }
-  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+  if (safeIds.length === 0) {
+    return { ok: false, error: 'لم تُحذف أي دفعة — جميع الصفوف المحدَّدة إما توزيع تلقائي أو خارج المستأجر.' }
+  }
 
-  const { data: deleted, error } = await svc
-    .from('dsb_payments')
-    .delete()
-    .in('id', safeIds)
-    .eq('tenant_id', tenantId)
-    .select('id')
-  if (error) return { ok: false, error: error.message }
+  // 2) Delete in chunks and sum the actual deleted rows across all batches.
+  let actuallyDeleted = 0
+  for (let i = 0; i < safeIds.length; i += CHUNK) {
+    const slice = safeIds.slice(i, i + CHUNK)
+    const { data: deleted, error } = await svc
+      .from('dsb_payments')
+      .delete()
+      .in('id', slice)
+      .eq('tenant_id', tenantId)
+      .select('id')
+    if (error) return { ok: false, error: error.message }
+    actuallyDeleted += (deleted ?? []).length
+  }
 
   revalidatePath('/app/disbursements/admin/lists/payments')
   for (const pid of projectIds) {
     revalidatePath(`/app/disbursements/admin/projects/${pid}`)
   }
-  const actuallyDeleted = (deleted ?? []).length
-  if (actuallyDeleted === 0 && safeIds.length > 0) {
+  if (actuallyDeleted === 0) {
     return { ok: false, error: 'لم تُحذف أي دفعة. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
   }
   return { ok: true, deleted: actuallyDeleted }

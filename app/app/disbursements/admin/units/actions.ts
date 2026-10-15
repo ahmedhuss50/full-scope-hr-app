@@ -1689,30 +1689,39 @@ export async function bulkDeleteSales(
   if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 عقد كحد أقصى في المرة.' }
 
   const svc = createSupabaseService()
-  const { data: rows } = await svc
-    .from('dsb_unit_sales')
-    .select('id, tenant_id, project_id')
-    .in('id', ids)
+  // IMPORTANT: PostgREST .in() URL caps at ~500-1000 ids. Chunk every .in().
+  const CHUNK = 200
   const safeIds: string[] = []
   const projectIds = new Set<string>()
-  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
-    if (r.tenant_id !== caller.tenantId) continue
-    safeIds.push(r.id)
-    if (r.project_id) projectIds.add(r.project_id)
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { data: rows, error: selErr } = await svc
+      .from('dsb_unit_sales')
+      .select('id, tenant_id, project_id')
+      .in('id', slice)
+    if (selErr) return { ok: false, error: selErr.message }
+    for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
+      if (r.tenant_id !== caller.tenantId) continue
+      safeIds.push(r.id)
+      if (r.project_id) projectIds.add(r.project_id)
+    }
   }
-  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+  if (safeIds.length === 0) {
+    return { ok: false, error: 'لم يُعثر على أي عقد مطابق للمستأجر.' }
+  }
 
-  // Chain .select() so we get the ACTUAL rows removed back from Postgres —
-  // reporting safeIds.length without this would overstate the count whenever
-  // the DELETE silently matched fewer rows (RLS, FK triggers, etc.) and
-  // mask the bug of 'ok but nothing deleted'.
-  const { data: deleted, error } = await svc
-    .from('dsb_unit_sales')
-    .delete()
-    .in('id', safeIds)
-    .eq('tenant_id', caller.tenantId)
-    .select('id')
-  if (error) return { ok: false, error: error.message }
+  let actuallyDeleted = 0
+  for (let i = 0; i < safeIds.length; i += CHUNK) {
+    const slice = safeIds.slice(i, i + CHUNK)
+    const { data: deleted, error } = await svc
+      .from('dsb_unit_sales')
+      .delete()
+      .in('id', slice)
+      .eq('tenant_id', caller.tenantId)
+      .select('id')
+    if (error) return { ok: false, error: error.message }
+    actuallyDeleted += (deleted ?? []).length
+  }
 
   for (const pid of projectIds) {
     revalidatePath(`/app/disbursements/admin/projects/${pid}`)
@@ -1720,8 +1729,7 @@ export async function bulkDeleteSales(
   }
   revalidatePath('/app/disbursements/admin/lists/buyers')
   revalidatePath('/app/disbursements/admin/lists/contracts')
-  const actuallyDeleted = (deleted ?? []).length
-  if (actuallyDeleted === 0 && safeIds.length > 0) {
+  if (actuallyDeleted === 0) {
     return { ok: false, error: 'لم يُحذف أي صف. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
   }
   return { ok: true, deleted: actuallyDeleted }
@@ -1745,43 +1753,57 @@ export async function bulkDeleteUnits(
   if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 وحدة كحد أقصى في المرة.' }
 
   const svc = createSupabaseService()
-  const { data: rows } = await svc
-    .from('dsb_project_units')
-    .select('id, tenant_id, project_id')
-    .in('id', ids)
+  const CHUNK = 200
   const safeIds: string[] = []
   const projectIds = new Set<string>()
-  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
-    if (r.tenant_id !== caller.tenantId) continue
-    safeIds.push(r.id)
-    if (r.project_id) projectIds.add(r.project_id)
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    const { data: rows, error: selErr } = await svc
+      .from('dsb_project_units')
+      .select('id, tenant_id, project_id')
+      .in('id', slice)
+    if (selErr) return { ok: false, error: selErr.message }
+    for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
+      if (r.tenant_id !== caller.tenantId) continue
+      safeIds.push(r.id)
+      if (r.project_id) projectIds.add(r.project_id)
+    }
   }
-  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+  if (safeIds.length === 0) {
+    return { ok: false, error: 'لم يُعثر على أي وحدة مطابقة للمستأجر.' }
+  }
 
-  // Downgrade matched contracts to clear the check constraint (same as the
-  // single-unit path above).
-  await svc
-    .from('dsb_unit_contracts')
-    .update({ extraction_status: 'no_match' })
-    .eq('tenant_id', caller.tenantId)
-    .in('unit_id', safeIds)
-    .eq('extraction_status', 'matched')
+  // Downgrade matched contracts for all target units (chunked too) so the
+  // ON DELETE SET NULL FK path doesn't violate migration 057's check.
+  for (let i = 0; i < safeIds.length; i += CHUNK) {
+    const slice = safeIds.slice(i, i + CHUNK)
+    await svc
+      .from('dsb_unit_contracts')
+      .update({ extraction_status: 'no_match' })
+      .eq('tenant_id', caller.tenantId)
+      .in('unit_id', slice)
+      .eq('extraction_status', 'matched')
+  }
 
-  const { data: deleted, error } = await svc
-    .from('dsb_project_units')
-    .delete()
-    .in('id', safeIds)
-    .eq('tenant_id', caller.tenantId)
-    .select('id')
-  if (error) return { ok: false, error: error.message }
+  let actuallyDeleted = 0
+  for (let i = 0; i < safeIds.length; i += CHUNK) {
+    const slice = safeIds.slice(i, i + CHUNK)
+    const { data: deleted, error } = await svc
+      .from('dsb_project_units')
+      .delete()
+      .in('id', slice)
+      .eq('tenant_id', caller.tenantId)
+      .select('id')
+    if (error) return { ok: false, error: error.message }
+    actuallyDeleted += (deleted ?? []).length
+  }
 
   for (const pid of projectIds) {
     revalidatePath(`/app/disbursements/admin/projects/${pid}`)
     revalidatePath(`/app/disbursements/admin/projects/${pid}/units`)
   }
   revalidatePath('/app/disbursements/admin/lists/units')
-  const actuallyDeleted = (deleted ?? []).length
-  if (actuallyDeleted === 0 && safeIds.length > 0) {
+  if (actuallyDeleted === 0) {
     return { ok: false, error: 'لم تُحذف أي وحدة. تحقق من الصلاحيات أو ارتباطات قاعدة البيانات.' }
   }
   return { ok: true, deleted: actuallyDeleted }
