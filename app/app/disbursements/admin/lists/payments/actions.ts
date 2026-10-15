@@ -412,6 +412,70 @@ export async function createSinglePayment(
 }
 
 // ---------------------------------------------------------------------------
+// bulkDeletePayments — owner only. Deletes the given payment IDs in one call.
+//
+// Guards:
+//   • Caller must be owner.
+//   • Every row must belong to the caller's tenant.
+//   • Split children are refused in the batch (safer to delete the parent and
+//     let the FK cascade clear the children). We filter them out silently and
+//     report the final count so the UI can show "X deleted".
+// ---------------------------------------------------------------------------
+
+export async function bulkDeletePayments(
+  input: { payment_ids: string[] },
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const supabase = createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'لم يتم تسجيل الدخول.' }
+
+  const svc = createSupabaseService()
+  const { data: profile } = await svc
+    .from('users')
+    .select('id, tenant_id, dsb_role')
+    .eq('email', user.email)
+    .maybeSingle()
+  if (!profile) return { ok: false, error: 'حسابك غير مرتبط بمستأجر.' }
+  if ((profile.dsb_role as string | null) !== 'owner') {
+    return { ok: false, error: 'هذا الإجراء متاح للمدير فقط.' }
+  }
+  const tenantId = profile.tenant_id as string
+
+  const ids = Array.from(new Set((input.payment_ids ?? []).map((s) => (s ?? '').trim()).filter(Boolean)))
+  if (ids.length === 0) return { ok: true, deleted: 0 }
+  if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 دفعة كحد أقصى في المرة.' }
+
+  // Fetch each row's tenant + split flag — reject any outside the tenant and
+  // skip split-children (the parent delete cascades them anyway).
+  const { data: rows } = await svc
+    .from('dsb_payments')
+    .select('id, tenant_id, project_id, split_source_payment_id')
+    .in('id', ids)
+  const safeIds: string[] = []
+  const projectIds = new Set<string>()
+  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null; split_source_payment_id: string | null }>) {
+    if (r.tenant_id !== tenantId) continue
+    if (r.split_source_payment_id) continue
+    safeIds.push(r.id)
+    if (r.project_id) projectIds.add(r.project_id)
+  }
+  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+
+  const { error } = await svc
+    .from('dsb_payments')
+    .delete()
+    .in('id', safeIds)
+    .eq('tenant_id', tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin/lists/payments')
+  for (const pid of projectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+  }
+  return { ok: true, deleted: safeIds.length }
+}
+
+// ---------------------------------------------------------------------------
 // deletePayment — owner only. Removes a single dsb_payments row.
 //
 // • Split children (rows with split_source_payment_id) are refused — they're

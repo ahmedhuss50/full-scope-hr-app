@@ -4,6 +4,7 @@ import { ArrowRight, Building2 } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeleteUnitButton } from '../../_shared/EntityDeleteButtons'
+import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 
 /**
  * Tenant-wide UNITS list.
@@ -219,6 +220,8 @@ export default async function UnitsListPage({
         searchPlaceholder="بحث برقم الوحدة أو الملاحظات…"
         preservedParams={{ sort, dir }}
       />
+
+      <BulkDeleteBar entity="units" count={sorted.length} ids={sorted.map((u) => u.id)} />
 
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">

@@ -5,6 +5,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeliveryToggle } from '../../projects/[projectId]/buyer-contracts/DeliveryToggle'
 import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
+import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 
 /**
  * Tenant-wide CONTRACTS list.
@@ -275,6 +276,8 @@ export default async function ContractsListPage({
         ]}
         preservedParams={{ sort, dir }}
       />
+
+      <BulkDeleteBar entity="sales" count={sorted.length} ids={sorted.map((s) => s.id)} />
 
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">

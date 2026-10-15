@@ -7,6 +7,7 @@ import { DepositCategoryPicker, DEPOSIT_CATEGORY_LABELS } from './DepositCategor
 import type { DepositCategory } from './actions'
 import { EditPaymentRow, type PaymentEditable, type ProjectOption, type AccountOption } from './EditPaymentRow'
 import { AddPaymentDialog } from './AddPaymentDialog'
+import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -645,6 +646,15 @@ export default async function PaymentsListPage({
         idNum={idNumFilter}
         unit={unitFilter}
         contract={contractFilter}
+      />
+
+      {/* Bulk-delete bar — operates on the FILTERED set (sorted/filtered rows,
+          not just the current page) so an owner can wipe every result of
+          their query in one shot. Hidden when filters return 0 rows. */}
+      <BulkDeleteBar
+        entity="payments"
+        count={sorted.length}
+        ids={sorted.map((p) => p.id)}
       />
 
       {pageRows.length === 0 ? (

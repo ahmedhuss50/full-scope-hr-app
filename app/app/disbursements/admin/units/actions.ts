@@ -1671,6 +1671,108 @@ export async function updateSaleDelivery(
   return { ok: true }
 }
 
+/**
+ * bulkDeleteSales — owner-only. Deletes the given dsb_unit_sales IDs that
+ * belong to the caller's tenant. Mirrors the single-row deleteSale but takes
+ * an array. Returns the count actually deleted (rows outside the tenant are
+ * silently skipped). Capped at 10 000 ids per call.
+ */
+export async function bulkDeleteSales(
+  input: { ids: string[] },
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+  const ids = Array.from(new Set((input.ids ?? []).map((s) => (s ?? '').trim()).filter(Boolean)))
+  if (ids.length === 0) return { ok: true, deleted: 0 }
+  if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 عقد كحد أقصى في المرة.' }
+
+  const svc = createSupabaseService()
+  const { data: rows } = await svc
+    .from('dsb_unit_sales')
+    .select('id, tenant_id, project_id')
+    .in('id', ids)
+  const safeIds: string[] = []
+  const projectIds = new Set<string>()
+  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
+    if (r.tenant_id !== caller.tenantId) continue
+    safeIds.push(r.id)
+    if (r.project_id) projectIds.add(r.project_id)
+  }
+  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+
+  const { error } = await svc
+    .from('dsb_unit_sales')
+    .delete()
+    .in('id', safeIds)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  for (const pid of projectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+    revalidatePath(`/app/disbursements/admin/projects/${pid}/buyer-contracts`)
+  }
+  revalidatePath('/app/disbursements/admin/lists/buyers')
+  revalidatePath('/app/disbursements/admin/lists/contracts')
+  return { ok: true, deleted: safeIds.length }
+}
+
+/**
+ * bulkDeleteUnits — owner-only. Mirrors the single deleteUnit but bulk.
+ * The ON DELETE CASCADE on dsb_unit_sales wipes any sales attached to each
+ * unit. Any dsb_unit_contracts still 'matched' against those units gets
+ * downgraded to 'no_match' first so the check-constraint doesn't fire.
+ */
+export async function bulkDeleteUnits(
+  input: { ids: string[] },
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const caller = await resolveCaller()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  const own = assertOwner(caller)
+  if (!own.ok) return own
+  const ids = Array.from(new Set((input.ids ?? []).map((s) => (s ?? '').trim()).filter(Boolean)))
+  if (ids.length === 0) return { ok: true, deleted: 0 }
+  if (ids.length > 10000) return { ok: false, error: 'يُسمح بحذف 10000 وحدة كحد أقصى في المرة.' }
+
+  const svc = createSupabaseService()
+  const { data: rows } = await svc
+    .from('dsb_project_units')
+    .select('id, tenant_id, project_id')
+    .in('id', ids)
+  const safeIds: string[] = []
+  const projectIds = new Set<string>()
+  for (const r of (rows ?? []) as Array<{ id: string; tenant_id: string; project_id: string | null }>) {
+    if (r.tenant_id !== caller.tenantId) continue
+    safeIds.push(r.id)
+    if (r.project_id) projectIds.add(r.project_id)
+  }
+  if (safeIds.length === 0) return { ok: true, deleted: 0 }
+
+  // Downgrade matched contracts to clear the check constraint (same as the
+  // single-unit path above).
+  await svc
+    .from('dsb_unit_contracts')
+    .update({ extraction_status: 'no_match' })
+    .eq('tenant_id', caller.tenantId)
+    .in('unit_id', safeIds)
+    .eq('extraction_status', 'matched')
+
+  const { error } = await svc
+    .from('dsb_project_units')
+    .delete()
+    .in('id', safeIds)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  for (const pid of projectIds) {
+    revalidatePath(`/app/disbursements/admin/projects/${pid}`)
+    revalidatePath(`/app/disbursements/admin/projects/${pid}/units`)
+  }
+  revalidatePath('/app/disbursements/admin/lists/units')
+  return { ok: true, deleted: safeIds.length }
+}
+
 export async function deleteSale(
   input: { id: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {

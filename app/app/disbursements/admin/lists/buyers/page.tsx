@@ -4,6 +4,7 @@ import { ArrowRight, Users } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 import { ListToolbar, SortHeader, buildSortHref } from '../_shared/ListControls'
 import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
+import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 
 /**
  * Tenant-wide BUYERS list.
@@ -243,6 +244,8 @@ export default async function BuyersListPage({
         ]}
         preservedParams={{ sort, dir }}
       />
+
+      <BulkDeleteBar entity="sales" count={sorted.length} ids={sorted.map((s) => s.id)} />
 
       {pageRows.length === 0 ? (
         <div className="text-sm text-slate-500 italic text-center py-12 border border-dashed border-slate-200 rounded-xl bg-white">
