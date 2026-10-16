@@ -9,6 +9,7 @@ import {
 } from './WelcomeEmailButtons'
 import { ChangeRoleButton } from './ChangeRoleButton'
 import { EmployeeProjectsEditor, type ProjectPickerOption } from './EmployeeProjectsEditor'
+import { EditEmployeeDialog } from './EditEmployeeDialog'
 
 export const dynamic = 'force-dynamic'
 
@@ -110,7 +111,7 @@ export default async function DisbursementsAdminPage({
   // from the admin list, leaving no way to undo the change from the UI.
   const { data: employeesData } = await svc
     .from('users')
-    .select('id, full_name, email, dsb_role')
+    .select('id, full_name, email, phone, active, dsb_role')
     .eq('tenant_id', tenantId)
     .in('dsb_role', ['employee', 'supervisor', 'owner', 'viewer', 'deliverer'])
     .order('full_name', { ascending: true })
@@ -364,6 +365,19 @@ export default async function DisbursementsAdminPage({
                     </div>
                     {isOwner && (
                       <div className="pt-1 flex items-center gap-2 flex-wrap">
+                        {/* Full-info edit — name/phone/active. Owner can edit
+                            every employee including themselves (except the
+                            deactivate flag — guarded in the server action). */}
+                        <EditEmployeeDialog
+                          employee={{
+                            id: e.id,
+                            full_name: e.full_name ?? '',
+                            email: e.email ?? '',
+                            phone: (e as { phone?: string | null }).phone ?? null,
+                            active: (e as { active?: boolean }).active ?? true,
+                            dsb_role: e.dsb_role,
+                          }}
+                        />
                         <SendWelcomeToUserButton
                           userId={e.id}
                           fullName={e.full_name ?? e.email ?? '—'}

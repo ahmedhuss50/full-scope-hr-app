@@ -112,6 +112,104 @@ export async function changeEmployeeRole(
 }
 
 // ---------------------------------------------------------------------------
+// updateEmployeeInfo — owner-only. Updates the basic fields on a user row
+// (full_name, phone, active) and optionally the email. Email changes have
+// extra guards because they're the login identity.
+// ---------------------------------------------------------------------------
+
+export interface UpdateEmployeeInfoInput {
+  user_id: string
+  full_name?: string
+  email?: string
+  phone?: string | null
+  active?: boolean
+}
+
+export async function updateEmployeeInfo(
+  input: UpdateEmployeeInfoInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const caller = await resolveStaff()
+  if ('error' in caller) return { ok: false, error: caller.error }
+  if (caller.dsbRole !== 'owner') {
+    return { ok: false, error: 'تعديل بيانات الموظفين متاح للمدير فقط.' }
+  }
+  if (!input.user_id) return { ok: false, error: 'بيانات ناقصة.' }
+
+  const svc = createSupabaseService()
+  const { data: target } = await svc
+    .from('users')
+    .select('id, tenant_id, email, full_name, phone, active, dsb_role')
+    .eq('tenant_id', caller.tenantId)
+    .eq('id', input.user_id)
+    .maybeSingle()
+  if (!target) return { ok: false, error: 'الموظف غير موجود.' }
+
+  const patch: Record<string, unknown> = {}
+
+  if (input.full_name !== undefined) {
+    const n = input.full_name.trim()
+    if (!n) return { ok: false, error: 'الاسم مطلوب.' }
+    if (n.length > 200) return { ok: false, error: 'الاسم طويل جدًا.' }
+    patch.full_name = n
+  }
+
+  if (input.phone !== undefined) {
+    const p = (input.phone ?? '').toString().trim()
+    patch.phone = p || null
+  }
+
+  if (input.active !== undefined) {
+    // Guard: don't let the caller deactivate themselves. They'd lock
+    // themselves out mid-session.
+    if (!input.active && input.user_id === caller.userId) {
+      return { ok: false, error: 'لا يمكنك تعطيل حسابك الخاص.' }
+    }
+    // Guard: don't let the caller deactivate the LAST active owner.
+    if (!input.active && (target as { dsb_role: string }).dsb_role === 'owner') {
+      const { count } = await svc
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', caller.tenantId)
+        .eq('dsb_role', 'owner')
+        .eq('active', true)
+      if ((count ?? 0) <= 1) {
+        return { ok: false, error: 'لا يمكن تعطيل آخر مدير نشط في النظام.' }
+      }
+    }
+    patch.active = input.active
+  }
+
+  if (input.email !== undefined) {
+    const e = input.email.trim().toLowerCase()
+    if (!e || !e.includes('@')) return { ok: false, error: 'بريد غير صالح.' }
+    if (e.length > 200) return { ok: false, error: 'البريد طويل جدًا.' }
+    const currentEmail = ((target as { email: string }).email ?? '').toLowerCase()
+    if (e !== currentEmail) {
+      // Email changes are rare and risky — the user has to sign back in with
+      // the new address and the Supabase Auth account won't be re-created
+      // automatically. Reject by default and ask the user to use the auth
+      // flow if they really need to.
+      return {
+        ok: false,
+        error: 'لا يمكن تغيير البريد من هنا. احذف الحساب وأعد إنشاءه بالبريد الجديد.',
+      }
+    }
+  }
+
+  if (Object.keys(patch).length === 0) return { ok: true }
+
+  const { error } = await svc
+    .from('users')
+    .update(patch)
+    .eq('id', input.user_id)
+    .eq('tenant_id', caller.tenantId)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/app/disbursements/admin')
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // updateClient
 // ---------------------------------------------------------------------------
 
