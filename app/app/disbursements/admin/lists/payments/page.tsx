@@ -10,6 +10,7 @@ import { AddPaymentDialog } from './AddPaymentDialog'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 import { PaymentsSelectionProvider } from '../../_shared/EntitySelectionProviders'
 import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
+import { LinkPaymentsButton } from './LinkPaymentsButton'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -87,6 +88,8 @@ export default async function PaymentsListPage({
     id_num?: string
     unit?: string
     contract?: string
+    /** 'linked' (sale_id set) · 'unlinked' (sale_id null) · '' (all). */
+    link_status?: string
   }
 }) {
   const supabase = createSupabaseServer()
@@ -124,6 +127,8 @@ export default async function PaymentsListPage({
   const idNumFilter    = (searchParams?.id_num ?? '').trim()
   const unitFilter     = (searchParams?.unit ?? '').trim()
   const contractFilter = (searchParams?.contract ?? '').trim()
+  // Link-status filter: 'linked' | 'unlinked' | '' (all).
+  const linkStatusFilter = (searchParams?.link_status ?? '').trim().toLowerCase()
   const rawSort = (searchParams?.sort ?? 'payment_date') as SortKey
   const sort: SortKey = SORT_KEYS.includes(rawSort) ? rawSort : 'payment_date'
   // Default direction matches the user-preferred read: newest first.
@@ -458,9 +463,25 @@ export default async function PaymentsListPage({
     }
   }
 
+  // ---- Link-status filter (post-query) ----
+  // Applied in-memory because sale_id is a nullable FK — splitting it into
+  // the main query would complicate the already-nested contract/unit joins
+  // above. Rows affected per typical tenant are capped by the earlier filters.
+  const linkFiltered = linkStatusFilter === 'unlinked'
+    ? allPayments.filter((p) => p.sale_id === null)
+    : linkStatusFilter === 'linked'
+    ? allPayments.filter((p) => p.sale_id !== null)
+    : allPayments
+  // Count unlinked rows across the full filtered set (not just this page) so
+  // the KPI card reflects reality after other filters are applied.
+  const unlinkedCount = allPayments.reduce(
+    (n, p) => (p.sale_id === null ? n + 1 : n),
+    0,
+  )
+
   // ---- Sort ----
   const sortMul = dir === 'asc' ? 1 : -1
-  const sorted = [...allPayments].sort((a, b) => {
+  const sorted = [...linkFiltered].sort((a, b) => {
     if (sort === 'amount_sar') {
       return (a.amount_sar - b.amount_sar) * sortMul
     }
@@ -562,11 +583,44 @@ export default async function PaymentsListPage({
               ({totalCount.toLocaleString('en-US')})
             </span>
           </div>
-          <AddPaymentDialog
-            projects={projects.map((p) => ({ id: p.id, name_ar: p.name_ar, code: '' }))}
-            accounts={accounts.map((a) => ({ id: a.id, label: a.label, project_id: a.project_id ?? null }))}
-          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <LinkPaymentsButton />
+            <AddPaymentDialog
+              projects={projects.map((p) => ({ id: p.id, name_ar: p.name_ar, code: '' }))}
+              accounts={accounts.map((a) => ({ id: a.id, label: a.label, project_id: a.project_id ?? null }))}
+            />
+          </div>
         </div>
+
+        {/* Unlinked banner — appears whenever any payment (across the whole
+            tenant-filtered set, ignoring link_status) has no sale_id. One
+            click filters the view to only those rows so the operator can
+            spot-fix contract numbers or trigger an auto-link pass. */}
+        {unlinkedCount > 0 && linkStatusFilter !== 'unlinked' && (
+          <Link
+            href={`${basePath}?${new URLSearchParams({
+              ...(q ? { q } : {}),
+              ...(projectFilter ? { project: projectFilter } : {}),
+              ...(accountFilter ? { account: accountFilter } : {}),
+              link_status: 'unlinked',
+            }).toString()}`}
+            className="inline-flex items-center gap-2 self-start px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-xs font-semibold hover:bg-amber-100 transition"
+          >
+            ⚠ {unlinkedCount.toLocaleString('en-US')} دفعة غير مربوطة بأي عقد — اضغط للعرض
+          </Link>
+        )}
+        {linkStatusFilter === 'unlinked' && (
+          <Link
+            href={`${basePath}?${new URLSearchParams({
+              ...(q ? { q } : {}),
+              ...(projectFilter ? { project: projectFilter } : {}),
+              ...(accountFilter ? { account: accountFilter } : {}),
+            }).toString()}`}
+            className="inline-flex items-center gap-2 self-start px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 text-xs font-semibold hover:bg-slate-100 transition"
+          >
+            عرض الكل (إزالة فلتر «غير مربوطة»)
+          </Link>
+        )}
       </header>
 
       {/* Per-role distribution summary — signed net totals per escrow
@@ -717,8 +771,15 @@ export default async function PaymentsListPage({
                   // Split rows recede visually — muted background + italic
                   // description — so parent deposits stay the focal reading.
                   const isSplit = p.split_source_payment_id !== null
+                  // Flag unlinked payments (no sale_id) with a subtle amber
+                  // tint + left-border so an operator scanning the list can
+                  // spot them without opening each row. Split children
+                  // inherit their parent's state so we don't double-flag them.
+                  const isUnlinked = !isSplit && p.sale_id === null
                   const rowCls = isSplit
                     ? 'bg-slate-50/60 hover:bg-slate-100 transition'
+                    : isUnlinked
+                    ? 'bg-amber-50/40 hover:bg-amber-50 border-r-4 border-amber-300 transition'
                     : 'hover:bg-slate-50 transition'
                   const descCls = isSplit
                     ? 'max-w-[14rem] truncate italic text-slate-500'

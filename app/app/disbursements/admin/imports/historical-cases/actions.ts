@@ -793,6 +793,10 @@ export async function bulkImportPayments(input: {
       case_id: caseId,
       unit_id: unitId,
       sale_id: saleId,
+      // Keep the raw contract_number so /api/dsb-link-payments-to-sales can
+      // retry the lookup later for rows the importer couldn't match (common
+      // when payments land before their contracts). Migration 092.
+      contract_number_raw: (r.contract_number ?? '').trim() || null,
       payment_date: paymentDate,
       amount_sar: amount,
       vat_sar: r.vat_sar ?? null,
