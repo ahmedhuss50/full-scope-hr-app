@@ -129,6 +129,15 @@ export interface AddVendorContractDraft {
   end_date:               string | null   // 'YYYY-MM-DD'
 }
 
+export interface AddVendorBankAccountDraft {
+  bank_name?: string | null
+  iban?: string | null
+  account_number?: string | null
+  account_holder_name?: string | null
+  is_primary?: boolean
+  notes?: string | null
+}
+
 export interface AddVendorInput {
   project_id: string
   name_ar: string
@@ -137,8 +146,15 @@ export interface AddVendorInput {
   commercial_registration?: string | null
   phone?: string | null
   email?: string | null
+  /** @deprecated — kept for legacy single-account callers. New callers should
+   *  pass `bank_accounts` instead. The server mirrors the primary bank
+   *  account back onto these columns via trigger (migration 093). */
   iban?: string | null
-  bank_name?: string | null            // Migration 073
+  /** @deprecated — see `iban` above. */
+  bank_name?: string | null
+  // Migration 093 — one row per bank account the vendor uses. The first one
+  // flagged is_primary (or the first in the list) seeds dsb_vendors.{bank_name,iban}.
+  bank_accounts?: AddVendorBankAccountDraft[]
   references_text?: string | null
   contact_person_name?: string | null
   contact_person_phone?: string | null
@@ -201,6 +217,43 @@ export async function addVendor(
   }
 
   const vendorId = data.id as string
+
+  // Insert inline bank accounts (migration 093). We drop entirely-blank rows
+  // and enforce exactly one is_primary — the first non-blank account wins if
+  // none was flagged, same account otherwise. The DB trigger then mirrors
+  // the primary's (bank_name, iban) back onto dsb_vendors for legacy readers.
+  const bankDrafts = input.bank_accounts ?? []
+  const bankKept = bankDrafts.filter((b) =>
+    (b.bank_name ?? '').trim() ||
+    (b.iban ?? '').trim() ||
+    (b.account_number ?? '').trim() ||
+    (b.account_holder_name ?? '').trim(),
+  )
+  // Fallback: if the caller only sent the legacy top-level iban/bank_name
+  // (older clients), fold them into bank_accounts so the new table stays
+  // the source of truth going forward.
+  if (bankKept.length === 0) {
+    const legacyIban = (input.iban ?? '').trim()
+    const legacyBank = (input.bank_name ?? '').trim()
+    if (legacyIban || legacyBank) {
+      bankKept.push({ bank_name: legacyBank || null, iban: legacyIban || null, is_primary: true })
+    }
+  }
+  if (bankKept.length > 0) {
+    const hasPrimary = bankKept.some((b) => b.is_primary === true)
+    const bankRows = bankKept.map((b, i) => ({
+      tenant_id:           caller.tenantId,
+      vendor_id:           vendorId,
+      bank_name:           (b.bank_name ?? '').trim() || null,
+      iban:                (b.iban ?? '').trim().toUpperCase() || null,
+      account_number:      (b.account_number ?? '').trim() || null,
+      account_holder_name: (b.account_holder_name ?? '').trim() || null,
+      is_primary:          hasPrimary ? b.is_primary === true : i === 0,
+      notes:               (b.notes ?? '').trim() || null,
+    }))
+    // Non-fatal: a bank-insert failure doesn't abort the vendor itself.
+    await svc.from('dsb_vendor_bank_accounts').insert(bankRows)
+  }
 
   // Insert inline contracts if any. We deliberately don't fail the vendor
   // creation when a contract insert bombs — the vendor is created, we log

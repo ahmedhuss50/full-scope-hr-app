@@ -41,12 +41,21 @@ type FormState = {
   commercial_registration: string
   phone: string
   email: string
-  iban: string
-  bank_name: string
   references_text: string
   contact_person_name: string
   contact_person_phone: string
   notes: string
+}
+
+type BankAccountDraft = {
+  bank_name:           string
+  iban:                string
+  account_number:      string
+  account_holder_name: string
+  is_primary:          boolean
+}
+const emptyBank: BankAccountDraft = {
+  bank_name: '', iban: '', account_number: '', account_holder_name: '', is_primary: true,
 }
 
 const emptyForm: FormState = {
@@ -56,8 +65,6 @@ const emptyForm: FormState = {
   commercial_registration: '',
   phone: '',
   email: '',
-  iban: '',
-  bank_name: '',
   references_text: '',
   contact_person_name: '',
   contact_person_phone: '',
@@ -80,6 +87,10 @@ export function AddVendorForm({
   // Inline contracts — start with a single empty row so the table renders
   // ready to fill. Owners can add more or delete unused rows.
   const [contracts, setContracts] = useState<ContractDraft[]>([{ ...emptyContract }])
+  // Bank accounts (migration 093) — vendor can have multiple. First row
+  // defaults to primary; adding more rows unflips the flag until the owner
+  // picks one. Legacy single-field iban/bank_name UX collapsed into this list.
+  const [banks, setBanks] = useState<BankAccountDraft[]>([{ ...emptyBank }])
   // Files kept separately from ContractDraft (File isn't serializable and
   // we send drafts to a server action). Array is index-aligned with
   // `contracts` — file[i] belongs to contracts[i]. Null when no file picked.
@@ -97,11 +108,30 @@ export function AddVendorForm({
     setState(emptyForm)
     setContracts([{ ...emptyContract }])
     setContractFiles([null])
+    setBanks([{ ...emptyBank }])
     setVatCertFile(null)
     setCrFile(null)
     setIbanOwnershipFile(null)
     setError(null)
     setUploadStatus(null)
+  }
+  function updateBank(idx: number, patch: Partial<BankAccountDraft>) {
+    setBanks((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)))
+  }
+  function markBankPrimary(idx: number) {
+    setBanks((prev) => prev.map((b, i) => ({ ...b, is_primary: i === idx })))
+  }
+  function addBankRow() {
+    setBanks((prev) => [...prev, { ...emptyBank, is_primary: prev.length === 0 }])
+  }
+  function removeBankRow(idx: number) {
+    setBanks((prev) => {
+      if (prev.length === 1) return prev
+      const next = prev.filter((_, i) => i !== idx)
+      // If we removed the primary, promote the first remaining row.
+      if (!next.some((b) => b.is_primary)) next[0].is_primary = true
+      return next
+    })
   }
   function updateContract(idx: number, patch: Partial<ContractDraft>) {
     setContracts((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)))
@@ -129,8 +159,16 @@ export function AddVendorForm({
       commercial_registration: state.commercial_registration || null,
       phone: state.phone || null,
       email: state.email || null,
-      iban: state.iban || null,
-      bank_name: state.bank_name || null,
+      // Legacy single-value fields replaced by `bank_accounts` below. The
+      // server mirrors the primary account onto dsb_vendors.{iban,bank_name}
+      // via trigger (migration 093), so existing readers keep working.
+      bank_accounts: banks.map((b) => ({
+        bank_name: b.bank_name || null,
+        iban: b.iban || null,
+        account_number: b.account_number || null,
+        account_holder_name: b.account_holder_name || null,
+        is_primary: b.is_primary,
+      })),
       references_text: state.references_text || null,
       contact_person_name: state.contact_person_name || null,
       contact_person_phone: state.contact_person_phone || null,
@@ -366,24 +404,75 @@ export function AddVendorForm({
             type="email"
           />
         </Field>
-        <Field label="اسم البنك">
-          <input
-            className={inputCls}
-            value={state.bank_name}
-            onChange={(e) => setState({ ...state, bank_name: e.target.value })}
-            disabled={saving}
-            placeholder="مثلاً: بنك الرياض"
-          />
-        </Field>
-        <Field label="IBAN">
-          <input
-            className={inputCls}
-            value={state.iban}
-            onChange={(e) => setState({ ...state, iban: e.target.value.toUpperCase() })}
-            disabled={saving}
-            dir="ltr"
-            placeholder="SA__ ____ ____ ____ ____ ____"
-          />
+        {/* Multiple bank accounts (migration 093) — fills a full-width row. */}
+        <Field label="الحسابات البنكية" wide>
+          <div className="space-y-2">
+            {banks.map((b, idx) => (
+              <div key={idx} className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    className={inputCls}
+                    value={b.bank_name}
+                    onChange={(e) => updateBank(idx, { bank_name: e.target.value })}
+                    disabled={saving}
+                    placeholder="اسم البنك (مثلاً: بنك الرياض)"
+                  />
+                  <input
+                    className={inputCls}
+                    value={b.iban}
+                    onChange={(e) => updateBank(idx, { iban: e.target.value.toUpperCase() })}
+                    disabled={saving}
+                    dir="ltr"
+                    placeholder="IBAN — SA__ ____ ____ ____ ____ ____"
+                  />
+                  <input
+                    className={inputCls}
+                    value={b.account_number}
+                    onChange={(e) => updateBank(idx, { account_number: e.target.value })}
+                    disabled={saving}
+                    dir="ltr"
+                    placeholder="رقم الحساب (اختياري)"
+                  />
+                  <input
+                    className={inputCls}
+                    value={b.account_holder_name}
+                    onChange={(e) => updateBank(idx, { account_holder_name: e.target.value })}
+                    disabled={saving}
+                    placeholder="اسم صاحب الحساب (اختياري)"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="primary_bank"
+                      checked={b.is_primary}
+                      onChange={() => markBankPrimary(idx)}
+                      disabled={saving}
+                      className="h-3.5 w-3.5"
+                    />
+                    حساب أساسي
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeBankRow(idx)}
+                    disabled={saving || banks.length === 1}
+                    className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800 disabled:opacity-30"
+                  >
+                    <Trash2 className="w-3 h-3" aria-hidden="true" /> حذف
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addBankRow}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:text-teal-900"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" /> إضافة حساب بنكي آخر
+            </button>
+          </div>
         </Field>
         <Field label="إرفاق شهادة ملكية IBAN (PDF)">
           <DocFileInput
