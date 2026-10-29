@@ -70,8 +70,25 @@ export function DecisionBar({
   const [moveTarget, setMoveTarget] = useState<MoveTargetStatus | ''>('')
   const [moveNotes, setMoveNotes] = useState('')
 
-  const canApproveAsEmployee = status === 'with_employee' && dsbRole === 'employee' && isAssignedEmployee
-  const canApproveAsSupervisor = status === 'with_supervisor' && dsbRole === 'supervisor'
+  // UI gate for the "approve → supervisor" button at the with_employee stage.
+  // Backend (approveCase) already allows employee, supervisor, and owner —
+  // the UI was too restrictive and hid the button for supervisors/owners
+  // working on behalf of the assigned employee, forcing them into the
+  // generic "نقل إلى مرحلة أخرى" dialog. Mirror the backend here so the
+  // one-click supervisor hand-off is always available.
+  const canApproveAsEmployee =
+    status === 'with_employee' &&
+    (
+      (dsbRole === 'employee' && isAssignedEmployee) ||
+      dsbRole === 'supervisor' ||
+      dsbRole === 'owner'
+    )
+  // Same relaxation for the "approve → owner" button at with_supervisor.
+  // Owner can now act like a supervisor (per the earlier server-side fix
+  // that opened approveCase at with_supervisor to owners too).
+  const canApproveAsSupervisor =
+    status === 'with_supervisor' &&
+    (dsbRole === 'supervisor' || dsbRole === 'owner')
   // Owner may sign at with_owner (first time — transitions to signed) OR at
   // signed (re-sign — replaces the signed document, keeps status). In the
   // re-sign case the buttons flip to a "replace" label.
