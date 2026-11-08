@@ -17,11 +17,14 @@ import { usePathname } from 'next/navigation'
  */
 type ChipKey =
   | 'overview'
-  | 'setup'
   | 'units'
   | 'contracts'
   | 'vendors'
+  | 'accounts'
+  | 'payments'
+  | 'documents'
   | 'reports'
+  | 'setup'
 
 type Chip = { key: ChipKey; label: string; href: string; match: string }
 
@@ -34,13 +37,18 @@ export function ProjectChipNav({
   active?: ChipKey
 }) {
   const base = `/app/disbursements/admin/projects/${projectId}`
+  // Order reflects frequency-of-use for owners: overview → data entities
+  // → money → derived outputs → one-time config.
   const chips: Chip[] = [
-    { key: 'overview',  label: 'نظرة عامة', href: base,                    match: base },
-    { key: 'setup',     label: 'التهيئة',   href: `${base}/setup`,          match: `${base}/setup` },
-    { key: 'units',     label: 'الوحدات',   href: `${base}/units`,          match: `${base}/units` },
-    { key: 'contracts', label: 'العقود',    href: `${base}/buyer-contracts`,match: `${base}/buyer-contracts` },
-    { key: 'vendors',   label: 'الموردين',  href: `${base}/vendors`,        match: `${base}/vendors` },
-    { key: 'reports',   label: 'التقارير',  href: `${base}/reports/cpa`,    match: `${base}/reports` },
+    { key: 'overview',  label: 'نظرة عامة',    href: base,                             match: base },
+    { key: 'units',     label: 'الوحدات',       href: `${base}/units`,                  match: `${base}/units` },
+    { key: 'contracts', label: 'العقود',        href: `${base}/buyer-contracts`,        match: `${base}/buyer-contracts` },
+    { key: 'vendors',   label: 'الموردون',      href: `${base}/vendors`,                match: `${base}/vendors` },
+    { key: 'accounts',  label: 'الحسابات',      href: `${base}/accounts`,               match: `${base}/accounts` },
+    { key: 'payments',  label: 'الدفعات',       href: `${base}/payments`,               match: `${base}/payments` },
+    { key: 'documents', label: 'الوثائق',       href: `${base}/documents`,              match: `${base}/documents` },
+    { key: 'reports',   label: 'التقارير',      href: `${base}/reports/cpa`,            match: `${base}/reports` },
+    { key: 'setup',     label: 'التهيئة',       href: `${base}/setup`,                  match: `${base}/setup` },
   ]
 
   const pathname = usePathname() ?? base
