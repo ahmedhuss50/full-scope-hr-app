@@ -102,17 +102,29 @@ export function evaluateAllFormulas(wb: XLSX.WorkBook): {
           errors.push({ sheet: name, addr, error: err instanceof Error ? err.message : String(err) })
           continue
         }
-        // HyperFormula returns a DetailedCellError-like object on failure;
-        // treat those as "leave the formula intact" so Excel can show the
-        // user what went wrong when they open the file.
+        // HyperFormula returns a DetailedCellError on failure (#DIV/0, #REF,
+        // #VALUE, etc.). Owner asked for "blank instead of error" — most of
+        // these are legitimate "no source data yet" cases (dividing by 0
+        // units in an empty block, subtracting a missing figure). Writing a
+        // blank string drops the error but keeps the cell styled.
         if (value && typeof value === 'object' && 'type' in (value as object)) {
           failed++
           errors.push({ sheet: name, addr, error: String((value as { type: string }).type) })
+          const prev = cell as XLSX.CellObject & { f?: string; v?: unknown; w?: string; t?: string }
+          delete prev.f
+          delete prev.w
+          prev.t = 's'
+          prev.v = ''
           continue
         }
         if (value === null || value === undefined) {
-          // Empty result — leave the formula so the cell shows blank/zero
-          // on open rather than pre-writing a null that drops formatting.
+          // Empty result — write a blank cell (not a leftover formula) so
+          // the output file is consistent with the error-blanking above.
+          const prev = cell as XLSX.CellObject & { f?: string; v?: unknown; w?: string; t?: string }
+          delete prev.f
+          delete prev.w
+          prev.t = 's'
+          prev.v = ''
           continue
         }
         // Write the value back and strip the formula.
