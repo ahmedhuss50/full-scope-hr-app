@@ -14,6 +14,7 @@
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
     "docxtemplater": "^3.50.0",
+    "hyperformula": "^2.7.1",
     "lucide-react": "^0.400.0",
     "next": "^14.2.15",
     "pdf-lib": "^1.17.1",

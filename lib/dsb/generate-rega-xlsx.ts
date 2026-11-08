@@ -2531,6 +2531,15 @@ export async function generateAccountantWorkbookXlsx(
     setCell(sHidden, 'U8', num(s1, 'D9') * 0.05, 'n')        // U8 = Sheet1.D9 * 5%
   }
 
+  // Pre-process: evaluate every formula in the workbook server-side and
+  // replace it with its computed numeric/string value. Owner requested
+  // "values, no formulas" so the file opens the same way in Excel, Google
+  // Sheets, PDF exporters, or anywhere else that doesn't re-compute.
+  // Formulas that HyperFormula can't resolve (unsupported function, broken
+  // ref) stay as-is so the user can still inspect them on open.
+  const { evaluateAllFormulas } = await import('@/lib/dsb/evaluate-xlsx-formulas')
+  evaluateAllFormulas(wb)
+
   // Post-process: merge values into the template's original sheet XML for
   // 100% styling fidelity (fonts, colors, borders, alignments, fills all
   // preserved). Same technique as the buyers register — see mergeIntoTemplate.
