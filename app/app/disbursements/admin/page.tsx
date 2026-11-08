@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
-import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog, ListChecks } from 'lucide-react'
+import { ArrowRight, Plus, Settings, Users, FolderKanban, UserCog, ListChecks, Landmark, FileSpreadsheet, History, Sliders, ClipboardCheck, Database } from 'lucide-react'
 import { DeleteEmployeeButton } from './EntityDeleteButtons'
 import {
   SendWelcomeToUserButton,
@@ -230,8 +230,42 @@ export default async function DisbursementsAdminPage({
           إدارة الصرفيات
         </div>
         <h1 className="serif font-black text-3xl tracking-tight text-slate-900">إدارة الصرفيات</h1>
-        <p className="text-sm text-slate-600">إدارة العملاء والمشاريع.</p>
+        <p className="text-sm text-slate-600">إدارة الأشخاص والمشاريع والإعدادات.</p>
       </header>
+
+      {/* Quick-access grid — groups the admin surface into 3 clear buckets
+          (people / data / settings) so the owner can jump straight to the
+          relevant sub-page without scrolling past the inline tables below.
+          The inline tables are still useful for a quick glance, but the grid
+          is the primary navigation surface. */}
+      <section className="space-y-3">
+        <div>
+          <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">الأشخاص</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <AdminTile href="#employees-section" label="الموظفون" sub="إضافة · صلاحيات · تفعيل" Icon={UserCog} />
+            <AdminTile href="#clients-section"   label="العملاء"  sub="شركات المطورين"            Icon={Users} />
+            <AdminTile href="/app/disbursements/admin/settings/lists" label="المطورون" sub="إضافة · تعديل · حذف" Icon={FolderKanban} />
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">البيانات</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <AdminTile href="#projects-section"                       label="المشاريع"     sub="إنشاء · تعديل"       Icon={FolderKanban} />
+            <AdminTile href="/app/disbursements/admin/lists"          label="السجلات"       sub="قوائم tenant-wide"    Icon={Database} />
+            <AdminTile href="/app/disbursements/admin/accounts"       label="الحسابات البنكية" sub="كل مشاريع المؤسسة" Icon={Landmark} />
+            <AdminTile href="/app/disbursements/admin/imports"        label="استيراد Excel" sub="وحدات · عقود · دفعات" Icon={FileSpreadsheet} />
+            <AdminTile href="/app/disbursements/admin/checklist-templates" label="قوائم المراجعة" sub="قوالب التدقيق" Icon={ClipboardCheck} />
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">الإعدادات</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <AdminTile href="/app/disbursements/admin/settings/lists" label="القوائم والنسب" sub="تصنيفات · أنواع · بنوك" Icon={ListChecks} />
+            <AdminTile href="/app/disbursements/admin/settings"       label="تهيئة النظام"   sub="إعدادات المستأجر"       Icon={Sliders} />
+            <AdminTile href="/app/disbursements/admin/settings/audit" label="سجل التدقيق"    sub="آخر الإجراءات"            Icon={History} />
+          </div>
+        </div>
+      </section>
 
       {created === 'client' && (
         <div role="status" className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
@@ -251,7 +285,7 @@ export default async function DisbursementsAdminPage({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Clients section */}
-        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <section id="clients-section" className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden scroll-mt-20">
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
             <div className="inline-flex items-center gap-2">
               <Users className="w-4 h-4 text-slate-500" aria-hidden="true" />
@@ -317,7 +351,7 @@ export default async function DisbursementsAdminPage({
         </section>
 
         {/* Employees section */}
-        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <section id="employees-section" className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden scroll-mt-20">
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
             <div className="inline-flex items-center gap-2">
               <UserCog className="w-4 h-4 text-slate-500" aria-hidden="true" />
@@ -416,7 +450,7 @@ export default async function DisbursementsAdminPage({
         </section>
 
         {/* Projects section */}
-        <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <section id="projects-section" className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden scroll-mt-20">
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
             <div className="inline-flex items-center gap-2">
               <FolderKanban className="w-4 h-4 text-slate-500" aria-hidden="true" />
@@ -563,5 +597,38 @@ export default async function DisbursementsAdminPage({
         </section>
       )}
     </div>
+  )
+}
+
+/**
+ * AdminTile — single quick-access card used in the hub grid above the inline
+ * tables. Keeps the markup consistent across all 11 tiles and shortens the
+ * section JSX. Anchor targets (#clients-section, …) are kept in-file as href
+ * strings; external links go to admin sub-routes.
+ */
+function AdminTile({
+  href,
+  label,
+  sub,
+  Icon,
+}: {
+  href: string
+  label: string
+  sub: string
+  Icon: typeof Users
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/40 transition"
+    >
+      <div className="shrink-0 w-8 h-8 rounded-md bg-slate-100 text-slate-700 group-hover:bg-teal-100 group-hover:text-teal-700 flex items-center justify-center transition">
+        <Icon className="w-4 h-4" aria-hidden="true" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-slate-900 truncate">{label}</div>
+        <div className="text-[11px] text-slate-500 truncate">{sub}</div>
+      </div>
+    </Link>
   )
 }
