@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive, FolderKanban, History, ListChecks, Sliders } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive, FolderKanban, History, ListChecks, Sliders, UploadCloud, Building2, UserCog, FileSpreadsheet, UsersRound } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -109,21 +109,37 @@ type DsbNavGroup = {
   ownerOnly?: boolean           // whole group only visible to owners
 }
 
+// Grouped into 5 sections (per owner-facing reorg):
+//   1. اليومي     — what everyone opens daily
+//   2. المشاريع   — project-centric drill-down
+//   3. السجلات    — tenant-wide browse lists (owner only — the dsb_role gates
+//                  on the pages themselves back this up, the UI just hides)
+//   4. التقارير   — generated outputs + archive
+//   5. الإدارة    — one-time / rare config (owner only)
 const DSB_GROUPS: DsbNavGroup[] = [
   {
-    title: 'العمليات اليومية',
+    title: 'اليومي',
     items: [
-      { href: '/app/disbursements',           label: 'الرئيسية',      icon: LayoutDashboard },
-      { href: '/app/disbursements/board',     label: 'لوحة المراحل',   icon: Inbox },
-      { href: '/app/disbursements/documents', label: 'وثائق التسليم', icon: FileText },
-      { href: '/app/disbursements/archive',   label: 'الأرشيف',       icon: Archive },
+      { href: '/app/disbursements',           label: 'الرئيسية',       icon: LayoutDashboard },
+      { href: '/app/disbursements/board',     label: 'لوحة المراحل',    icon: Inbox },
+      { href: '/app/disbursements/new',       label: 'رفع وثيقة صرف', icon: UploadCloud },
     ],
   },
   {
-    title: 'البيانات',
+    title: 'المشاريع',
     items: [
-      { href: '/app/disbursements/admin/projects',       label: 'المشاريع', icon: FolderKanban },
-      { href: '/app/disbursements/admin/lists/payments', label: 'الدفعات',   icon: Wallet, ownerOnly: true },
+      { href: '/app/disbursements/admin/projects', label: 'كل المشاريع', icon: FolderKanban },
+    ],
+  },
+  {
+    title: 'السجلات',
+    ownerOnly: true,
+    items: [
+      { href: '/app/disbursements/documents',             label: 'سجل الوثائق', icon: FileText },
+      { href: '/app/disbursements/admin/lists/payments',  label: 'الدفعات',     icon: Wallet },
+      { href: '/app/disbursements/admin/lists/buyers',    label: 'المشترون',    icon: UsersRound },
+      { href: '/app/disbursements/admin/lists/contracts', label: 'العقود',       icon: ScrollText },
+      { href: '/app/disbursements/admin/lists/units',     label: 'الوحدات',      icon: Building2 },
     ],
   },
   {
@@ -131,16 +147,18 @@ const DSB_GROUPS: DsbNavGroup[] = [
     ownerOnly: true,
     items: [
       { href: '/app/disbursements/reports', label: 'تقرير المدير', icon: BarChart3 },
+      { href: '/app/disbursements/archive', label: 'الأرشيف',      icon: Archive },
     ],
   },
   {
     title: 'الإدارة',
     ownerOnly: true,
     items: [
-      { href: '/app/disbursements/admin',                    label: 'المستخدمون والصلاحيات', icon: Users },
-      { href: '/app/disbursements/admin/settings',           label: 'تهيئة النظام',          icon: Sliders },
-      { href: '/app/disbursements/admin/settings/lists',     label: 'القوائم والنسب',        icon: ListChecks },
-      { href: '/app/disbursements/admin/settings/audit',     label: 'سجل التدقيق',           icon: History },
+      { href: '/app/disbursements/admin',                 label: 'الموظفون والصلاحيات', icon: UserCog },
+      { href: '/app/disbursements/admin/imports',         label: 'استيراد Excel',       icon: FileSpreadsheet },
+      { href: '/app/disbursements/admin/settings/lists',  label: 'القوائم والنسب',       icon: ListChecks },
+      { href: '/app/disbursements/admin/settings',        label: 'تهيئة النظام',         icon: Sliders },
+      { href: '/app/disbursements/admin/settings/audit',  label: 'سجل التدقيق',          icon: History },
     ],
   },
 ]
