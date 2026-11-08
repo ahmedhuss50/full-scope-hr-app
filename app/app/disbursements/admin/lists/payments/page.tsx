@@ -11,6 +11,7 @@ import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 import { PaymentsSelectionProvider } from '../../_shared/EntitySelectionProviders'
 import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
 import { LinkPaymentsButton } from './LinkPaymentsButton'
+import { ListsTabs } from '../_shared/ListsTabs'
 
 /**
  * Tenant-wide PAYMENTS ledger.
@@ -562,6 +563,7 @@ export default async function PaymentsListPage({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
+      <ListsTabs />
       <header className="space-y-2">
         <Link
           href="/app/disbursements/admin/lists"

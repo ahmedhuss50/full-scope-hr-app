@@ -7,6 +7,7 @@ import { CaseFiltersBar } from '../CaseFiltersBar'
 import { assignedProjectIds, applyProjectScope } from '@/lib/dsb/access'
 import { EditRowButton, type EditableCase, type DeveloperOpt, type ProjectOpt, type VendorOpt, type AccountOpt } from './EditRowButton'
 import { DeleteCaseButton } from '../admin/_shared/EntityDeleteButtons'
+import { ListsTabs } from '../admin/lists/_shared/ListsTabs'
 import { DISBURSEMENT_TYPE_DEFAULTS, resolveDisbursementLabel } from '@/lib/dsb/category-labels'
 
 export const dynamic = 'force-dynamic'
@@ -246,6 +247,7 @@ export default async function DeliveryDocumentsRegisterPage({
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
+      <ListsTabs />
       <header className="space-y-2">
         <Link
           href="/app/disbursements"

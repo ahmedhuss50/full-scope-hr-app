@@ -7,6 +7,7 @@ import { DeleteUnitButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 import { UnitsSelectionProvider } from '../../_shared/EntitySelectionProviders'
 import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
+import { ListsTabs } from '../_shared/ListsTabs'
 
 /**
  * Tenant-wide UNITS list.
@@ -192,6 +193,7 @@ export default async function UnitsListPage({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
+      <ListsTabs />
       <header className="space-y-2">
         <Link
           href="/app/disbursements/admin/lists"

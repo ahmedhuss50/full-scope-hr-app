@@ -7,6 +7,7 @@ import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 import { SalesSelectionProvider } from '../../_shared/EntitySelectionProviders'
 import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
+import { ListsTabs } from '../_shared/ListsTabs'
 
 /**
  * Tenant-wide BUYERS list.
@@ -208,6 +209,7 @@ export default async function BuyersListPage({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
+      <ListsTabs />
       <header className="space-y-2">
         <Link
           href="/app/disbursements/admin/lists"

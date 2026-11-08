@@ -8,6 +8,7 @@ import { DeleteSaleButton } from '../../_shared/EntityDeleteButtons'
 import { BulkDeleteBar } from '../../_shared/BulkDeleteBar'
 import { SalesSelectionProvider } from '../../_shared/EntitySelectionProviders'
 import { RowCheckbox, SelectAllCheckbox, SelectionActionBar } from '../../_shared/SelectionContext'
+import { ListsTabs } from '../_shared/ListsTabs'
 
 /**
  * Tenant-wide CONTRACTS list.
@@ -41,7 +42,16 @@ type SaleRowRaw = {
   installment_number: number | null
   retention_percentage: number | null
   collection_percentage: number | null
+  sale_status: string | null
 }
+
+// The 2-state model collapses older 4-value rows for display. We still
+// query the raw DB value so the filter catches historical cancelled_resold
+// and completed rows too.
+const SALE_STATUS_OPTIONS = [
+  { value: 'active',    label: 'ساري' },
+  { value: 'cancelled', label: 'ملغي' },
+]
 
 // Distinct financing_type values found in the tenant's data — used to
 // populate the filter dropdown so it never lists options that don't
@@ -93,6 +103,10 @@ export default async function ContractsListPage({
     q?: string
     project?: string
     financing_type?: string
+    /** 'active' | 'cancelled' | '' (all). Older rows carrying
+     *  'cancelled_resold' or 'completed' are treated as 'active' for
+     *  consistency with the simplified 2-state UI model. */
+    sale_status?: string
     sort?: string
     dir?: string
   }
@@ -118,6 +132,7 @@ export default async function ContractsListPage({
   const q = (searchParams?.q ?? '').trim()
   const projectFilter = (searchParams?.project ?? '').trim()
   const financingFilter = (searchParams?.financing_type ?? '').trim()
+  const saleStatusFilter = (searchParams?.sale_status ?? '').trim()
   const rawSort = (searchParams?.sort ?? 'contract_number') as SortKey
   const sort: SortKey = SORT_KEYS.includes(rawSort) ? rawSort : 'contract_number'
   const dir: SortDir = searchParams?.dir === 'desc' ? 'desc' : 'asc'
@@ -153,12 +168,21 @@ export default async function ContractsListPage({
   let salesQuery = svc
     .from('dsb_unit_sales')
     .select(
-      'id, unit_id, buyer_name_ar, contract_number, contract_type, financing_type, financing_bank, sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar, delivery_status, delivery_date, installment_number, retention_percentage, collection_percentage',
+      'id, unit_id, buyer_name_ar, contract_number, contract_type, financing_type, financing_bank, sale_date, price_before_tax_sar, vat_sar, price_with_vat_sar, delivery_status, delivery_date, installment_number, retention_percentage, collection_percentage, sale_status',
     )
     .eq('tenant_id', tenantId)
 
   if (unitIdFilter) salesQuery = salesQuery.in('unit_id', unitIdFilter)
   if (financingFilter) salesQuery = salesQuery.eq('financing_type', financingFilter)
+  // sale_status filter — map the UI's 2 options onto the DB's 4-value
+  // enum so historical rows surface under the right bucket:
+  //   'active'    → active | cancelled_resold | completed
+  //   'cancelled' → cancelled only
+  if (saleStatusFilter === 'cancelled') {
+    salesQuery = salesQuery.eq('sale_status', 'cancelled')
+  } else if (saleStatusFilter === 'active') {
+    salesQuery = salesQuery.in('sale_status', ['active', 'cancelled_resold', 'completed'])
+  }
   if (q) {
     const esc = escapeOrTerm(q)
     salesQuery = salesQuery.or(
@@ -229,6 +253,7 @@ export default async function ContractsListPage({
   if (q) baseParams.set('q', q)
   if (projectFilter) baseParams.set('project', projectFilter)
   if (financingFilter) baseParams.set('financing_type', financingFilter)
+  if (saleStatusFilter) baseParams.set('sale_status', saleStatusFilter)
   baseParams.set('sort', sort)
   baseParams.set('dir', dir)
 
@@ -236,10 +261,12 @@ export default async function ContractsListPage({
     q,
     project: projectFilter,
     financing_type: financingFilter,
+    sale_status: saleStatusFilter,
   }
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto" dir="rtl">
+      <ListsTabs />
       <header className="space-y-2">
         <Link
           href="/app/disbursements/admin/lists"
@@ -274,6 +301,12 @@ export default async function ContractsListPage({
             label: 'كل أنواع التمويل',
             value: financingFilter,
             options: financingTypes.map((v) => ({ value: v, label: v })),
+          },
+          {
+            name: 'sale_status',
+            label: 'كل الحالات',
+            value: saleStatusFilter,
+            options: SALE_STATUS_OPTIONS,
           },
         ]}
         preservedParams={{ sort, dir }}

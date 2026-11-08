@@ -5,19 +5,19 @@ import {
   Building2,
   Coins,
   FileSignature,
+  FileText,
   ListChecks,
   Users,
 } from 'lucide-react'
 import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/server'
 
 /**
- * Owner-only hub for the three tenant-wide list views (units, buyers,
- * contracts). Mirrors the /imports hub pattern — each card links to a
- * paginated table with filters + search + sort.
+ * Owner-only hub for the 5 tenant-wide list views (documents, payments,
+ * buyers, contracts, units). Each card now shows a live row count so the
+ * owner knows the size of each list before opening it.
  *
- * Purpose: the per-project «الوحدات والمشترون» section on a project page
- * mixes all three dimensions and is scoped to one project. The lists here
- * let the owner browse ONE dimension across the whole tenant at a time.
+ * Mirrors the /imports hub pattern — pages still live at their own URLs for
+ * direct linking; the hub + the shared ListsTabs give fast switching.
  */
 export const dynamic = 'force-dynamic'
 
@@ -27,42 +27,8 @@ type CardConfig = {
   description: string
   Icon: typeof ListChecks
   accentCls: string
+  count: number
 }
-
-const CARDS: CardConfig[] = [
-  {
-    href: '/app/disbursements/admin/lists/units',
-    title: 'الوحدات',
-    description:
-      'قائمة كل الوحدات في كل المشاريع مع مواصفاتها (البلوك، المنطقة، المساحة، الحي) وعدد مرات البيع.',
-    Icon: Building2,
-    accentCls: 'border-teal-200 hover:border-teal-400 bg-teal-50/40',
-  },
-  {
-    href: '/app/disbursements/admin/lists/buyers',
-    title: 'المشترون',
-    description:
-      'قائمة كل المشترين عبر جميع المشاريع مع بيانات الهوية والجوال وحالة البيع.',
-    Icon: Users,
-    accentCls: 'border-blue-200 hover:border-blue-400 bg-blue-50/40',
-  },
-  {
-    href: '/app/disbursements/admin/lists/contracts',
-    title: 'العقود',
-    description:
-      'قائمة كل العقود مع تفاصيل السعر والتمويل والتسليم، إضافةً إلى الأعمدة المالية (النسبة المستقطعة، نسبة التحصيل).',
-    Icon: FileSignature,
-    accentCls: 'border-violet-200 hover:border-violet-400 bg-violet-50/40',
-  },
-  {
-    href: '/app/disbursements/admin/lists/payments',
-    title: 'الدفعات (سجل مالي)',
-    description:
-      'السجل المالي المستقل — كل الدفعات المستوردة من ملفات الأستاذ القديمة، قابلة للترتيب حسب التاريخ أو المبلغ والتصفية حسب المشروع/الحساب.',
-    Icon: Coins,
-    accentCls: 'border-emerald-200 hover:border-emerald-400 bg-emerald-50/40',
-  },
-]
 
 export default async function ListsHubPage() {
   const supabase = createSupabaseServer()
@@ -82,6 +48,73 @@ export default async function ListsHubPage() {
     redirect('/app/disbursements/admin')
   }
 
+  const tenantId = profile.tenant_id as string
+
+  // Live counts per list — one count query each, all run in parallel. Each
+  // returns { count: number | null } with head:true so we never ship rows
+  // across the wire for a number the hub only displays as a chip.
+  const [
+    unitsCountRes,
+    buyersCountRes,
+    contractsCountRes,
+    paymentsCountRes,
+    docsCountRes,
+  ] = await Promise.all([
+    svc.from('dsb_project_units').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+    svc.from('dsb_unit_sales')   .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).not('buyer_name_ar', 'is', null),
+    svc.from('dsb_unit_sales')   .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+    svc.from('dsb_payments')     .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+    svc.from('dsb_cases')        .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+  ])
+  const unitsCount     = unitsCountRes.count     ?? 0
+  const buyersCount    = buyersCountRes.count    ?? 0
+  const contractsCount = contractsCountRes.count ?? 0
+  const paymentsCount  = paymentsCountRes.count  ?? 0
+  const docsCount      = docsCountRes.count      ?? 0
+
+  const cards: CardConfig[] = [
+    {
+      href: '/app/disbursements/documents',
+      title: 'سجل الوثائق',
+      description: 'كل وثائق الصرف (الطلبات) عبر كل المشاريع — موقّعة، قيد المراجعة، مرفوضة، أرشيف.',
+      Icon: FileText,
+      accentCls: 'border-slate-200 hover:border-slate-400 bg-slate-50/40',
+      count: docsCount,
+    },
+    {
+      href: '/app/disbursements/admin/lists/payments',
+      title: 'الدفعات',
+      description: 'السجل المالي — كل التحصيلات والدفعات، بإمكانية الفلترة حسب المشروع/الحساب/العقد.',
+      Icon: Coins,
+      accentCls: 'border-emerald-200 hover:border-emerald-400 bg-emerald-50/40',
+      count: paymentsCount,
+    },
+    {
+      href: '/app/disbursements/admin/lists/buyers',
+      title: 'المشترون',
+      description: 'كل المشترين عبر المشاريع مع بيانات الهوية والجوال وحالة البيع.',
+      Icon: Users,
+      accentCls: 'border-blue-200 hover:border-blue-400 bg-blue-50/40',
+      count: buyersCount,
+    },
+    {
+      href: '/app/disbursements/admin/lists/contracts',
+      title: 'العقود',
+      description: 'كل العقود مع تفاصيل السعر والتمويل والتسليم والأعمدة المالية.',
+      Icon: FileSignature,
+      accentCls: 'border-violet-200 hover:border-violet-400 bg-violet-50/40',
+      count: contractsCount,
+    },
+    {
+      href: '/app/disbursements/admin/lists/units',
+      title: 'الوحدات',
+      description: 'كل الوحدات في المؤسسة مع مواصفاتها وعدد مرات البيع.',
+      Icon: Building2,
+      accentCls: 'border-teal-200 hover:border-teal-400 bg-teal-50/40',
+      count: unitsCount,
+    },
+  ]
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto" dir="rtl">
       <header className="space-y-2">
@@ -94,19 +127,18 @@ export default async function ListsHubPage() {
         </Link>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
           <ListChecks className="w-4 h-4" aria-hidden="true" />
-          القوائم الكاملة على مستوى المؤسسة
+          السجلات
         </div>
         <h1 className="serif font-black text-3xl tracking-tight text-slate-900">
           استعراض القوائم
         </h1>
         <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
-          كل قائمة هنا مستقلة عن المشروع الواحد وتشمل جميع الوحدات في المؤسسة.
-          للاستيراد الأولي أو تحديث بُعد واحد، استخدم «أداة الاستيراد».
+          عرض موحد لكل البيانات على مستوى المؤسسة. كل قائمة فيها فلاتر، بحث، ترتيب، وتحديد جماعي للحذف.
         </p>
       </header>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {CARDS.map((card) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {cards.map((card) => (
           <Link
             key={card.href}
             href={card.href}
@@ -119,10 +151,9 @@ export default async function ListsHubPage() {
                   {card.title}
                 </h2>
               </div>
-              <ArrowRight
-                className="w-4 h-4 text-slate-400 rotate-180 group-hover:text-slate-700 transition"
-                aria-hidden="true"
-              />
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white text-xs font-mono font-semibold text-slate-700 ring-1 ring-slate-200">
+                {card.count.toLocaleString('en-US')}
+              </span>
             </div>
             <p className="mt-2 text-xs text-slate-600 leading-relaxed">
               {card.description}
