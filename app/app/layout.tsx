@@ -3,6 +3,7 @@ import { createSupabaseServer, createSupabaseService } from '@/lib/supabase/serv
 import { LocaleProvider } from '@/lib/i18n/LocaleContext'
 import { LanguageToggle } from '@/components/LanguageToggle'
 import { Sidebar, type SidebarCounts } from '@/components/Sidebar'
+import { ChatAgent } from '@/components/ChatAgent'
 
 export const dynamic = 'force-dynamic'
 
@@ -185,6 +186,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <main className="flex-1 p-4 md:p-6 min-w-0">{children}</main>
         </div>
       </div>
+      {/* In-app assistant — floats over everything, available on every page
+          inside the authenticated /app shell. Hidden on login, portal, and
+          developer routes by virtue of being mounted only here. */}
+      <ChatAgent />
     </LocaleProvider>
   )
 }
