@@ -415,7 +415,10 @@ export default async function DisbursementsDashboardPage({
   return (
     <div className="space-y-5 max-w-[1600px] mx-auto" dir="rtl">
 
-      {/* 1. Page header -----------------------------------------------------*/}
+      {/* 1. Personal greeting + date range + top-level actions ---------------
+          Replaces the old "لوحة المتابعة" h1 with a first-name welcome so the
+          dashboard reads as a space, not a report. Role chip stays — it still
+          disambiguates the KPI numbers on shared screens. */}
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1.5">
           <div className="inline-flex items-center gap-2 text-xs font-semibold text-teal-700">
@@ -423,24 +426,18 @@ export default async function DisbursementsDashboardPage({
             الصرف
           </div>
           <h1 className="serif font-black text-2xl tracking-tight text-slate-900">
-            لوحة المتابعة
+            {greetingPrefix()}
+            {fullName ? ` ${firstName(fullName)}` : ''}
           </h1>
           <p className="text-xs text-slate-500">
             {rangeLabel} · {fmtDate(fromIso)} — {fmtDate(toIso)}
             {' · '}
-            {fullName ? `${fullName} (${roleLabelAr(dsbRole)})` : roleLabelAr(dsbRole)}
+            {roleLabelAr(dsbRole)}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <DashboardDateRange active={rangeKey} from={searchParams?.from ?? null} to={searchParams?.to ?? null} />
           <div className="flex items-center gap-2">
-            <Link
-              href="/app/disbursements/new"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold shadow-sm hover:bg-teal-700 transition"
-            >
-              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-              سند جديد
-            </Link>
             <Link
               href="/app/disbursements/admin"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition"
@@ -451,6 +448,36 @@ export default async function DisbursementsDashboardPage({
           </div>
         </div>
       </header>
+
+      {/* 1b. Quick actions — 4 big tiles for the tasks the owner starts most
+          often. Keeps "سند جديد" prominent (was a button in the header) while
+          promoting the other three paths that used to live under the إدارة
+          sub-menu. */}
+      <section>
+        <div className="text-xs font-semibold text-slate-500 mb-2">إجراءات سريعة</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <Link href="/app/disbursements/new"
+            className="flex flex-col items-center gap-1.5 py-4 rounded-xl bg-white border border-slate-200 hover:border-teal-300 hover:bg-teal-50/40 transition">
+            <UploadCloud className="w-5 h-5 text-teal-700" aria-hidden="true" />
+            <span className="text-xs font-semibold text-slate-700">رفع وثيقة صرف</span>
+          </Link>
+          <Link href="/app/disbursements/admin/projects"
+            className="flex flex-col items-center gap-1.5 py-4 rounded-xl bg-white border border-slate-200 hover:border-teal-300 hover:bg-teal-50/40 transition">
+            <Plus className="w-5 h-5 text-teal-700" aria-hidden="true" />
+            <span className="text-xs font-semibold text-slate-700">إضافة مشروع</span>
+          </Link>
+          <Link href="/app/disbursements/admin/imports"
+            className="flex flex-col items-center gap-1.5 py-4 rounded-xl bg-white border border-slate-200 hover:border-teal-300 hover:bg-teal-50/40 transition">
+            <FileText className="w-5 h-5 text-teal-700" aria-hidden="true" />
+            <span className="text-xs font-semibold text-slate-700">استيراد Excel</span>
+          </Link>
+          <Link href="/app/disbursements/admin/lists/payments?link_status=unlinked"
+            className="flex flex-col items-center gap-1.5 py-4 rounded-xl bg-white border border-slate-200 hover:border-teal-300 hover:bg-teal-50/40 transition">
+            <CircleDollarSign className="w-5 h-5 text-teal-700" aria-hidden="true" />
+            <span className="text-xs font-semibold text-slate-700">الدفعات</span>
+          </Link>
+        </div>
+      </section>
 
       {/* 2. Five KPI cards --------------------------------------------------*/}
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -873,6 +900,24 @@ function describeEvent(event: string, toStatus: string | null): EventDescriptor 
     return { Icon: Move, iconCls: 'text-slate-600 bg-slate-100', label: 'نقل يدوي' }
   }
   return { Icon: Activity, iconCls: 'text-slate-600 bg-slate-100', label: event }
+}
+
+// ---- Personal-greeting helpers --------------------------------------------
+// Keyed to Riyadh local time so the greeting matches the user's wall clock
+// regardless of the server's own timezone (Vercel runs UTC).
+function greetingPrefix(): string {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' }))
+  const h = now.getHours()
+  if (h < 12) return 'صباح الخير،'
+  if (h < 17) return 'مساء الخير،'
+  return 'مساء الخير،'
+}
+function firstName(fullName: string): string {
+  // Arabic names: first "word" is enough. Guards against lone-trailing
+  // whitespace that would render the trailing-space on the heading.
+  const trimmed = (fullName ?? '').trim()
+  if (!trimmed) return ''
+  return trimmed.split(/\s+/)[0]
 }
 
 // ---- Table cell primitives (align with ProjectComplianceSummary) ---------
