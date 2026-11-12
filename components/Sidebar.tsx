@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive, FolderKanban, History, ListChecks, Sliders, UploadCloud, Building2, UserCog, FileSpreadsheet, UsersRound } from 'lucide-react'
+import { LayoutDashboard, Inbox, ClipboardList, Users, Briefcase, ShieldCheck, BarChart3, ArrowLeft, FolderLock, Folders, Files, Home, Contact, TrendingUp, Workflow, Landmark, ScrollText, ShoppingBag, Wallet, Settings, FileText, Menu, X, Archive, FolderKanban, History, ListChecks, Sliders, UploadCloud, Building2, UserCog, FileSpreadsheet, UsersRound, Ticket, PackageCheck } from 'lucide-react'
 import { useLocale } from '@/lib/i18n/LocaleContext'
 import type { StringKey } from '@/lib/i18n/translations'
 import { SignOutButton } from '@/app/app/SignOutButton'
@@ -96,11 +96,16 @@ void DSB_ITEMS // silence unused warning — see comment above.
 //                         `soon: true` and render as disabled with a
 //                         «قريبًا» chip until we build the admin panels)
 // -------------------------------------------------------------------------
+type DsbRole = 'employee' | 'supervisor' | 'owner' | 'developer' | 'viewer' | 'deliverer'
 type DsbNavItem = {
   href: string
   label: string                 // Arabic label — no translation key needed
   icon: typeof LayoutDashboard
   ownerOnly?: boolean
+  /** When present, only roles listed here see the item. Takes precedence over hideFor. */
+  showFor?: DsbRole[]
+  /** When present, these roles do NOT see the item. */
+  hideFor?: DsbRole[]
   soon?: boolean                // renders as disabled with «قريبًا» chip
 }
 type DsbNavGroup = {
@@ -120,9 +125,15 @@ const DSB_GROUPS: DsbNavGroup[] = [
   {
     title: 'اليومي',
     items: [
-      { href: '/app/disbursements',           label: 'الرئيسية',       icon: LayoutDashboard },
-      { href: '/app/disbursements/board',     label: 'لوحة المراحل',    icon: Inbox },
-      { href: '/app/disbursements/new',       label: 'رفع وثيقة صرف', icon: UploadCloud },
+      { href: '/app/disbursements',                    label: 'الرئيسية',       icon: LayoutDashboard },
+      { href: '/app/disbursements/board',              label: 'لوحة المراحل',    icon: Inbox },
+      // Only roles that actually upload see the upload action. Hiding it
+      // from مسلِّم / مشاهد avoids confusing them with a button they can't use.
+      { href: '/app/disbursements/new',                label: 'رفع وثيقة صرف', icon: UploadCloud, hideFor: ['deliverer', 'viewer'] },
+      // «جاهز للتسليم» — dedicated list for the deliverer. Owners and
+      // supervisors also see it for oversight; employees who upload also
+      // benefit from seeing what's ready. Hidden from مشاهد (read-only).
+      { href: '/app/disbursements/ready-for-delivery', label: 'جاهز للتسليم',    icon: PackageCheck, hideFor: ['viewer'] },
     ],
   },
   {
@@ -155,6 +166,7 @@ const DSB_GROUPS: DsbNavGroup[] = [
     ownerOnly: true,
     items: [
       { href: '/app/disbursements/admin',                 label: 'الموظفون والصلاحيات', icon: UserCog },
+      { href: '/app/disbursements/admin/support-tickets', label: 'تذاكر الدعم',          icon: Ticket },
       { href: '/app/disbursements/admin/imports',         label: 'استيراد Excel',       icon: FileSpreadsheet },
       { href: '/app/disbursements/admin/settings/lists',  label: 'القوائم والنسب',       icon: ListChecks },
       { href: '/app/disbursements/admin/settings',        label: 'تهيئة النظام',         icon: Sliders },
@@ -345,7 +357,12 @@ export function Sidebar({
           // the flat list below until we do the same treatment for them.
           <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
             {DSB_GROUPS.filter((g) => !g.ownerOnly || user.dsb_role === 'owner').map((group) => {
-              const visibleItems = group.items.filter((it) => !it.ownerOnly || user.dsb_role === 'owner')
+              const visibleItems = group.items.filter((it) => {
+                if (it.ownerOnly && user.dsb_role !== 'owner') return false
+                if (it.showFor && (!user.dsb_role || !it.showFor.includes(user.dsb_role as DsbRole))) return false
+                if (it.hideFor && user.dsb_role && it.hideFor.includes(user.dsb_role as DsbRole)) return false
+                return true
+              })
               if (visibleItems.length === 0) return null
               return (
                 <div key={group.title} className="space-y-1">
